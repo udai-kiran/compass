@@ -1,0 +1,27 @@
+# App services only — Postgres and Redis are external (see .env) and are
+# never part of this stack. All endpoints come from environment variables.
+services:
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      # Caddy proxies to api:3001 — keep the container port fixed.
+      PORT: "3001"
+      STORAGE_DIR: /data/attachments
+      BACKUP_DIR: /data/backups
+    volumes:
+      - ./data:/data
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    depends_on:
+      - api
+    restart: unless-stopped
