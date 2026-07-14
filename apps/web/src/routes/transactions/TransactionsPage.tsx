@@ -141,21 +141,45 @@ export function TransactionsPage() {
           onKeyDown={(e) => {
             if (e.key === "Enter") setFilterParam("q", e.currentTarget.value);
           }}
-          className="w-56 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm"
+          className="w-full rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm sm:w-56"
         />
-        <input type="date" value={params.get("from") ?? ""} onChange={(e) => setFilterParam("from", e.target.value)} className="rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm" />
-        <input type="date" value={params.get("to") ?? ""} onChange={(e) => setFilterParam("to", e.target.value)} className="rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm" />
-        <select value={params.get("accountId") ?? ""} onChange={(e) => setFilterParam("accountId", e.target.value)} className="rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm">
+        <input
+          type="date"
+          value={params.get("from") ?? ""}
+          onChange={(e) => setFilterParam("from", e.target.value)}
+          className="rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm"
+        />
+        <input
+          type="date"
+          value={params.get("to") ?? ""}
+          onChange={(e) => setFilterParam("to", e.target.value)}
+          className="rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm"
+        />
+        <select
+          value={params.get("accountId") ?? ""}
+          onChange={(e) => setFilterParam("accountId", e.target.value)}
+          className="rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm"
+        >
           <option value="">All accounts</option>
           {accounts?.map((a) => (
-            <option key={a.id} value={a.id}>{a.name}</option>
+            <option key={a.id} value={a.id}>
+              {a.name}
+            </option>
           ))}
         </select>
-        <select value={params.get("categoryId") ?? ""} onChange={(e) => setFilterParam("categoryId", e.target.value)} className="rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm">
+        <select
+          value={params.get("categoryId") ?? ""}
+          onChange={(e) => setFilterParam("categoryId", e.target.value)}
+          className="rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm"
+        >
           <option value="">All categories</option>
-          {categories?.filter((c) => !c.archivedAt).map((c) => (
-            <option key={c.id} value={c.id}>{c.name}</option>
-          ))}
+          {categories
+            ?.filter((c) => !c.archivedAt)
+            .map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
         </select>
         <input
           placeholder="tag"
@@ -166,7 +190,10 @@ export function TransactionsPage() {
           className="w-24 rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm"
         />
         {[...params.keys()].length > 0 && (
-          <button onClick={() => setParams(new URLSearchParams(), { replace: true })} className="text-sm text-slate-500 underline">
+          <button
+            onClick={() => setParams(new URLSearchParams(), { replace: true })}
+            className="text-sm text-slate-500 underline"
+          >
             Clear
           </button>
         )}
@@ -197,9 +224,13 @@ export function TransactionsPage() {
             }}
           >
             <option value="">Set category…</option>
-            {categories?.filter((c) => !c.archivedAt).map((c) => (
-              <option key={c.id} value={c.id}>{c.name}</option>
-            ))}
+            {categories
+              ?.filter((c) => !c.archivedAt)
+              .map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
           </select>
           <button
             className="rounded bg-slate-700 px-2 py-1"
@@ -216,20 +247,36 @@ export function TransactionsPage() {
           >
             Delete
           </button>
-          <button className="ml-auto underline" onClick={() => { setSelected(new Set()); setAllMatching(false); }}>
+          <button
+            className="ml-auto underline"
+            onClick={() => {
+              setSelected(new Set());
+              setAllMatching(false);
+            }}
+          >
             Clear selection
           </button>
         </div>
       )}
 
       {/* Virtualized table */}
-      <div ref={parentRef} className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-slate-200 bg-white">
-        <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
+      <div
+        ref={parentRef}
+        className="min-h-0 flex-1 overflow-auto rounded-lg border border-slate-200 bg-white"
+      >
+        <div
+          className="min-w-[560px]"
+          style={{ height: virtualizer.getTotalSize(), position: "relative" }}
+        >
           {virtualItems.map((vi) => {
             const tx = items[vi.index];
             if (!tx) {
               return (
-                <div key="loader" className="absolute left-0 w-full px-3 py-2 text-center text-sm text-slate-400" style={{ top: vi.start }}>
+                <div
+                  key="loader"
+                  className="absolute left-0 w-full px-3 py-2 text-center text-sm text-slate-400"
+                  style={{ top: vi.start }}
+                >
                   Loading more…
                 </div>
               );
@@ -257,7 +304,9 @@ export function TransactionsPage() {
         )}
       </div>
 
-      {drawerTx && <TransactionDrawer id={drawerTx} filter={filter} onClose={() => setDrawerTx(null)} />}
+      {drawerTx && (
+        <TransactionDrawer id={drawerTx} filter={filter} onClose={() => setDrawerTx(null)} />
+      )}
       {aiCategorize && (
         <AiCategorizePanel
           onClose={() => setAiCategorize(false)}
@@ -287,7 +336,9 @@ function TxRow({
   catName: (id: string | null) => string;
   accName: (id: string) => string;
   categories: Array<{ id: string; name: string; archivedAt: string | null }>;
-  onUpdate: (patch: Partial<{ categoryId: string | null; date: string; amountPaise: number }>) => void;
+  onUpdate: (
+    patch: Partial<{ categoryId: string | null; date: string; amountPaise: number }>,
+  ) => void;
 }) {
   const [editing, setEditing] = useState<"category" | "date" | "amount" | null>(null);
   const isTransfer = tx.transferLinkId !== null;
@@ -296,24 +347,50 @@ function TxRow({
       className="absolute left-0 flex w-full items-center gap-2 border-b border-slate-100 px-3 text-sm hover:bg-slate-50"
       style={{ top, height: 44 }}
     >
-      <input type="checkbox" checked={selected} onChange={onToggle} onClick={(e) => e.stopPropagation()} />
+      <input
+        type="checkbox"
+        checked={selected}
+        onChange={onToggle}
+        onClick={(e) => e.stopPropagation()}
+      />
       {editing === "date" ? (
         <input
           type="date"
           autoFocus
           defaultValue={tx.date}
-          onBlur={(e) => { onUpdate({ date: e.target.value }); setEditing(null); }}
+          onBlur={(e) => {
+            onUpdate({ date: e.target.value });
+            setEditing(null);
+          }}
           className="w-32 rounded border border-slate-300 px-1 py-0.5"
         />
       ) : (
-        <button className="w-24 text-left text-slate-500" onClick={() => setEditing("date")}>{tx.date}</button>
+        <button className="w-24 text-left text-slate-500" onClick={() => setEditing("date")}>
+          {tx.date}
+        </button>
       )}
-      <button className="min-w-0 flex-1 truncate text-left font-medium text-slate-800" onClick={onOpen}>
+      <button
+        className="min-w-0 flex-1 truncate text-left font-medium text-slate-800"
+        onClick={onOpen}
+      >
         {tx.merchant || "(no merchant)"}
-        {isTransfer && <span className="ml-2 rounded bg-sky-100 px-1.5 py-0.5 text-xs font-normal text-sky-700">transfer</span>}
-        {tx.splits.length > 0 && <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-normal text-amber-700">split</span>}
+        {isTransfer && (
+          <span className="ml-2 rounded bg-sky-100 px-1.5 py-0.5 text-xs font-normal text-sky-700">
+            transfer
+          </span>
+        )}
+        {tx.splits.length > 0 && (
+          <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-normal text-amber-700">
+            split
+          </span>
+        )}
         {tx.tags.map((t) => (
-          <span key={t} className="ml-1 rounded bg-slate-100 px-1.5 py-0.5 text-xs font-normal text-slate-500">#{t}</span>
+          <span
+            key={t}
+            className="ml-1 rounded bg-slate-100 px-1.5 py-0.5 text-xs font-normal text-slate-500"
+          >
+            #{t}
+          </span>
         ))}
       </button>
       <span className="hidden w-32 truncate text-slate-500 md:block">{accName(tx.accountId)}</span>
@@ -322,16 +399,26 @@ function TxRow({
           autoFocus
           defaultValue={tx.categoryId ?? ""}
           onBlur={() => setEditing(null)}
-          onChange={(e) => { onUpdate({ categoryId: e.target.value === "" ? null : e.target.value }); setEditing(null); }}
+          onChange={(e) => {
+            onUpdate({ categoryId: e.target.value === "" ? null : e.target.value });
+            setEditing(null);
+          }}
           className="w-36 rounded border border-slate-300 px-1 py-0.5"
         >
           <option value="">Uncategorized</option>
-          {categories.filter((c) => !c.archivedAt).map((c) => (
-            <option key={c.id} value={c.id}>{c.name}</option>
-          ))}
+          {categories
+            .filter((c) => !c.archivedAt)
+            .map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
         </select>
       ) : (
-        <button className="w-36 truncate text-left text-slate-500" onClick={() => setEditing("category")}>
+        <button
+          className="w-36 truncate text-left text-slate-500"
+          onClick={() => setEditing("category")}
+        >
           {tx.splits.length > 0 ? "(split)" : catName(tx.categoryId)}
         </button>
       )}
@@ -399,8 +486,15 @@ function QuickAdd({ filter }: { filter: TransactionFilter }) {
   }
 
   return (
-    <form onSubmit={submit} className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-white p-2">
-      <select value={kind} onChange={(e) => setKind(e.target.value as "expense" | "income")} className="rounded-md border border-slate-300 px-2 py-1.5 text-sm">
+    <form
+      onSubmit={submit}
+      className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-white p-2"
+    >
+      <select
+        value={kind}
+        onChange={(e) => setKind(e.target.value as "expense" | "income")}
+        className="rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+      >
         <option value="expense">Expense</option>
         <option value="income">Income</option>
       </select>
@@ -417,19 +511,42 @@ function QuickAdd({ filter }: { filter: TransactionFilter }) {
         inputMode="decimal"
         className="w-28 rounded-md border border-slate-300 px-2 py-1.5 text-sm text-right"
       />
-      <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="rounded-md border border-slate-300 px-2 py-1.5 text-sm" />
-      <select value={effAccount} onChange={(e) => setAccountId(e.target.value)} className="rounded-md border border-slate-300 px-2 py-1.5 text-sm">
+      <input
+        type="date"
+        value={date}
+        onChange={(e) => setDate(e.target.value)}
+        className="rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+      />
+      <select
+        value={effAccount}
+        onChange={(e) => setAccountId(e.target.value)}
+        className="rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+      >
         {active.map((a) => (
-          <option key={a.id} value={a.id}>{a.name}</option>
+          <option key={a.id} value={a.id}>
+            {a.name}
+          </option>
         ))}
       </select>
-      <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} className="rounded-md border border-slate-300 px-2 py-1.5 text-sm">
+      <select
+        value={categoryId}
+        onChange={(e) => setCategoryId(e.target.value)}
+        className="rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+      >
         <option value="">Category…</option>
-        {categories?.filter((c) => !c.archivedAt && c.kind === kind).map((c) => (
-          <option key={c.id} value={c.id}>{c.name}</option>
-        ))}
+        {categories
+          ?.filter((c) => !c.archivedAt && c.kind === kind)
+          .map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
+          ))}
       </select>
-      <button type="submit" disabled={create.isPending} className="rounded-md bg-slate-800 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50">
+      <button
+        type="submit"
+        disabled={create.isPending}
+        className="rounded-md bg-slate-800 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50"
+      >
         Add
       </button>
     </form>
