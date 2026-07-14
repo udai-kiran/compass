@@ -1,0 +1,20 @@
+{
+  "name": "@compass/ai",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "test": "node --test \"src/**/*.test.ts\"",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@compass/shared": "^0.1.0",
+    "zod": "^4.4.3"
+  }
+}

@@ -1,0 +1,25 @@
+@import "tailwindcss";
+
+@utility input {
+  @apply rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-800 focus:border-slate-500 focus:outline-none;
+}
+
+/* Print: drop the app chrome and non-printable controls, produce clean A4 */
+@media print {
+  aside,
+  header,
+  .no-print {
+    display: none !important;
+  }
+  main {
+    overflow: visible !important;
+    padding: 0 !important;
+  }
+  @page {
+    size: A4;
+    margin: 16mm;
+  }
+  body {
+    background: #fff !important;
+  }
+}
