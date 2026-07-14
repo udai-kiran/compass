@@ -1,4 +1,4 @@
-import { StrictMode } from "react";
+import { lazy, StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import {
   MutationCache,
@@ -12,24 +12,60 @@ import { toast, ToastProvider } from "./lib/toast.tsx";
 import { AppLayout } from "./layouts/AppLayout.tsx";
 import { Login } from "./routes/Login.tsx";
 import { Welcome } from "./routes/Welcome.tsx";
-import { TransactionsPage } from "./routes/transactions/TransactionsPage.tsx";
-import { ImportPage } from "./routes/imports/ImportPage.tsx";
-import { DashboardPage } from "./routes/dashboard/DashboardPage.tsx";
-import { BudgetsPage } from "./routes/budgets/BudgetsPage.tsx";
-import { TrendsPage } from "./routes/trends/TrendsPage.tsx";
-import { GoalsPage } from "./routes/goals/GoalsPage.tsx";
-import { CashFlowPage } from "./routes/cashflow/CashFlowPage.tsx";
-import { BillsPage } from "./routes/bills/BillsPage.tsx";
-import { CardsPage } from "./routes/cards/CardsPage.tsx";
-import { EMIsPage } from "./routes/emis/EMIsPage.tsx";
-import { PortfolioPage } from "./routes/investments/PortfolioPage.tsx";
-import { NetWorthPage } from "./routes/networth/NetWorthPage.tsx";
-import { InsightsPage } from "./routes/insights/InsightsPage.tsx";
-import { ReportsPage } from "./routes/reports/ReportsPage.tsx";
-import { NotificationsPage } from "./routes/notifications/NotificationsPage.tsx";
-import { SettingsPage } from "./routes/settings/SettingsPage.tsx";
 import { ErrorPage, NotFound } from "./routes/ErrorPage.tsx";
 import "./index.css";
+
+// Authenticated pages are code-split: each becomes its own chunk loaded on first
+// visit, keeping the initial bundle (and the charting lib) out of the login path.
+// The shared Suspense boundary lives in AppLayout, around <Outlet/>.
+const TransactionsPage = lazy(() =>
+  import("./routes/transactions/TransactionsPage.tsx").then((m) => ({ default: m.TransactionsPage })),
+);
+const ImportPage = lazy(() =>
+  import("./routes/imports/ImportPage.tsx").then((m) => ({ default: m.ImportPage })),
+);
+const DashboardPage = lazy(() =>
+  import("./routes/dashboard/DashboardPage.tsx").then((m) => ({ default: m.DashboardPage })),
+);
+const BudgetsPage = lazy(() =>
+  import("./routes/budgets/BudgetsPage.tsx").then((m) => ({ default: m.BudgetsPage })),
+);
+const TrendsPage = lazy(() =>
+  import("./routes/trends/TrendsPage.tsx").then((m) => ({ default: m.TrendsPage })),
+);
+const GoalsPage = lazy(() =>
+  import("./routes/goals/GoalsPage.tsx").then((m) => ({ default: m.GoalsPage })),
+);
+const CashFlowPage = lazy(() =>
+  import("./routes/cashflow/CashFlowPage.tsx").then((m) => ({ default: m.CashFlowPage })),
+);
+const BillsPage = lazy(() =>
+  import("./routes/bills/BillsPage.tsx").then((m) => ({ default: m.BillsPage })),
+);
+const CardsPage = lazy(() =>
+  import("./routes/cards/CardsPage.tsx").then((m) => ({ default: m.CardsPage })),
+);
+const EMIsPage = lazy(() =>
+  import("./routes/emis/EMIsPage.tsx").then((m) => ({ default: m.EMIsPage })),
+);
+const PortfolioPage = lazy(() =>
+  import("./routes/investments/PortfolioPage.tsx").then((m) => ({ default: m.PortfolioPage })),
+);
+const NetWorthPage = lazy(() =>
+  import("./routes/networth/NetWorthPage.tsx").then((m) => ({ default: m.NetWorthPage })),
+);
+const InsightsPage = lazy(() =>
+  import("./routes/insights/InsightsPage.tsx").then((m) => ({ default: m.InsightsPage })),
+);
+const ReportsPage = lazy(() =>
+  import("./routes/reports/ReportsPage.tsx").then((m) => ({ default: m.ReportsPage })),
+);
+const NotificationsPage = lazy(() =>
+  import("./routes/notifications/NotificationsPage.tsx").then((m) => ({ default: m.NotificationsPage })),
+);
+const SettingsPage = lazy(() =>
+  import("./routes/settings/SettingsPage.tsx").then((m) => ({ default: m.SettingsPage })),
+);
 
 function onApiError(err: unknown) {
   // 401s are handled by redirecting to /login — don't toast them.

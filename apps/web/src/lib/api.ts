@@ -38,3 +38,23 @@ export function apiPost<T>(path: string, schema: z.ZodType<T>, body?: unknown): 
     body: body === undefined ? undefined : JSON.stringify(body),
   });
 }
+
+export function apiPut<T>(path: string, schema: z.ZodType<T>, body?: unknown): Promise<T> {
+  return request(path, schema, {
+    method: "PUT",
+    headers: body === undefined ? undefined : { "content-type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+}
+
+export function apiPatch<T>(path: string, schema: z.ZodType<T>, body?: unknown): Promise<T> {
+  return request(path, schema, {
+    method: "PATCH",
+    headers: body === undefined ? undefined : { "content-type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+}
+
+export function apiDelete<T>(path: string, schema: z.ZodType<T>): Promise<T> {
+  return request(path, schema, { method: "DELETE" });
+}

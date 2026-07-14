@@ -26,25 +26,9 @@ import {
   type UpdateCategory,
   type UpdateTransaction,
 } from "@compass/shared";
-import { apiGet, apiPost } from "./api.ts";
+import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from "./api.ts";
 
 const OkSchema = z.object({ ok: z.boolean() });
-
-async function apiPatch<T>(path: string, schema: z.ZodType<T>, body: unknown): Promise<T> {
-  const res = await fetch(path, {
-    method: "PATCH",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) throw new Error(((await res.json()) as { message?: string }).message ?? "Failed");
-  return schema.parse(await res.json());
-}
-
-async function apiDelete<T>(path: string, schema: z.ZodType<T>): Promise<T> {
-  const res = await fetch(path, { method: "DELETE" });
-  if (!res.ok) throw new Error(((await res.json()) as { message?: string }).message ?? "Failed");
-  return schema.parse(await res.json());
-}
 
 // ---------- accounts ----------
 
@@ -187,21 +171,11 @@ export function useTransactionMutations(filter: TransactionFilter) {
     }: {
       id: string;
       splits: Array<{ categoryId: string; amountPaise: number; note: string }>;
-    }) => apiPost2(`/api/transactions/${id}/splits`, TransactionSchema, { splits }),
+    }) => apiPut(`/api/transactions/${id}/splits`, TransactionSchema, { splits }),
     onSuccess: invalidate,
   });
 
   return { create, update, remove, bulk, setSplits };
-}
-
-async function apiPost2<T>(path: string, schema: z.ZodType<T>, body: unknown): Promise<T> {
-  const res = await fetch(path, {
-    method: "PUT",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) throw new Error(((await res.json()) as { message?: string }).message ?? "Failed");
-  return schema.parse(await res.json());
 }
 
 // ---------- transfers ----------

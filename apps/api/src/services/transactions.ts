@@ -131,6 +131,10 @@ export async function listTransactions(
       ]
     : [desc(transactions.date), desc(transactions.id)];
 
+  // The filtered totals can't change between pages of one scroll, so only pay
+  // for the count/sum aggregate on the first page (no cursor); later pages carry
+  // the value the client already has and report -1 to signal "unchanged".
+  const withTotals = query.cursor === undefined;
   const [rows, totals] = await Promise.all([
     db
       .select()
@@ -138,13 +142,15 @@ export async function listTransactions(
       .where(and(...conds))
       .orderBy(...order)
       .limit(query.limit + 1),
-    db
-      .select({
-        count: sql<number>`count(*)::int`,
-        sum: sql<number>`coalesce(sum(${transactions.amountPaise}), 0)::bigint`,
-      })
-      .from(transactions)
-      .where(where),
+    withTotals
+      ? db
+          .select({
+            count: sql<number>`count(*)::int`,
+            sum: sql<number>`coalesce(sum(${transactions.amountPaise}), 0)::bigint`,
+          })
+          .from(transactions)
+          .where(where)
+      : Promise.resolve(null),
   ]);
 
   const hasMore = rows.length > query.limit;
@@ -153,8 +159,8 @@ export async function listTransactions(
   return {
     items: await hydrate(db, page),
     nextCursor: hasMore && last && !query.q ? encodeCursor(last.date, last.id) : null,
-    totalCount: totals[0]!.count,
-    totalAmountPaise: Number(totals[0]!.sum),
+    totalCount: totals ? totals[0]!.count : -1,
+    totalAmountPaise: totals ? Number(totals[0]!.sum) : -1,
   };
 }
 

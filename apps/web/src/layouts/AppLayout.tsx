@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Navigate, NavLink, Outlet, useNavigate } from "react-router";
 import { z } from "zod";
@@ -100,7 +101,11 @@ export function AppLayout() {
           </div>
         </header>
         <main id="main-content" className="flex-1 overflow-y-auto p-6">
-          <Outlet />
+          <Suspense
+            fallback={<div className="text-sm text-slate-500">Loading…</div>}
+          >
+            <Outlet />
+          </Suspense>
         </main>
       </div>
     </div>

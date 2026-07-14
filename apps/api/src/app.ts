@@ -13,6 +13,7 @@ import { createRedis } from "./infra/redis.ts";
 import { createDb, type Db } from "./db/index.ts";
 import { startJobs, type Queues } from "./jobs/index.ts";
 import multipart from "@fastify/multipart";
+import compress from "@fastify/compress";
 import { setupAuth } from "./plugins/auth.ts";
 import { setupSecurity } from "./plugins/security.ts";
 import { healthRoutes } from "./routes/health.ts";
@@ -119,6 +120,9 @@ export async function buildApp(config: Config): Promise<FastifyInstance> {
   );
 
   await app.register(multipart);
+  // gzip/brotli JSON responses above ~1KB (transaction pages, reports, aggregates).
+  // Skips small bodies where compression overhead isn't worth it.
+  await app.register(compress, { global: true, threshold: 1024 });
   await app.register(healthRoutes);
   await app.register(authRoutes);
   await app.register(accountRoutes);
