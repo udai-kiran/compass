@@ -35,6 +35,8 @@ COPY --from=check /tmp/typecheck-ok /tmp/typecheck-ok
 COPY packages/shared/src ./packages/shared/src
 COPY packages/ai/src ./packages/ai/src
 COPY apps/api/src ./apps/api/src
+# Migration SQL — applied by `npm run db:bootstrap` (compose `migrate` service).
+COPY apps/api/drizzle ./apps/api/drizzle
 USER node
 EXPOSE 3001
 CMD ["node", "apps/api/src/server.ts"]
