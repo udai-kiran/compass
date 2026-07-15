@@ -2,8 +2,8 @@ import { useState, type FormEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Navigate, useNavigate } from "react-router";
 import { LoginRequestSchema, UserSchema } from "@compass/shared";
-import { apiPost } from "../lib/api.ts";
-import { useBootstrapStatus } from "../lib/auth.ts";
+import { ApiError, apiPost } from "../lib/api.ts";
+import { meQuery, useBootstrapStatus } from "../lib/auth.ts";
 
 export function Login() {
   const { data: bootstrap } = useBootstrapStatus();
@@ -13,10 +13,22 @@ export function Login() {
   const [password, setPassword] = useState("");
 
   const login = useMutation({
-    mutationFn: (body: { email: string; password: string }) =>
-      apiPost("/api/auth/login", UserSchema, LoginRequestSchema.parse(body)),
-    onSuccess: async (user) => {
-      queryClient.setQueryData(["me"], user);
+    mutationFn: async (body: { email: string; password: string }) => {
+      await apiPost("/api/auth/login", UserSchema, LoginRequestSchema.parse(body));
+      // Don't enter the app on the login response alone — fetch /me so the
+      // session cookie has to survive a real round trip. A cookie the browser
+      // refused to store (Secure over plain HTTP) would otherwise leave every
+      // page rendering off this response while writes 401.
+      try {
+        return await queryClient.fetchQuery({ ...meQuery, staleTime: 0 });
+      } catch {
+        throw new ApiError(
+          401,
+          "Signed in, but your browser did not keep the session cookie. Serve the app over HTTPS (or localhost) and try again.",
+        );
+      }
+    },
+    onSuccess: async () => {
       await navigate("/");
     },
   });
@@ -55,6 +67,12 @@ export function Login() {
             className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
           />
         </label>
+        {/* 401s are deliberately not toasted (see onApiError), so surface them here. */}
+        {login.isError && (
+          <p role="alert" className="mt-4 text-sm text-red-600">
+            {login.error.message}
+          </p>
+        )}
         <button
           type="submit"
           disabled={login.isPending}
