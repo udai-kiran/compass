@@ -9,14 +9,13 @@ import { Donut, LineChart, SERIES, StatTile } from "../../lib/viz.tsx";
 import { toast } from "../../lib/toast.tsx";
 import { usePortfolio, useHoldingMutations } from "../../lib/wealth-queries.ts";
 
+// PPF/EPF are not here on purpose — they're account types, managed in Settings.
 const ASSET_LABELS: Record<AssetClass, string> = {
   stock: "Stocks",
   mutual_fund: "Mutual funds",
   etf: "ETFs",
   gold: "Gold",
   fd: "Fixed deposit",
-  epf: "EPF",
-  ppf: "PPF",
   nps: "NPS",
   other: "Other",
 };

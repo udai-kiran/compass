@@ -1,5 +1,5 @@
 import { asc, eq, sql } from "drizzle-orm";
-import type { NetWorthReport } from "@compass/shared";
+import type { AccountType, NetWorthReport } from "@compass/shared";
 import type { Db } from "../db/index.ts";
 import { netWorthSnapshots, users } from "../db/schema.ts";
 import { portfolioValue } from "./holdings.ts";
@@ -11,6 +11,27 @@ interface Breakdown {
   creditCardsPaise: number;
   loansPaise: number;
 }
+
+/** Account-derived buckets; holdingsPaise comes from the portfolio, not accounts. */
+type AccountBucket = Exclude<keyof Breakdown, "holdingsPaise">;
+
+/**
+ * Which bucket each account type contributes to.
+ *
+ * Exhaustive on purpose: adding an account type without classifying it here is
+ * a compile error. An unclassified type would otherwise be dropped from the
+ * balance sheet entirely — the balance simply vanishes, with no error to notice.
+ */
+export const ACCOUNT_BUCKET: Record<AccountType, AccountBucket> = {
+  bank: "cashPaise",
+  cash: "cashPaise",
+  investment: "investmentAccountsPaise",
+  // PPF/EPF balances are real, credited money — assets, same as any investment account.
+  ppf: "investmentAccountsPaise",
+  epf: "investmentAccountsPaise",
+  credit_card: "creditCardsPaise",
+  loan: "loansPaise",
+};
 
 /** Balance-sheet math as of a date: account balances by type + holding values. */
 export async function computeNetWorth(
@@ -30,29 +51,24 @@ export async function computeNetWorth(
     where a.user_id = ${userId} and a.archived_at is null
     group by a.type
   `);
-  const byType = new Map(
-    (res.rows as Array<{ type: string; balance: string }>).map((r) => [r.type, Number(r.balance)]),
-  );
-
-  const cash = (byType.get("bank") ?? 0) + (byType.get("cash") ?? 0);
-  const investmentAccounts = byType.get("investment") ?? 0;
-  const creditCards = byType.get("credit_card") ?? 0;
-  const loans = byType.get("loan") ?? 0;
+  const buckets: Record<AccountBucket, number> = {
+    cashPaise: 0,
+    investmentAccountsPaise: 0,
+    creditCardsPaise: 0,
+    loansPaise: 0,
+  };
+  for (const r of res.rows as Array<{ type: string; balance: string }>) {
+    const bucket = ACCOUNT_BUCKET[r.type as AccountType];
+    // A type Postgres knows but this code doesn't: skipping it would hide money.
+    if (!bucket) throw new Error(`Unclassified account type in net worth: ${r.type}`);
+    buckets[bucket] += Number(r.balance);
+  }
   const holdingsValue = await portfolioValue(db, userId, asOf);
 
-  const breakdown: Breakdown = {
-    cashPaise: cash,
-    investmentAccountsPaise: investmentAccounts,
-    holdingsPaise: holdingsValue,
-    creditCardsPaise: creditCards,
-    loansPaise: loans,
-  };
-  const assets =
-    Math.max(0, cash) + Math.max(0, investmentAccounts) + holdingsValue +
-    Math.max(0, creditCards) + Math.max(0, loans);
-  const liabilities =
-    Math.max(0, -cash) + Math.max(0, -investmentAccounts) +
-    Math.max(0, -creditCards) + Math.max(0, -loans);
+  const breakdown: Breakdown = { ...buckets, holdingsPaise: holdingsValue };
+  const accountValues = Object.values(buckets);
+  const assets = accountValues.reduce((s, v) => s + Math.max(0, v), holdingsValue);
+  const liabilities = accountValues.reduce((s, v) => s + Math.max(0, -v), 0);
   return { assetsPaise: assets, liabilitiesPaise: liabilities, breakdown };
 }
 

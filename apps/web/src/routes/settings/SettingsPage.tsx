@@ -11,7 +11,25 @@ import { RulesPanel } from "./RulesPanel.tsx";
 import { RecurringPanel } from "./RecurringPanel.tsx";
 import { AboutPanel, DataPanel, NotificationsPanel, ProfilePanel, SessionsPanel } from "./GeneralPanels.tsx";
 
-const ACCOUNT_TYPES: AccountType[] = ["bank", "cash", "credit_card", "investment", "loan"];
+const ACCOUNT_TYPES: AccountType[] = [
+  "bank",
+  "cash",
+  "credit_card",
+  "investment",
+  "loan",
+  "ppf",
+  "epf",
+];
+
+const ACCOUNT_TYPE_LABELS: Record<AccountType, string> = {
+  bank: "Bank",
+  cash: "Cash",
+  credit_card: "Credit card",
+  investment: "Investment",
+  loan: "Loan",
+  ppf: "PPF",
+  epf: "EPF",
+};
 
 const TABS = [
   "profile",
@@ -60,20 +78,34 @@ function AccountsPanel() {
   const { create, update, remove } = useAccountMutations();
   const [name, setName] = useState("");
   const [type, setType] = useState<AccountType>("bank");
+  const [institution, setInstitution] = useState("");
+  const [last4, setLast4] = useState("");
   const [opening, setOpening] = useState("0");
   const [showArchived, setShowArchived] = useState(false);
 
+  const last4Invalid = last4 !== "" && !/^\d{4}$/.test(last4);
+
   function submit(e: FormEvent) {
     e.preventDefault();
-    if (!name) return;
+    if (!name || last4Invalid) return;
     create.mutate(
       {
         name,
         type,
+        institution: institution || null,
+        accountLast4: last4 || null,
         currency: "INR",
         openingBalancePaise: Math.round(parseFloat(opening || "0") * 100),
       },
-      { onSuccess: () => { setName(""); setOpening("0"); toast("Account created", "success"); } },
+      {
+        onSuccess: () => {
+          setName("");
+          setInstitution("");
+          setLast4("");
+          setOpening("0");
+          toast("Account created", "success");
+        },
+      },
     );
   }
 
@@ -85,11 +117,25 @@ function AccountsPanel() {
         <input placeholder="Account name" value={name} onChange={(e) => setName(e.target.value)} className="w-44 rounded-md border border-slate-300 px-2 py-1.5 text-sm" />
         <select value={type} onChange={(e) => setType(e.target.value as AccountType)} className="rounded-md border border-slate-300 px-2 py-1.5 text-sm">
           {ACCOUNT_TYPES.map((t) => (
-            <option key={t} value={t}>{t.replace("_", " ")}</option>
+            <option key={t} value={t}>{ACCOUNT_TYPE_LABELS[t]}</option>
           ))}
         </select>
+        <input placeholder="Bank" value={institution} onChange={(e) => setInstitution(e.target.value)} className="w-32 rounded-md border border-slate-300 px-2 py-1.5 text-sm" />
+        <input
+          placeholder="Last 4"
+          value={last4}
+          onChange={(e) => setLast4(e.target.value.replace(/\D/g, "").slice(0, 4))}
+          inputMode="numeric"
+          aria-invalid={last4Invalid}
+          className={`w-20 rounded-md border px-2 py-1.5 text-sm ${last4Invalid ? "border-red-400" : "border-slate-300"}`}
+        />
         <input placeholder="Opening ₹" value={opening} onChange={(e) => setOpening(e.target.value)} inputMode="decimal" className="w-28 rounded-md border border-slate-300 px-2 py-1.5 text-right text-sm" />
-        <button type="submit" className="rounded-md bg-slate-800 px-3 py-1.5 text-sm text-white">Add account</button>
+        <button type="submit" disabled={last4Invalid} className="rounded-md bg-slate-800 px-3 py-1.5 text-sm text-white disabled:opacity-50">Add account</button>
+        {last4Invalid && (
+          <p role="alert" className="w-full text-xs text-red-600">
+            Last 4 must be exactly 4 digits — we only ever store the last four, never the full number.
+          </p>
+        )}
       </form>
 
       {visible.length === 0 && (
@@ -114,7 +160,29 @@ function AccountsPanel() {
               }}>▼</button>
             </div>
             <InlineName value={a.name} onSave={(name2) => update.mutate({ id: a.id, name: name2 })} />
-            <span className="rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">{a.type.replace("_", " ")}</span>
+            <InlineField
+              value={a.accountLast4}
+              placeholder="+ last 4"
+              render={(v) => <span className="tabular-nums">•••• {v}</span>}
+              sanitize={(v) => v.replace(/\D/g, "").slice(0, 4)}
+              validate={(v) => (v === "" || /^\d{4}$/.test(v) ? null : "4 digits")}
+              onSave={(v) => update.mutate({ id: a.id, accountLast4: v || null })}
+            />
+            <InlineField
+              value={a.institution}
+              placeholder="+ bank"
+              onSave={(v) => update.mutate({ id: a.id, institution: v || null })}
+            />
+            <select
+              value={a.type}
+              aria-label={`Type of ${a.name}`}
+              onChange={(e) => update.mutate({ id: a.id, type: e.target.value as AccountType })}
+              className="rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500"
+            >
+              {ACCOUNT_TYPES.map((t) => (
+                <option key={t} value={t}>{ACCOUNT_TYPE_LABELS[t]}</option>
+              ))}
+            </select>
             <span className="ml-auto tabular-nums text-slate-600">{formatINR(a.balancePaise)}</span>
             {a.archivedAt ? (
               <button className="text-xs text-slate-500 underline" onClick={() => update.mutate({ id: a.id, archived: false })}>Restore</button>
@@ -139,6 +207,62 @@ function AccountsPanel() {
         Show archived
       </label>
     </div>
+  );
+}
+
+/**
+ * Click-to-edit for optional account metadata. Shows a muted placeholder when
+ * unset, so an empty field is still discoverable.
+ */
+function InlineField({
+  value,
+  placeholder,
+  onSave,
+  render,
+  sanitize,
+  validate,
+}: {
+  value: string | null;
+  placeholder: string;
+  onSave: (v: string) => void;
+  render?: (v: string) => React.ReactNode;
+  sanitize?: (v: string) => string;
+  validate?: (v: string) => string | null;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value ?? "");
+  const error = editing && validate ? validate(draft) : null;
+
+  if (editing) {
+    return (
+      <input
+        autoFocus
+        value={draft}
+        aria-label={placeholder}
+        aria-invalid={error !== null}
+        title={error ?? undefined}
+        onChange={(e) => setDraft(sanitize ? sanitize(e.target.value) : e.target.value)}
+        onBlur={() => {
+          // Keep the row editable rather than silently discarding a bad value.
+          if (error) return;
+          if (draft !== (value ?? "")) onSave(draft);
+          setEditing(false);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") { setDraft(value ?? ""); setEditing(false); }
+          if (e.key === "Enter") e.currentTarget.blur();
+        }}
+        className={`w-24 rounded border px-1 py-0.5 text-xs ${error ? "border-red-400" : "border-slate-300"}`}
+      />
+    );
+  }
+  return (
+    <button
+      className="text-xs text-slate-400 hover:text-slate-600"
+      onClick={() => { setDraft(value ?? ""); setEditing(true); }}
+    >
+      {value ? (render?.(value) ?? value) : placeholder}
+    </button>
   );
 }
 

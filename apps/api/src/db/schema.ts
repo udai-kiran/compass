@@ -33,12 +33,20 @@ export const users = pgTable("users", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+/**
+ * `ppf` and `epf` are accounts rather than holdings because their balance is
+ * known exactly — interest is credited, not estimated. NPS and gold move with
+ * a daily NAV/price, so they stay holdings, where a valuation carries the
+ * as-of date that makes the estimate honest.
+ */
 export const accountType = pgEnum("account_type", [
   "bank",
   "cash",
   "credit_card",
   "investment",
   "loan",
+  "ppf",
+  "epf",
 ]);
 
 export const accounts = pgTable(
@@ -48,8 +56,16 @@ export const accounts = pgTable(
     userId: uuid("user_id")
       .notNull()
       .references(() => users.id),
+    /** human-facing label, e.g. "HDFC Joint" — never parsed; display comes from this alone */
     name: text("name").notNull(),
     type: accountType("type").notNull(),
+    /** issuing bank/institution; a lookup key for import matching, not a display badge */
+    institution: text("institution"),
+    /**
+     * Last 4 digits only. Enough to tell two HDFC accounts apart; storing the
+     * full number would put PII in a shared, unencrypted database for no gain.
+     */
+    accountLast4: text("account_last4"),
     currency: text("currency").notNull().default("INR"),
     openingBalancePaise: bigint("opening_balance_paise", { mode: "number" })
       .notNull()
@@ -487,6 +503,18 @@ export const attachments = pgTable(
 
 // ---------- Phase 5: cards, EMIs, holdings, net worth ----------
 
+export const cardNetwork = pgEnum("card_network", [
+  "visa",
+  "mastercard",
+  "amex",
+  "rupay",
+  "diners",
+]);
+
+/**
+ * Issuer and last-4 live on `accounts` (institution/accountLast4) — every
+ * account has them. Only genuinely card-specific fields belong here.
+ */
 export const cardDetails = pgTable("card_details", {
   accountId: uuid("account_id")
     .primaryKey()
@@ -494,6 +522,9 @@ export const cardDetails = pgTable("card_details", {
   userId: uuid("user_id")
     .notNull()
     .references(() => users.id),
+  network: cardNetwork("network"),
+  /** product name, e.g. "Regalia Gold" */
+  productName: text("product_name").notNull().default(""),
   /** statement close day of month (1–28) */
   cycleDay: integer("cycle_day").notNull().default(1),
   /** payment due day of month (1–28); first occurrence after the close */
@@ -504,6 +535,28 @@ export const cardDetails = pgTable("card_details", {
   remindDays: integer("remind_days").notNull().default(3),
   /** reward points earned per ₹100 spent (0 = no program) */
   earnRatePer100: integer("earn_rate_per_100").notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * Extra detail for `ppf`/`epf` accounts. Mirrors the card_details pattern: a
+ * 1:1 optional extension keyed by account, so the core accounts table stays
+ * free of type-specific columns.
+ */
+export const retirementDetails = pgTable("retirement_details", {
+  accountId: uuid("account_id")
+    .primaryKey()
+    .references(() => accounts.id, { onDelete: "cascade" }),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => users.id),
+  /** annual interest rate in basis points (710 = 7.10%) */
+  annualRateBps: integer("annual_rate_bps").notNull().default(0),
+  /** PPF matures 15 years from opening; EPF has no maturity, so null */
+  maturityDate: date("maturity_date"),
+  /** UAN for EPF, account number for PPF — free-form, may be non-numeric */
+  referenceNumber: text("reference_number").notNull().default(""),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -544,14 +597,17 @@ export const emiDetails = pgTable("emi_details", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+/**
+ * No ppf/epf here — those are account types. Their balance is a credited fact,
+ * not a valuation, so modelling them as holdings would dress a known number up
+ * as an estimate (and give the user two places to record the same thing).
+ */
 export const assetClass = pgEnum("asset_class", [
   "stock",
   "mutual_fund",
   "etf",
   "gold",
   "fd",
-  "epf",
-  "ppf",
   "nps",
   "other",
 ]);
@@ -574,6 +630,45 @@ export const holdings = pgTable(
   },
   (t) => [index("holdings_user_idx").on(t.userId)],
 );
+
+export const npsTier = pgEnum("nps_tier", ["tier_i", "tier_ii"]);
+
+/** Extra detail for `nps` holdings. */
+export const npsDetails = pgTable("nps_details", {
+  holdingId: uuid("holding_id")
+    .primaryKey()
+    .references(() => holdings.id, { onDelete: "cascade" }),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => users.id),
+  pran: text("pran").notNull().default(""),
+  tier: npsTier("tier").notNull().default("tier_i"),
+  /** scheme allocation, percent; E + C + G must total 100 (enforced in the service) */
+  equityPct: integer("equity_pct").notNull().default(0),
+  corporatePct: integer("corporate_pct").notNull().default(0),
+  govtPct: integer("govt_pct").notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const goldForm = pgEnum("gold_form", ["physical", "digital", "etf", "sgb"]);
+
+/** Extra detail for `gold` holdings. */
+export const goldDetails = pgTable("gold_details", {
+  holdingId: uuid("holding_id")
+    .primaryKey()
+    .references(() => holdings.id, { onDelete: "cascade" }),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => users.id),
+  form: goldForm("form").notNull().default("physical"),
+  /** karat, physical/digital only (22 or 24); null for etf/sgb */
+  purityKarat: integer("purity_karat"),
+  /** SGB matures 8 years from issue; null for every other form */
+  maturityDate: date("maturity_date"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
 
 export const holdingValuations = pgTable(
   "holding_valuations",

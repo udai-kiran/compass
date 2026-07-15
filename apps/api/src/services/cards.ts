@@ -18,6 +18,8 @@ type DetailsRow = typeof cardDetails.$inferSelect;
 function toDetails(d: DetailsRow): CardDetails {
   return {
     accountId: d.accountId,
+    network: d.network,
+    productName: d.productName,
     cycleDay: d.cycleDay,
     dueDay: d.dueDay,
     creditLimitPaise: d.creditLimitPaise,

@@ -16,6 +16,8 @@ function toAccount(row: AccountRow): Account {
     id: row.id,
     name: row.name,
     type: row.type,
+    institution: row.institution,
+    accountLast4: row.accountLast4,
     currency: row.currency,
     openingBalancePaise: row.openingBalancePaise,
     sortOrder: row.sortOrder,
