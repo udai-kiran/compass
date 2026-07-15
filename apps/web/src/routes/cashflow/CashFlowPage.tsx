@@ -39,9 +39,16 @@ export function CashFlowPage() {
       </div>
 
       <div className="grid gap-4 sm:grid-cols-3">
-        <StatTile label={`Net over ${months} months`} value={compactINR(totalNet)} sub={totalNet >= 0 ? "saved" : "overspent"} />
+        <StatTile
+          label={`Net over ${months} months`}
+          value={compactINR(totalNet)}
+          sub={totalNet >= 0 ? "saved" : "overspent"}
+        />
         <StatTile label="Average monthly net" value={compactINR(avgNet)} />
-        <StatTile label="Cash-flow-positive months" value={`${positiveMonths} / ${rows?.length ?? 0}`} />
+        <StatTile
+          label="Cash-flow-positive months"
+          value={`${positiveMonths} / ${rows?.length ?? 0}`}
+        />
       </div>
 
       <section className="rounded-lg border border-slate-200 bg-white p-4">
@@ -49,7 +56,10 @@ export function CashFlowPage() {
         <div className="mt-3">
           {rows && (
             <Columns
-              groups={rows.map((r) => ({ label: r.month, values: [r.incomePaise, r.expensePaise] }))}
+              groups={rows.map((r) => ({
+                label: r.month,
+                values: [r.incomePaise, r.expensePaise],
+              }))}
               names={["Income", "Spending"]}
               colors={[SERIES[1], SERIES[0]]}
             />
@@ -59,28 +69,36 @@ export function CashFlowPage() {
 
       <section className="rounded-lg border border-slate-200 bg-white p-4">
         <h2 className="text-sm font-semibold text-slate-700">Monthly detail</h2>
-        <table className="mt-2 w-full text-sm">
-          <thead>
-            <tr className="text-left text-xs text-slate-400">
-              <th className="py-1 font-normal">Month</th>
-              <th className="py-1 text-right font-normal">In</th>
-              <th className="py-1 text-right font-normal">Out</th>
-              <th className="py-1 text-right font-normal">Net</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {rows?.map((r) => (
-              <tr key={r.month}>
-                <td className="py-1.5 text-slate-600">{r.month}</td>
-                <td className="py-1.5 text-right tabular-nums text-slate-700">{formatINR(r.incomePaise)}</td>
-                <td className="py-1.5 text-right tabular-nums text-slate-700">{formatINR(r.expensePaise)}</td>
-                <td className={`py-1.5 text-right tabular-nums font-medium ${r.netPaise < 0 ? "text-red-700" : "text-slate-800"}`}>
-                  {formatINR(r.netPaise)}
-                </td>
+        <div className="overflow-x-auto">
+          <table className="mt-2 w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs text-slate-400">
+                <th className="py-1 font-normal">Month</th>
+                <th className="py-1 text-right font-normal">In</th>
+                <th className="py-1 text-right font-normal">Out</th>
+                <th className="py-1 text-right font-normal">Net</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {rows?.map((r) => (
+                <tr key={r.month}>
+                  <td className="py-1.5 text-slate-600">{r.month}</td>
+                  <td className="py-1.5 text-right tabular-nums text-slate-700">
+                    {formatINR(r.incomePaise)}
+                  </td>
+                  <td className="py-1.5 text-right tabular-nums text-slate-700">
+                    {formatINR(r.expensePaise)}
+                  </td>
+                  <td
+                    className={`py-1.5 text-right tabular-nums font-medium ${r.netPaise < 0 ? "text-red-700" : "text-slate-800"}`}
+                  >
+                    {formatINR(r.netPaise)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </section>
 
       <SeasonalSection />
@@ -123,7 +141,20 @@ export function CashFlowPage() {
   );
 }
 
-const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const MONTH_NAMES = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
 
 /** Same month across years — recurring annual spikes (insurance, fees) stand out. */
 function SeasonalSection() {
@@ -147,11 +178,7 @@ function SeasonalSection() {
         Same month compared across years — annual payments show as repeating spikes.
       </p>
       <div className="mt-3">
-        <Columns
-          groups={groups}
-          names={shownYears}
-          colors={shownYears.map((_, i) => SERIES[i]!)}
-        />
+        <Columns groups={groups} names={shownYears} colors={shownYears.map((_, i) => SERIES[i]!)} />
       </div>
     </section>
   );

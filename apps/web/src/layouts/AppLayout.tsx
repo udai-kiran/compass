@@ -1,4 +1,4 @@
-import { Suspense } from "react";
+import { Suspense, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Navigate, NavLink, Outlet, useNavigate } from "react-router";
 import { z } from "zod";
@@ -26,10 +26,33 @@ const NAV_SECTIONS = [
   { to: "/settings", label: "Settings" },
 ];
 
+function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
+  return (
+    <nav aria-label="Primary" className="flex-1 space-y-0.5 overflow-y-auto p-2">
+      {NAV_SECTIONS.map((s) => (
+        <NavLink
+          key={s.to}
+          to={s.to}
+          end={s.to === "/"}
+          onClick={onNavigate}
+          className={({ isActive }) =>
+            `block rounded-md px-3 py-2 text-sm ${
+              isActive ? "bg-slate-800 font-medium text-white" : "text-slate-600 hover:bg-slate-100"
+            }`
+          }
+        >
+          {s.label}
+        </NavLink>
+      ))}
+    </nav>
+  );
+}
+
 export function AppLayout() {
   const { data: me, isLoading, isError } = useMe();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   const logout = useMutation({
     mutationFn: () => apiPost("/api/auth/logout", z.object({ ok: z.boolean() })),
@@ -56,41 +79,69 @@ export function AppLayout() {
       </a>
       <CommandPalette />
       <Assistant />
-      <aside className="flex w-60 flex-col border-r border-slate-200 bg-white">
+      {/* Desktop sidebar — persistent from md up */}
+      <aside className="hidden w-60 flex-col border-r border-slate-200 bg-white md:flex">
         <div className="flex h-14 items-center border-b border-slate-200 px-4 text-lg font-semibold text-slate-800">
           🧭 Compass
         </div>
-        <nav aria-label="Primary" className="flex-1 space-y-0.5 overflow-y-auto p-2">
-          {NAV_SECTIONS.map((s) => (
-            <NavLink
-              key={s.to}
-              to={s.to}
-              end={s.to === "/"}
-              className={({ isActive }) =>
-                `block rounded-md px-3 py-2 text-sm ${
-                  isActive
-                    ? "bg-slate-800 font-medium text-white"
-                    : "text-slate-600 hover:bg-slate-100"
-                }`
-              }
-            >
-              {s.label}
-            </NavLink>
-          ))}
-        </nav>
+        <SidebarNav />
       </aside>
+
+      {/* Mobile slide-over drawer + backdrop — below md only */}
+      {mobileNavOpen && (
+        <div className="fixed inset-0 z-40 md:hidden" role="dialog" aria-modal="true">
+          <div
+            className="absolute inset-0 bg-slate-900/40"
+            onClick={() => setMobileNavOpen(false)}
+          />
+          <aside className="absolute inset-y-0 left-0 flex w-64 flex-col border-r border-slate-200 bg-white shadow-xl">
+            <div className="flex h-14 items-center justify-between border-b border-slate-200 px-4 text-lg font-semibold text-slate-800">
+              <span>🧭 Compass</span>
+              <button
+                onClick={() => setMobileNavOpen(false)}
+                aria-label="Close navigation"
+                className="rounded-md p-1 text-slate-400 hover:bg-slate-100"
+              >
+                ✕
+              </button>
+            </div>
+            <SidebarNav onNavigate={() => setMobileNavOpen(false)} />
+          </aside>
+        </div>
+      )}
+
       <div className="flex flex-1 flex-col">
-        <header className="flex h-14 items-center justify-between border-b border-slate-200 bg-white px-6">
-          <button
-            onClick={() => window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true }))}
-            className="flex items-center gap-2 rounded-md border border-slate-200 px-3 py-1.5 text-sm text-slate-400 hover:bg-slate-50"
-          >
-            <span>Search…</span>
-            <kbd className="rounded bg-slate-100 px-1.5 text-xs text-slate-500">⌘K</kbd>
-          </button>
+        <header className="flex h-14 items-center justify-between border-b border-slate-200 bg-white px-4 sm:px-6">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setMobileNavOpen(true)}
+              aria-label="Open navigation"
+              className="rounded-md border border-slate-200 p-1.5 text-slate-500 hover:bg-slate-50 md:hidden"
+            >
+              <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                <path
+                  d="M3 5h14M3 10h14M3 15h14"
+                  stroke="currentColor"
+                  strokeWidth="1.75"
+                  strokeLinecap="round"
+                />
+              </svg>
+            </button>
+            <button
+              onClick={() =>
+                window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true }))
+              }
+              className="flex items-center gap-2 rounded-md border border-slate-200 px-3 py-1.5 text-sm text-slate-400 hover:bg-slate-50"
+            >
+              <span>Search…</span>
+              <kbd className="hidden rounded bg-slate-100 px-1.5 text-xs text-slate-500 sm:inline">
+                ⌘K
+              </kbd>
+            </button>
+          </div>
           <div className="flex items-center gap-4">
             <NotificationBell />
-            <span className="text-sm text-slate-600">{me.displayName}</span>
+            <span className="hidden text-sm text-slate-600 sm:inline">{me.displayName}</span>
             <button
               onClick={() => logout.mutate()}
               disabled={logout.isPending}
@@ -100,10 +151,8 @@ export function AppLayout() {
             </button>
           </div>
         </header>
-        <main id="main-content" className="flex-1 overflow-y-auto p-6">
-          <Suspense
-            fallback={<div className="text-sm text-slate-500">Loading…</div>}
-          >
+        <main id="main-content" className="flex-1 overflow-y-auto p-4 sm:p-6">
+          <Suspense fallback={<div className="text-sm text-slate-500">Loading…</div>}>
             <Outlet />
           </Suspense>
         </main>

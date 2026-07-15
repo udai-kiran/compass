@@ -60,7 +60,9 @@ function UploadCard({ onStaged }: { onStaged: (b: ImportBatch) => void }) {
             className="ml-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
           >
             {active.map((a) => (
-              <option key={a.id} value={a.id}>{a.name}</option>
+              <option key={a.id} value={a.id}>
+                {a.name}
+              </option>
             ))}
           </select>
         </label>
@@ -101,7 +103,9 @@ function BatchWorkbench({ batch, onBack }: { batch: ImportBatch; onBack: () => v
   const staged = batch.status === "staged";
   return (
     <div>
-      <button onClick={onBack} className="mb-3 text-sm text-slate-500 underline">← All imports</button>
+      <button onClick={onBack} className="mb-3 text-sm text-slate-500 underline">
+        ← All imports
+      </button>
       <div className="mb-3 flex items-baseline justify-between">
         <h2 className="text-lg font-semibold text-slate-800">{batch.fileName}</h2>
         <span className="text-sm text-slate-500">
@@ -122,7 +126,11 @@ function StatusBadge({ status }: { status: ImportBatch["status"] }) {
     committed: "bg-emerald-100 text-emerald-700",
     rolled_back: "bg-slate-100 text-slate-500",
   } as const;
-  return <span className={`rounded px-1.5 py-0.5 text-xs ${styles[status]}`}>{status.replace("_", " ")}</span>;
+  return (
+    <span className={`rounded px-1.5 py-0.5 text-xs ${styles[status]}`}>
+      {status.replace("_", " ")}
+    </span>
+  );
 }
 
 function MappingEditor({ batch }: { batch: ImportBatch }) {
@@ -148,7 +156,9 @@ function MappingEditor({ batch }: { batch: ImportBatch }) {
     >
       {allowNone && <option value="">—</option>}
       {batch.headers.map((h) => (
-        <option key={h} value={h}>{h}</option>
+        <option key={h} value={h}>
+          {h}
+        </option>
       ))}
     </select>
   );
@@ -172,7 +182,9 @@ function MappingEditor({ batch }: { batch: ImportBatch }) {
         >
           <option value="">Apply preset…</option>
           {presets?.map((p) => (
-            <option key={p.name} value={p.name}>{p.name}</option>
+            <option key={p.name} value={p.name}>
+              {p.name}
+            </option>
           ))}
         </select>
       </div>
@@ -184,11 +196,15 @@ function MappingEditor({ batch }: { batch: ImportBatch }) {
           Format
           <select
             value={draft.dateFormat}
-            onChange={(e) => setDraft({ ...draft, dateFormat: e.target.value as ImportMapping["dateFormat"] })}
+            onChange={(e) =>
+              setDraft({ ...draft, dateFormat: e.target.value as ImportMapping["dateFormat"] })
+            }
             className="rounded-md border border-slate-300 px-2 py-1 text-sm"
           >
             {DATE_FORMATS.map((f) => (
-              <option key={f} value={f}>{f}</option>
+              <option key={f} value={f}>
+                {f}
+              </option>
             ))}
           </select>
         </label>
@@ -196,13 +212,16 @@ function MappingEditor({ batch }: { batch: ImportBatch }) {
           Merchant {col(draft.merchantColumn, (v) => setDraft({ ...draft, merchantColumn: v }))}
         </label>
         <label className="flex flex-col gap-1">
-          Notes {col(draft.notesColumn, (v) => setDraft({ ...draft, notesColumn: v || undefined }), true)}
+          Notes{" "}
+          {col(draft.notesColumn, (v) => setDraft({ ...draft, notesColumn: v || undefined }), true)}
         </label>
         <label className="flex flex-col gap-1">
           Amount style
           <select
             value={draft.amountMode}
-            onChange={(e) => setDraft({ ...draft, amountMode: e.target.value as ImportMapping["amountMode"] })}
+            onChange={(e) =>
+              setDraft({ ...draft, amountMode: e.target.value as ImportMapping["amountMode"] })
+            }
             className="rounded-md border border-slate-300 px-2 py-1 text-sm"
           >
             <option value="signed">Single signed column</option>
@@ -234,7 +253,11 @@ function MappingEditor({ batch }: { batch: ImportBatch }) {
           </>
         )}
         <label className="flex items-center gap-1 pb-1">
-          <input type="checkbox" checked={saveAsPreset} onChange={(e) => setSaveAsPreset(e.target.checked)} />
+          <input
+            type="checkbox"
+            checked={saveAsPreset}
+            onChange={(e) => setSaveAsPreset(e.target.checked)}
+          />
           save for this account
         </label>
         <button
@@ -283,8 +306,16 @@ function RowsTable({ batch }: { batch: ImportBatch }) {
           only duplicates & errors
         </label>
         <span className="text-slate-400">
-          {data.totalCount === 0 ? "no rows" : `${offset + 1}–${Math.min(offset + PAGE_SIZE, data.totalCount)} of ${data.totalCount}`}
-          <button disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))} className="ml-3 disabled:opacity-30">←</button>
+          {data.totalCount === 0
+            ? "no rows"
+            : `${offset + 1}–${Math.min(offset + PAGE_SIZE, data.totalCount)} of ${data.totalCount}`}
+          <button
+            disabled={offset === 0}
+            onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
+            className="ml-3 disabled:opacity-30"
+          >
+            ←
+          </button>
           <button
             disabled={offset + PAGE_SIZE >= data.totalCount}
             onClick={() => setOffset(offset + PAGE_SIZE)}
@@ -294,68 +325,90 @@ function RowsTable({ batch }: { batch: ImportBatch }) {
           </button>
         </span>
       </div>
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b border-slate-100 text-left text-xs text-slate-400">
-            <th className="px-3 py-1.5">use</th>
-            <th className="px-2 py-1.5">date</th>
-            <th className="px-2 py-1.5">merchant</th>
-            <th className="px-2 py-1.5">category</th>
-            <th className="px-2 py-1.5 text-right">amount</th>
-            <th className="px-2 py-1.5">flags</th>
-          </tr>
-        </thead>
-        <tbody>
-          {data.items.map((row) => (
-            <tr key={row.id} className={`border-b border-slate-50 ${row.include && !row.error ? "" : "opacity-50"}`}>
-              <td className="px-3 py-1">
-                <input
-                  type="checkbox"
-                  disabled={!staged || row.error !== null}
-                  checked={row.include}
-                  onChange={(e) => patch(row, { include: e.target.checked })}
-                />
-              </td>
-              <td className="px-2 py-1 text-slate-500">{row.date ?? "—"}</td>
-              <td className="max-w-64 truncate px-2 py-1 font-medium text-slate-700" title={row.rawMerchant}>
-                {row.merchant || row.rawMerchant || "—"}
-              </td>
-              <td className="px-2 py-1">
-                {staged && row.error === null ? (
-                  <select
-                    value={row.categoryId ?? ""}
-                    onChange={(e) => patch(row, { categoryId: e.target.value === "" ? null : e.target.value })}
-                    className="w-40 rounded border border-slate-200 px-1 py-0.5 text-xs"
-                  >
-                    <option value="">Uncategorized</option>
-                    {categories?.filter((c) => !c.archivedAt).map((c) => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
-                    ))}
-                  </select>
-                ) : (
-                  <span className="text-slate-400">{categories?.find((c) => c.id === row.categoryId)?.name ?? "—"}</span>
-                )}
-              </td>
-              <td className={`px-2 py-1 text-right tabular-nums ${(row.amountPaise ?? 0) >= 0 ? "text-emerald-600" : "text-slate-700"}`}>
-                {row.amountPaise === null ? "—" : formatINR(row.amountPaise)}
-              </td>
-              <td className="px-2 py-1">
-                {row.error && <span className="rounded bg-red-100 px-1.5 py-0.5 text-xs text-red-700">{row.error}</span>}
-                {row.duplicate && (
-                  <button
-                    disabled={!staged}
-                    title="Flagged as duplicate — click to keep anyway"
-                    onClick={() => patch(row, { duplicate: false, include: true })}
-                    className="rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-700 hover:bg-amber-200"
-                  >
-                    duplicate ✕
-                  </button>
-                )}
-              </td>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-slate-100 text-left text-xs text-slate-400">
+              <th className="px-3 py-1.5">use</th>
+              <th className="px-2 py-1.5">date</th>
+              <th className="px-2 py-1.5">merchant</th>
+              <th className="px-2 py-1.5">category</th>
+              <th className="px-2 py-1.5 text-right">amount</th>
+              <th className="px-2 py-1.5">flags</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {data.items.map((row) => (
+              <tr
+                key={row.id}
+                className={`border-b border-slate-50 ${row.include && !row.error ? "" : "opacity-50"}`}
+              >
+                <td className="px-3 py-1">
+                  <input
+                    type="checkbox"
+                    disabled={!staged || row.error !== null}
+                    checked={row.include}
+                    onChange={(e) => patch(row, { include: e.target.checked })}
+                  />
+                </td>
+                <td className="px-2 py-1 text-slate-500">{row.date ?? "—"}</td>
+                <td
+                  className="max-w-64 truncate px-2 py-1 font-medium text-slate-700"
+                  title={row.rawMerchant}
+                >
+                  {row.merchant || row.rawMerchant || "—"}
+                </td>
+                <td className="px-2 py-1">
+                  {staged && row.error === null ? (
+                    <select
+                      value={row.categoryId ?? ""}
+                      onChange={(e) =>
+                        patch(row, { categoryId: e.target.value === "" ? null : e.target.value })
+                      }
+                      className="w-40 rounded border border-slate-200 px-1 py-0.5 text-xs"
+                    >
+                      <option value="">Uncategorized</option>
+                      {categories
+                        ?.filter((c) => !c.archivedAt)
+                        .map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.name}
+                          </option>
+                        ))}
+                    </select>
+                  ) : (
+                    <span className="text-slate-400">
+                      {categories?.find((c) => c.id === row.categoryId)?.name ?? "—"}
+                    </span>
+                  )}
+                </td>
+                <td
+                  className={`px-2 py-1 text-right tabular-nums ${(row.amountPaise ?? 0) >= 0 ? "text-emerald-600" : "text-slate-700"}`}
+                >
+                  {row.amountPaise === null ? "—" : formatINR(row.amountPaise)}
+                </td>
+                <td className="px-2 py-1">
+                  {row.error && (
+                    <span className="rounded bg-red-100 px-1.5 py-0.5 text-xs text-red-700">
+                      {row.error}
+                    </span>
+                  )}
+                  {row.duplicate && (
+                    <button
+                      disabled={!staged}
+                      title="Flagged as duplicate — click to keep anyway"
+                      onClick={() => patch(row, { duplicate: false, include: true })}
+                      className="rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-700 hover:bg-amber-200"
+                    >
+                      duplicate ✕
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -380,7 +433,10 @@ function CommitBar({ batch, onDone }: { batch: ImportBatch; onDone: () => void }
                 "success",
               );
               const net = `Net ${formatINR(r.netPaise)}`;
-              const links = r.linkedTransfers > 0 ? ` · ${r.linkedTransfers} payment(s) linked as transfers` : "";
+              const links =
+                r.linkedTransfers > 0
+                  ? ` · ${r.linkedTransfers} payment(s) linked as transfers`
+                  : "";
               toast(`${net} imported — reconcile against your statement total.${links}`, "success");
             },
           })
@@ -425,7 +481,9 @@ function History({ onOpen }: { onOpen: (b: ImportBatch) => void }) {
   if (!batches || batches.length === 0) return null;
   return (
     <div className="mt-4 rounded-lg border border-slate-200 bg-white">
-      <h2 className="border-b border-slate-100 px-4 py-2 text-sm font-semibold text-slate-700">Import history</h2>
+      <h2 className="border-b border-slate-100 px-4 py-2 text-sm font-semibold text-slate-700">
+        Import history
+      </h2>
       {batches.map((b) => (
         <button
           key={b.id}
