@@ -1,8 +1,9 @@
 import { Suspense, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Navigate, NavLink, Outlet, useNavigate } from "react-router";
+import { Link, Navigate, NavLink, Outlet, useNavigate } from "react-router";
 import { z } from "zod";
 import { apiPost } from "../lib/api.ts";
+import { buildInfo, relativeBuildTime, shortSha } from "../lib/build-info.ts";
 import { useMe } from "../lib/auth.ts";
 import { NotificationBell } from "../components/NotificationBell.tsx";
 import { CommandPalette } from "../components/CommandPalette.tsx";
@@ -25,6 +26,30 @@ const NAV_SECTIONS = [
   { to: "/reports", label: "Reports" },
   { to: "/settings", label: "Settings" },
 ];
+
+function VersionFooter({ onNavigate }: { onNavigate?: () => void }) {
+  const sha = shortSha(buildInfo.gitSha);
+  // Untagged builds describe as the short SHA — don't print the same thing twice.
+  const showSha = sha !== "unknown" && sha !== buildInfo.version;
+  const built = relativeBuildTime(buildInfo.builtAt);
+
+  return (
+    <Link
+      to="/status"
+      onClick={onNavigate}
+      className="block border-t border-slate-200 px-4 py-2 text-xs text-slate-400 hover:bg-slate-50 hover:text-slate-600"
+      title={`Build ${buildInfo.version}${showSha ? ` (${buildInfo.gitSha})` : ""}${
+        buildInfo.builtAt ? ` · built ${new Date(buildInfo.builtAt).toLocaleString()}` : ""
+      }`}
+    >
+      <span className="font-mono">
+        {buildInfo.version}
+        {showSha && ` · ${sha}`}
+      </span>
+      <span className="block">{built ? `built ${built}` : "Status"}</span>
+    </Link>
+  );
+}
 
 function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
   return (
@@ -85,6 +110,7 @@ export function AppLayout() {
           🧭 Compass
         </div>
         <SidebarNav />
+        <VersionFooter />
       </aside>
 
       {/* Mobile slide-over drawer + backdrop — below md only */}
@@ -106,6 +132,7 @@ export function AppLayout() {
               </button>
             </div>
             <SidebarNav onNavigate={() => setMobileNavOpen(false)} />
+            <VersionFooter onNavigate={() => setMobileNavOpen(false)} />
           </aside>
         </div>
       )}
