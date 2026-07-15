@@ -30,6 +30,13 @@ const EnvSchema = z
     TRUSTED_ORIGINS: z.string().default(""),
     /** disable rate limiting (useful for load tests); always off under NODE_ENV=test */
     RATE_LIMIT_DISABLED: z.stringbool().default(false),
+    /**
+     * Owner account provisioned by `npm run db:bootstrap` (the compose `migrate`
+     * service). Only the bootstrap reads these — the API never does, so the
+     * password is optional here and validated by the bootstrap itself.
+     */
+    OWNER_EMAIL: z.email().default("udaikiran@outlook.com"),
+    OWNER_PASSWORD: z.string().default(""),
   })
   .check((ctx) => {
     if (ctx.value.AI_PROVIDER === "anthropic" && ctx.value.ANTHROPIC_API_KEY === "") {

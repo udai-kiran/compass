@@ -1,10 +1,25 @@
 # App services only — Postgres and Redis are external (see .env) and are
 # never part of this stack. All endpoints come from environment variables.
 services:
+  # One-shot: applies migrations and provisions the owner account, then exits.
+  # OWNER_EMAIL/OWNER_PASSWORD come from .env via env_file. Idempotent.
+  migrate:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    command: ["npm", "run", "db:bootstrap", "-w", "apps/api"]
+    env_file: .env
+    environment:
+      NODE_ENV: production
+    restart: "no"
+
   api:
     build:
       context: .
       dockerfile: apps/api/Dockerfile
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
     env_file: .env
     environment:
       NODE_ENV: production
