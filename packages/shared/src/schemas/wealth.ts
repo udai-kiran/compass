@@ -2,8 +2,14 @@ import { z } from "zod";
 
 // ---------- Credit cards ----------
 
+export const CardNetworkSchema = z.enum(["visa", "mastercard", "amex", "rupay", "diners"]);
+export type CardNetwork = z.infer<typeof CardNetworkSchema>;
+
+/** Issuer and last-4 come from the account (institution/accountLast4), not from here. */
 export const CardDetailsSchema = z.object({
   accountId: z.uuid(),
+  network: CardNetworkSchema.nullable(),
+  productName: z.string(),
   cycleDay: z.number().int().min(1).max(28),
   dueDay: z.number().int().min(1).max(28),
   creditLimitPaise: z.number().int().min(0),
@@ -14,6 +20,8 @@ export const CardDetailsSchema = z.object({
 export type CardDetails = z.infer<typeof CardDetailsSchema>;
 
 export const UpsertCardDetailsSchema = z.object({
+  network: CardNetworkSchema.nullable().default(null),
+  productName: z.string().default(""),
   cycleDay: z.number().int().min(1).max(28).default(1),
   dueDay: z.number().int().min(1).max(28).default(15),
   creditLimitPaise: z.number().int().min(0).default(0),
@@ -22,6 +30,26 @@ export const UpsertCardDetailsSchema = z.object({
   earnRatePer100: z.number().int().min(0).default(0),
 });
 export type UpsertCardDetails = z.input<typeof UpsertCardDetailsSchema>;
+
+// ---------- Retirement accounts (PPF / EPF) ----------
+
+export const RetirementDetailsSchema = z.object({
+  accountId: z.uuid(),
+  annualRateBps: z.number().int(),
+  maturityDate: z.iso.date().nullable(),
+  referenceNumber: z.string(),
+});
+export type RetirementDetails = z.infer<typeof RetirementDetailsSchema>;
+
+export const UpsertRetirementDetailsSchema = z.object({
+  /** basis points, so 7.10% = 710; capped at 100% */
+  annualRateBps: z.number().int().min(0).max(10000).default(0),
+  /** PPF matures 15 years from opening; EPF has none */
+  maturityDate: z.iso.date().nullable().default(null),
+  /** UAN (EPF) or account number (PPF) */
+  referenceNumber: z.string().default(""),
+});
+export type UpsertRetirementDetails = z.input<typeof UpsertRetirementDetailsSchema>;
 
 export const CardSummarySchema = z.object({
   accountId: z.uuid(),
@@ -99,18 +127,80 @@ export type EmiSummary = z.infer<typeof EmiSummarySchema>;
 
 // ---------- Holdings & portfolio ----------
 
-export const AssetClassSchema = z.enum([
-  "stock",
-  "mutual_fund",
-  "etf",
-  "gold",
-  "fd",
-  "epf",
-  "ppf",
-  "nps",
-  "other",
-]);
+/** PPF/EPF are account types, not asset classes — see AccountTypeSchema. */
+export const AssetClassSchema = z.enum(["stock", "mutual_fund", "etf", "gold", "fd", "nps", "other"]);
 export type AssetClass = z.infer<typeof AssetClassSchema>;
+
+// ---------- NPS ----------
+
+export const NpsTierSchema = z.enum(["tier_i", "tier_ii"]);
+export type NpsTier = z.infer<typeof NpsTierSchema>;
+
+export const NpsDetailsSchema = z.object({
+  holdingId: z.uuid(),
+  pran: z.string(),
+  tier: NpsTierSchema,
+  equityPct: z.number().int(),
+  corporatePct: z.number().int(),
+  govtPct: z.number().int(),
+});
+export type NpsDetails = z.infer<typeof NpsDetailsSchema>;
+
+export const UpsertNpsDetailsSchema = z
+  .object({
+    pran: z.string().default(""),
+    tier: NpsTierSchema.default("tier_i"),
+    equityPct: z.number().int().min(0).max(100).default(0),
+    corporatePct: z.number().int().min(0).max(100).default(0),
+    govtPct: z.number().int().min(0).max(100).default(0),
+  })
+  .refine((v) => v.equityPct + v.corporatePct + v.govtPct === 100, {
+    error: "Scheme allocation (E + C + G) must total 100%",
+    path: ["equityPct"],
+  });
+export type UpsertNpsDetails = z.input<typeof UpsertNpsDetailsSchema>;
+
+// ---------- Gold ----------
+
+export const GoldFormSchema = z.enum(["physical", "digital", "etf", "sgb"]);
+export type GoldForm = z.infer<typeof GoldFormSchema>;
+
+export const GoldDetailsSchema = z.object({
+  holdingId: z.uuid(),
+  form: GoldFormSchema,
+  purityKarat: z.number().int().nullable(),
+  maturityDate: z.iso.date().nullable(),
+});
+export type GoldDetails = z.infer<typeof GoldDetailsSchema>;
+
+export const UpsertGoldDetailsSchema = z
+  .object({
+    form: GoldFormSchema.default("physical"),
+    /** karat only means something for metal you hold */
+    purityKarat: z.union([z.literal(22), z.literal(24)]).nullable().default(null),
+    /** SGBs mature 8 years from issue; other forms never do */
+    maturityDate: z.iso.date().nullable().default(null),
+  })
+  .check((ctx) => {
+    const paper = ctx.value.form === "etf" || ctx.value.form === "sgb";
+    if (paper && ctx.value.purityKarat !== null) {
+      ctx.issues.push({
+        code: "custom",
+        path: ["purityKarat"],
+        message: `purity does not apply to ${ctx.value.form}`,
+        input: ctx.value.purityKarat,
+      });
+    }
+    if (ctx.value.form !== "sgb" && ctx.value.maturityDate !== null) {
+      ctx.issues.push({
+        code: "custom",
+        path: ["maturityDate"],
+        message: "only SGBs mature",
+        input: ctx.value.maturityDate,
+      });
+    }
+  });
+export type UpsertGoldDetails = z.input<typeof UpsertGoldDetailsSchema>;
 
 export const HoldingSchema = z.object({
   id: z.uuid(),

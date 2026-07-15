@@ -50,6 +50,13 @@
       "when": 1784027064677,
       "tag": "0006_slim_pride",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1784133274865,
+      "tag": "0007_open_deathbird",
+      "breakpoints": true
     }
   ]
 }

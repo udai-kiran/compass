@@ -4,12 +4,22 @@ import { z } from "zod";
 import {
   CreateHoldingEventSchema,
   CreateHoldingSchema,
+  GoldDetailsSchema,
   HoldingEventSchema,
   HoldingSchema,
+  NpsDetailsSchema,
   PortfolioSchema,
   SetValuationSchema,
   UpdateHoldingSchema,
+  UpsertGoldDetailsSchema,
+  UpsertNpsDetailsSchema,
 } from "@compass/shared";
+import {
+  getGoldDetails,
+  getNpsDetails,
+  upsertGoldDetails,
+  upsertNpsDetails,
+} from "../services/holding-details.ts";
 import {
   addEvent,
   createHolding,
@@ -77,5 +87,37 @@ export async function holdingRoutes(app: FastifyInstance) {
       await deleteEvent(app.db, req.session!.userId, req.params.id, req.params.eventId);
       return { ok: true };
     },
+  );
+
+  r.get(
+    "/api/holdings/:id/nps",
+    { schema: { params: IdParams, response: { 200: NpsDetailsSchema.nullable() } } },
+    async (req) => getNpsDetails(app.db, req.session!.userId, req.params.id),
+  );
+
+  r.put(
+    "/api/holdings/:id/nps",
+    {
+      schema: { params: IdParams, body: UpsertNpsDetailsSchema, response: { 200: NpsDetailsSchema } },
+    },
+    async (req) => upsertNpsDetails(app.db, req.session!.userId, req.params.id, req.body),
+  );
+
+  r.get(
+    "/api/holdings/:id/gold",
+    { schema: { params: IdParams, response: { 200: GoldDetailsSchema.nullable() } } },
+    async (req) => getGoldDetails(app.db, req.session!.userId, req.params.id),
+  );
+
+  r.put(
+    "/api/holdings/:id/gold",
+    {
+      schema: {
+        params: IdParams,
+        body: UpsertGoldDetailsSchema,
+        response: { 200: GoldDetailsSchema },
+      },
+    },
+    async (req) => upsertGoldDetails(app.db, req.session!.userId, req.params.id, req.body),
   );
 }

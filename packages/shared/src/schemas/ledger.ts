@@ -2,13 +2,36 @@ import { z } from "zod";
 
 // ---------- Accounts ----------
 
-export const AccountTypeSchema = z.enum(["bank", "cash", "credit_card", "investment", "loan"]);
+export const AccountTypeSchema = z.enum([
+  "bank",
+  "cash",
+  "credit_card",
+  "investment",
+  "loan",
+  "ppf",
+  "epf",
+]);
 export type AccountType = z.infer<typeof AccountTypeSchema>;
+
+/** Account types that carry retirement details (rate, maturity, UAN/PPF number). */
+export const RETIREMENT_ACCOUNT_TYPES = ["ppf", "epf"] as const satisfies readonly AccountType[];
+
+export function isRetirementAccount(type: AccountType): boolean {
+  return (RETIREMENT_ACCOUNT_TYPES as readonly AccountType[]).includes(type);
+}
+
+/** Last 4 digits of the account/card number — never the full number. */
+export const Last4Schema = z
+  .string()
+  .regex(/^\d{4}$/, "must be exactly 4 digits")
+  .nullable();
 
 export const AccountSchema = z.object({
   id: z.uuid(),
   name: z.string(),
   type: AccountTypeSchema,
+  institution: z.string().nullable(),
+  accountLast4: z.string().nullable(),
   currency: z.string(),
   openingBalancePaise: z.number().int(),
   sortOrder: z.number().int(),
@@ -24,6 +47,8 @@ export type AccountWithBalance = z.infer<typeof AccountWithBalanceSchema>;
 export const CreateAccountSchema = z.object({
   name: z.string().min(1),
   type: AccountTypeSchema,
+  institution: z.string().min(1).nullable().default(null),
+  accountLast4: Last4Schema.default(null),
   currency: z.string().min(3).max(3).default("INR"),
   openingBalancePaise: z.number().int().default(0),
 });
@@ -32,6 +57,8 @@ export type CreateAccount = z.infer<typeof CreateAccountSchema>;
 export const UpdateAccountSchema = z.object({
   name: z.string().min(1).optional(),
   type: AccountTypeSchema.optional(),
+  institution: z.string().min(1).nullable().optional(),
+  accountLast4: Last4Schema.optional(),
   openingBalancePaise: z.number().int().optional(),
   sortOrder: z.number().int().optional(),
   archived: z.boolean().optional(),
