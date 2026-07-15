@@ -2,6 +2,11 @@ import { useState, type FormEvent } from "react";
 import { formatINR, type AccountType, type Category, type CategoryKind } from "@compass/shared";
 import { toast } from "../../lib/toast.tsx";
 import {
+  InstitutionDatalist,
+  InstitutionIcon,
+  INSTITUTION_LIST_ID,
+} from "../../lib/institutions.tsx";
+import {
   useAccountMutations,
   useAccounts,
   useCategories,
@@ -113,6 +118,7 @@ function AccountsPanel() {
 
   return (
     <div className="mt-4 max-w-2xl">
+      <InstitutionDatalist />
       <form onSubmit={submit} className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-white p-3">
         <input placeholder="Account name" value={name} onChange={(e) => setName(e.target.value)} className="w-44 rounded-md border border-slate-300 px-2 py-1.5 text-sm" />
         <select value={type} onChange={(e) => setType(e.target.value as AccountType)} className="rounded-md border border-slate-300 px-2 py-1.5 text-sm">
@@ -120,7 +126,13 @@ function AccountsPanel() {
             <option key={t} value={t}>{ACCOUNT_TYPE_LABELS[t]}</option>
           ))}
         </select>
-        <input placeholder="Bank" value={institution} onChange={(e) => setInstitution(e.target.value)} className="w-32 rounded-md border border-slate-300 px-2 py-1.5 text-sm" />
+        <input
+          placeholder="Bank"
+          value={institution}
+          onChange={(e) => setInstitution(e.target.value)}
+          list={INSTITUTION_LIST_ID}
+          className="w-32 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+        />
         <input
           placeholder="Last 4"
           value={last4}
@@ -159,6 +171,7 @@ function AccountsPanel() {
                 update.mutate({ id: below.id, sortOrder: a.sortOrder });
               }}>▼</button>
             </div>
+            <InstitutionIcon institution={a.institution} />
             <InlineName value={a.name} onSave={(name2) => update.mutate({ id: a.id, name: name2 })} />
             <InlineField
               value={a.accountLast4}
@@ -171,6 +184,7 @@ function AccountsPanel() {
             <InlineField
               value={a.institution}
               placeholder="+ bank"
+              listId={INSTITUTION_LIST_ID}
               onSave={(v) => update.mutate({ id: a.id, institution: v || null })}
             />
             <select
@@ -221,6 +235,7 @@ function InlineField({
   render,
   sanitize,
   validate,
+  listId,
 }: {
   value: string | null;
   placeholder: string;
@@ -228,6 +243,7 @@ function InlineField({
   render?: (v: string) => React.ReactNode;
   sanitize?: (v: string) => string;
   validate?: (v: string) => string | null;
+  listId?: string;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value ?? "");
@@ -238,6 +254,7 @@ function InlineField({
       <input
         autoFocus
         value={draft}
+        list={listId}
         aria-label={placeholder}
         aria-invalid={error !== null}
         title={error ?? undefined}
