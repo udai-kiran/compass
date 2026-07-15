@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, Navigate, NavLink, Outlet, useNavigate } from "react-router";
 import { z } from "zod";
 import { apiPost } from "../lib/api.ts";
-import { buildInfo } from "../lib/build-info.ts";
+import { buildInfo, relativeBuildTime, shortSha } from "../lib/build-info.ts";
 import { useMe } from "../lib/auth.ts";
 import { NotificationBell } from "../components/NotificationBell.tsx";
 import { CommandPalette } from "../components/CommandPalette.tsx";
@@ -28,14 +28,25 @@ const NAV_SECTIONS = [
 ];
 
 function VersionFooter({ onNavigate }: { onNavigate?: () => void }) {
+  const sha = shortSha(buildInfo.gitSha);
+  // Untagged builds describe as the short SHA — don't print the same thing twice.
+  const showSha = sha !== "unknown" && sha !== buildInfo.version;
+  const built = relativeBuildTime(buildInfo.builtAt);
+
   return (
     <Link
       to="/status"
       onClick={onNavigate}
       className="block border-t border-slate-200 px-4 py-2 text-xs text-slate-400 hover:bg-slate-50 hover:text-slate-600"
-      title={`Build ${buildInfo.version} · ${buildInfo.gitSha}`}
+      title={`Build ${buildInfo.version}${showSha ? ` (${buildInfo.gitSha})` : ""}${
+        buildInfo.builtAt ? ` · built ${new Date(buildInfo.builtAt).toLocaleString()}` : ""
+      }`}
     >
-      {buildInfo.version} · Status
+      <span className="font-mono">
+        {buildInfo.version}
+        {showSha && ` · ${sha}`}
+      </span>
+      <span className="block">{built ? `built ${built}` : "Status"}</span>
     </Link>
   );
 }
