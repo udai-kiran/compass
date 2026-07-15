@@ -1,11 +1,6 @@
 import { lazy, StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import {
-  MutationCache,
-  QueryCache,
-  QueryClient,
-  QueryClientProvider,
-} from "@tanstack/react-query";
+import { MutationCache, QueryCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createBrowserRouter, RouterProvider } from "react-router";
 import { ApiError } from "./lib/api.ts";
 import { toast, ToastProvider } from "./lib/toast.tsx";
@@ -19,7 +14,9 @@ import "./index.css";
 // visit, keeping the initial bundle (and the charting lib) out of the login path.
 // The shared Suspense boundary lives in AppLayout, around <Outlet/>.
 const TransactionsPage = lazy(() =>
-  import("./routes/transactions/TransactionsPage.tsx").then((m) => ({ default: m.TransactionsPage })),
+  import("./routes/transactions/TransactionsPage.tsx").then((m) => ({
+    default: m.TransactionsPage,
+  })),
 );
 const ImportPage = lazy(() =>
   import("./routes/imports/ImportPage.tsx").then((m) => ({ default: m.ImportPage })),
@@ -61,10 +58,15 @@ const ReportsPage = lazy(() =>
   import("./routes/reports/ReportsPage.tsx").then((m) => ({ default: m.ReportsPage })),
 );
 const NotificationsPage = lazy(() =>
-  import("./routes/notifications/NotificationsPage.tsx").then((m) => ({ default: m.NotificationsPage })),
+  import("./routes/notifications/NotificationsPage.tsx").then((m) => ({
+    default: m.NotificationsPage,
+  })),
 );
 const SettingsPage = lazy(() =>
   import("./routes/settings/SettingsPage.tsx").then((m) => ({ default: m.SettingsPage })),
+);
+const StatusPage = lazy(() =>
+  import("./routes/status/StatusPage.tsx").then((m) => ({ default: m.StatusPage })),
 );
 
 function onApiError(err: unknown) {
@@ -103,6 +105,7 @@ const router = createBrowserRouter([
       { path: "insights", element: <InsightsPage /> },
       { path: "reports", element: <ReportsPage /> },
       { path: "settings", element: <SettingsPage /> },
+      { path: "status", element: <StatusPage /> },
       { path: "*", element: <NotFound /> },
     ],
   },

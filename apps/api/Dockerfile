@@ -23,6 +23,11 @@ RUN npm ci --omit=dev -w apps/api
 
 FROM node:24-slim AS runtime
 ENV NODE_ENV=production
+# Version provenance, surfaced at /health and on the web status page.
+ARG APP_VERSION=dev
+ARG GIT_SHA=unknown
+ARG BUILD_TIME=
+ENV APP_VERSION=$APP_VERSION GIT_SHA=$GIT_SHA BUILD_TIME=$BUILD_TIME
 WORKDIR /app
 COPY --from=proddeps /app ./
 # Depend on the check stage so `docker build` fails on type errors.

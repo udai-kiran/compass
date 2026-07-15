@@ -1,8 +1,9 @@
 import { Suspense, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Navigate, NavLink, Outlet, useNavigate } from "react-router";
+import { Link, Navigate, NavLink, Outlet, useNavigate } from "react-router";
 import { z } from "zod";
 import { apiPost } from "../lib/api.ts";
+import { buildInfo } from "../lib/build-info.ts";
 import { useMe } from "../lib/auth.ts";
 import { NotificationBell } from "../components/NotificationBell.tsx";
 import { CommandPalette } from "../components/CommandPalette.tsx";
@@ -25,6 +26,19 @@ const NAV_SECTIONS = [
   { to: "/reports", label: "Reports" },
   { to: "/settings", label: "Settings" },
 ];
+
+function VersionFooter({ onNavigate }: { onNavigate?: () => void }) {
+  return (
+    <Link
+      to="/status"
+      onClick={onNavigate}
+      className="block border-t border-slate-200 px-4 py-2 text-xs text-slate-400 hover:bg-slate-50 hover:text-slate-600"
+      title={`Build ${buildInfo.version} · ${buildInfo.gitSha}`}
+    >
+      {buildInfo.version} · Status
+    </Link>
+  );
+}
 
 function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
   return (
@@ -85,6 +99,7 @@ export function AppLayout() {
           🧭 Compass
         </div>
         <SidebarNav />
+        <VersionFooter />
       </aside>
 
       {/* Mobile slide-over drawer + backdrop — below md only */}
@@ -106,6 +121,7 @@ export function AppLayout() {
               </button>
             </div>
             <SidebarNav onNavigate={() => setMobileNavOpen(false)} />
+            <VersionFooter onNavigate={() => setMobileNavOpen(false)} />
           </aside>
         </div>
       )}

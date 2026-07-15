@@ -4,6 +4,12 @@ import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  // Baked in at build time from Docker build args; "dev" defaults when unset.
+  define: {
+    __APP_VERSION__: JSON.stringify(process.env.APP_VERSION ?? "dev"),
+    __GIT_SHA__: JSON.stringify(process.env.GIT_SHA ?? "unknown"),
+    __BUILD_TIME__: JSON.stringify(process.env.BUILD_TIME ?? ""),
+  },
   server: {
     port: 5173,
     proxy: {
