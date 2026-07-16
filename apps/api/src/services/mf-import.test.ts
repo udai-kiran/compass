@@ -60,6 +60,17 @@ test("Kuvera Save and Withdraw orders map to purchases and redemptions", () => {
   assert.equal(unitsHeld(rows), 6);
 });
 
+test("Kuvera SaveSmart bookkeeping rows are ignored without import errors", () => {
+  const csv =
+    '2023-06-21,"",Kuvera SaveSmart,Withdraw,"","","",464.0\n' +
+    '2023-06-08,"",Kuvera SaveSmart,Save,"","","",7999.6';
+  const { rows, skipped, ignored } = parseMfCsv(csv);
+  assert.equal(rows.length, 0);
+  assert.equal(skipped.length, 0);
+  assert.equal(ignored.length, 2);
+  assert.match(ignored[0]!.reason, /cash movement/);
+});
+
 test("quoted fields with embedded commas keep their columns aligned", () => {
   // A broker export may quote a thousands-separated amount, or a fund name with
   // a comma. Splitting on bare commas would shift every column after it.

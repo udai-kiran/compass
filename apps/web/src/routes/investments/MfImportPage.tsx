@@ -91,6 +91,14 @@ export function MfImportPage() {
             </p>
           )}
 
+          {preview.ignoredRows.length > 0 && (
+            <p className="rounded-md border border-sky-200 bg-sky-50 p-3 text-xs text-sky-800">
+              {preview.ignoredRows.length} Kuvera SaveSmart cash movement
+              {preview.ignoredRows.length === 1 ? " was" : "s were"} ignored. The corresponding
+              underlying mutual-fund trades are imported separately, avoiding double-counting.
+            </p>
+          )}
+
           <div className="overflow-x-auto rounded-lg border border-slate-200">
             <table className="w-full text-sm">
               <thead className="bg-slate-50 text-left text-xs text-slate-500">
