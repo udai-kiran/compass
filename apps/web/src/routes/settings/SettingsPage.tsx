@@ -146,9 +146,27 @@ function AccountsPanel() {
         </p>
       )}
 
-      <ul className="mt-4 divide-y divide-slate-100 rounded-lg border border-slate-200 bg-white">
+      <ul className="mt-4 divide-y divide-slate-100 overflow-hidden rounded-lg border border-slate-200 bg-white">
+        {visible.length > 0 && (
+          <li
+            aria-hidden="true"
+            className="hidden grid-cols-[1.25rem_2rem_minmax(7rem,1.4fr)_4.25rem_4.5rem_minmax(7rem,1fr)_7rem_minmax(8.5rem,auto)] items-center gap-x-2 bg-slate-50 px-4 py-2 text-[11px] font-medium uppercase tracking-wide text-slate-400 md:grid"
+          >
+            <span />
+            <span />
+            <span>Account</span>
+            <span>Number</span>
+            <span>Institution</span>
+            <span>Type</span>
+            <span className="text-right">Balance</span>
+            <span className="text-right">Actions</span>
+          </li>
+        )}
         {visible.map((a, i) => (
-          <li key={a.id} className={`flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3 text-sm ${a.archivedAt ? "opacity-50" : ""}`}>
+          <li
+            key={a.id}
+            className={`grid grid-cols-[1.25rem_2rem_minmax(0,1fr)] items-center gap-x-2 gap-y-2 px-4 py-3 text-sm md:grid-cols-[1.25rem_2rem_minmax(7rem,1.4fr)_4.25rem_4.5rem_minmax(7rem,1fr)_7rem_minmax(8.5rem,auto)] ${a.archivedAt ? "opacity-50" : ""}`}
+          >
             <div className="flex shrink-0 flex-col">
               <button disabled={i === 0} className="text-xs text-slate-400 disabled:opacity-30" onClick={() => {
                 const above = visible[i - 1]!;
@@ -162,45 +180,48 @@ function AccountsPanel() {
               }}>▼</button>
             </div>
 
-            {/* Identity: grows and lets the name truncate rather than push the row wider */}
-            <div className="flex min-w-0 flex-1 items-center gap-2">
-              <InstitutionIcon institution={a.institution} />
-              <div className="min-w-0 flex-1">
-                <InlineName value={a.name} onSave={(name2) => update.mutate({ id: a.id, name: name2 })} />
-              </div>
-              <div className="shrink-0">
-                <InlineField
-                  value={a.accountLast4}
-                  placeholder="+ last 4"
-                  render={(v) => <span className="tabular-nums">•••• {v}</span>}
-                  sanitize={(v) => v.replace(/\D/g, "").slice(0, 4)}
-                  validate={(v) => (v === "" || /^\d{4}$/.test(v) ? null : "4 digits")}
-                  onSave={(v) => update.mutate({ id: a.id, accountLast4: v || null })}
-                />
-              </div>
-              <div className="hidden shrink-0 sm:block">
-                <InlineField
-                  value={a.institution}
-                  placeholder="+ bank"
-                  listId={INSTITUTION_LIST_ID}
-                  onSave={(v) => update.mutate({ id: a.id, institution: v || null })}
-                />
-              </div>
+            <InstitutionIcon institution={a.institution} />
+
+            <div className="min-w-0">
+              <InlineName value={a.name} onSave={(name2) => update.mutate({ id: a.id, name: name2 })} />
             </div>
 
-            {/* Controls: fixed width; wraps to its own line on narrow screens */}
-            <div className="flex shrink-0 items-center gap-3">
-              <select
-                value={a.type}
-                aria-label={`Type of ${a.name}`}
-                onChange={(e) => update.mutate({ id: a.id, type: e.target.value as AccountType })}
-                className="rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500"
-              >
-                {ACCOUNT_TYPES.map((t) => (
-                  <option key={t} value={t}>{ACCOUNT_TYPE_LABELS[t]}</option>
-                ))}
-              </select>
-              <span className="w-24 shrink-0 text-right tabular-nums text-slate-600">{formatINR(a.balancePaise)}</span>
+            <div className="col-start-3 md:col-start-auto">
+              <InlineField
+                value={a.accountLast4}
+                placeholder="+ last 4"
+                render={(v) => <span className="tabular-nums">•••• {v}</span>}
+                sanitize={(v) => v.replace(/\D/g, "").slice(0, 4)}
+                validate={(v) => (v === "" || /^\d{4}$/.test(v) ? null : "4 digits")}
+                onSave={(v) => update.mutate({ id: a.id, accountLast4: v || null })}
+              />
+            </div>
+
+            <div className="col-start-3 md:col-start-auto">
+              <InlineField
+                value={a.institution}
+                placeholder="+ bank"
+                listId={INSTITUTION_LIST_ID}
+                onSave={(v) => update.mutate({ id: a.id, institution: v || null })}
+              />
+            </div>
+
+            <select
+              value={a.type}
+              aria-label={`Type of ${a.name}`}
+              onChange={(e) => update.mutate({ id: a.id, type: e.target.value as AccountType })}
+              className="col-start-3 min-w-0 rounded bg-slate-100 px-1.5 py-1 text-xs text-slate-500 md:col-start-auto md:w-full"
+            >
+              {ACCOUNT_TYPES.map((t) => (
+                <option key={t} value={t}>{ACCOUNT_TYPE_LABELS[t]}</option>
+              ))}
+            </select>
+
+            <span className="col-start-3 text-left tabular-nums font-medium text-slate-700 md:col-start-auto md:text-right">
+              {formatINR(a.balancePaise)}
+            </span>
+
+            <div className="col-start-3 flex flex-wrap items-center gap-x-3 gap-y-1 md:col-start-auto md:justify-end md:gap-x-2">
               <Link to={`/settings/accounts/${a.id}`} className="text-xs text-slate-500 underline">
                 Details
               </Link>
