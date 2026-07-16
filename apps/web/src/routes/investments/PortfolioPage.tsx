@@ -56,6 +56,10 @@ export function PortfolioPage() {
     label: ASSET_LABELS[a.assetClass],
     value: a.valuePaise,
   }));
+  const visiblePositions = p.positions.filter((h) => !h.archived);
+  const activePositions = visiblePositions.filter((h) => h.currentValuePaise !== 0);
+  const zeroValuePositions = visiblePositions.filter((h) => h.currentValuePaise === 0);
+  const activeGoals = goals?.filter((g) => !g.archived) ?? [];
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
@@ -120,11 +124,11 @@ export function PortfolioPage() {
       <NewHoldingForm />
 
       <div className="space-y-3">
-        {p.positions.filter((h) => !h.archived).map((h) => (
+        {activePositions.map((h) => (
           <HoldingRow
             key={h.id}
             h={h}
-            goals={goals?.filter((g) => !g.archived) ?? []}
+            goals={activeGoals}
             onSetGoal={(goalId) =>
               setGoal.mutate(
                 { kind: "holding", id: h.id, goalId },
@@ -133,10 +137,34 @@ export function PortfolioPage() {
             }
           />
         ))}
-        {p.positions.filter((h) => !h.archived).length === 0 && (
+        {visiblePositions.length === 0 && (
           <p className="rounded-lg border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">
             No holdings yet. Add one above.
           </p>
+        )}
+
+        {zeroValuePositions.length > 0 && (
+          <details className="group rounded-lg border border-slate-200 bg-slate-50">
+            <summary className="cursor-pointer list-none px-4 py-3 text-sm font-medium text-slate-600 marker:content-none">
+              <span className="mr-2 inline-block text-xs transition-transform group-open:rotate-90">▶</span>
+              Zero-value holdings ({zeroValuePositions.length})
+            </summary>
+            <div className="space-y-3 border-t border-slate-200 p-3">
+              {zeroValuePositions.map((h) => (
+                <HoldingRow
+                  key={h.id}
+                  h={h}
+                  goals={activeGoals}
+                  onSetGoal={(goalId) =>
+                    setGoal.mutate(
+                      { kind: "holding", id: h.id, goalId },
+                      { onError: () => toast("Couldn't update the goal") },
+                    )
+                  }
+                />
+              ))}
+            </div>
+          </details>
         )}
       </div>
     </div>
@@ -155,6 +183,7 @@ function HoldingRow({
   const { update, remove, setValuation, addEvent, removeEvent } = useHoldingMutations();
   const [open, setOpen] = useState(false);
   const unrealized = h.currentValuePaise - h.investedPaise;
+  const goalName = goals.find((g) => g.id === h.goalId)?.name ?? null;
 
   return (
     <section className="rounded-lg border border-slate-200 bg-white">
@@ -162,7 +191,10 @@ function HoldingRow({
         <button onClick={() => setOpen((v) => !v)} className="min-w-0 text-left">
           <h3 className="truncate text-base font-semibold text-slate-800">{h.name}</h3>
           <p className="mt-0.5 text-sm text-slate-500">
-            {ASSET_LABELS[h.assetClass]} · cost basis {formatINR(h.investedPaise)}
+            {ASSET_LABELS[h.assetClass]}
+            {h.folioNumber && ` · Folio ${h.folioNumber}`}
+            {` · Goal: ${goalName ?? "No goal"}`}
+            {` · cost basis ${formatINR(h.investedPaise)}`}
             {h.realizedPaise !== 0 && ` · realized ${formatINR(h.realizedPaise)}`}
             {h.lastValuationDate && ` · valued ${h.lastValuationDate}`}
           </p>
