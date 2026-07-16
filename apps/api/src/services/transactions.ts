@@ -10,37 +10,10 @@ import type {
   UpdateTransaction,
 } from "@compass/shared";
 import type { Db } from "../db/index.ts";
-import { accounts, categories, transactions, transactionSplits, transferLinks } from "../db/schema.ts";
+import { transactions, transactionSplits, transferLinks } from "../db/schema.ts";
 import { HttpError } from "../lib/errors.ts";
 import { getMerchantRules, normalizeMerchant } from "./merchants.ts";
-
-/**
- * The foreign key proves an account/category exists, not that it belongs to the
- * caller. Without these checks a user could attach a transaction to another
- * user's account and corrupt the balance that account's owner sees (balances
- * sum transactions by accountId alone). Validate ownership on every write.
- */
-async function assertOwnedAccount(db: Db, userId: string, accountId: string): Promise<void> {
-  const row = await db.query.accounts.findFirst({
-    where: and(eq(accounts.id, accountId), eq(accounts.userId, userId)),
-    columns: { id: true },
-  });
-  if (!row) throw new HttpError(404, "Account not found");
-}
-
-/** null/undefined categoryId means "no category" / "leave as-is" — nothing to check. */
-async function assertOwnedCategory(
-  db: Db,
-  userId: string,
-  categoryId: string | null | undefined,
-): Promise<void> {
-  if (!categoryId) return;
-  const row = await db.query.categories.findFirst({
-    where: and(eq(categories.id, categoryId), eq(categories.userId, userId)),
-    columns: { id: true },
-  });
-  if (!row) throw new HttpError(404, "Category not found");
-}
+import { assertOwnedAccount, assertOwnedCategory } from "./ownership.ts";
 
 type TxRow = typeof transactions.$inferSelect;
 
@@ -274,6 +247,9 @@ export async function setSplits(
 
 export async function bulkAction(db: Db, userId: string, action: BulkAction): Promise<BulkResult> {
   if (action.action === "restore") {
+    // The snapshot is client-supplied on undo — its category ids must be the
+    // caller's own, or a restore could stamp another user's category onto a row.
+    for (const item of action.snapshot) await assertOwnedCategory(db, userId, item.categoryId);
     return db.transaction(async (t) => {
       for (const item of action.snapshot) {
         await t
@@ -289,6 +265,9 @@ export async function bulkAction(db: Db, userId: string, action: BulkAction): Pr
       return { affected: action.snapshot.length, snapshot: [] };
     });
   }
+
+  // A bulk re-category must target the caller's own category.
+  if (action.action === "setCategory") await assertOwnedCategory(db, userId, action.categoryId);
 
   const targetWhere =
     action.ids !== undefined

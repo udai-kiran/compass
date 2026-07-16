@@ -41,10 +41,17 @@ older backups undecryptable.
    ' path/to/compass-backup-*.json.gz.enc
    ```
 
-3. Recreate the schema on a fresh database (`npm run db:migrate -w apps/api`).
-4. Load the decrypted JSON table-by-table (dependency order is preserved in the
-   dump). A restore helper can iterate `json.data` and `INSERT` each row; because
-   ids are preserved, foreign keys line up.
+3. Point `DATABASE_URL` at a fresh, empty database and recreate the schema
+   (`npm run db:migrate -w apps/api`).
+4. Restore the encrypted backup:
+
+   ```bash
+   npm run db:restore -w apps/api -- path/to/compass-backup-*.json.gz.enc
+   ```
+
+   The restore is transactional and refuses a database that already contains a
+   user. It handles the accounts↔goals cycle and category parent links in a
+   second pass, after all referenced rows exist.
 5. Restore `STORAGE_DIR` from your file backup.
 6. Start the app and verify the dashboard totals match the source instance.
 

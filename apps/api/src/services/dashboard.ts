@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import type { Redis } from "ioredis";
 import type { Dashboard, Trends } from "@compass/shared";
 import type { Db } from "../db/index.ts";
+import { bankCashTotal } from "./balances.ts";
 import { cached } from "./cache.ts";
 import { getUtilization } from "./budgets.ts";
 import { currentPeriodKey, incomeExpense, periodRange, spentByCategory } from "./periods.ts";
@@ -14,19 +15,8 @@ export async function getDashboard(db: Db, redis: Redis, userId: string): Promis
     const key = currentPeriodKey("monthly");
     const { from, to } = periodRange("monthly", key);
 
-    const cashRes = await db.execute(sql`
-      select coalesce(sum(a.opening_balance_paise + coalesce(t.total, 0)), 0)::bigint as cash
-      from accounts a
-      left join (
-        select account_id, sum(amount_paise) as total
-        from transactions
-        where user_id = ${userId} and deleted_at is null
-        group by account_id
-      ) t on t.account_id = a.id
-      where a.user_id = ${userId} and a.archived_at is null and a.type in ('bank', 'cash')
-    `);
-
-    const [month, util, recent, byCat] = await Promise.all([
+    const [cashAvailablePaise, month, util, recent, byCat] = await Promise.all([
+      bankCashTotal(db, userId),
       incomeExpense(db, userId, from, to),
       getUtilization(db, userId, "monthly", key),
       listTransactions(db, userId, { limit: 5 }),
@@ -34,7 +24,7 @@ export async function getDashboard(db: Db, redis: Redis, userId: string): Promis
     ]);
 
     return {
-      cashAvailablePaise: Number((cashRes.rows[0] as { cash: string }).cash),
+      cashAvailablePaise,
       month: { periodKey: key, ...month },
       budget: {
         totalBudgetedPaise: util.totalBudgetedPaise,
