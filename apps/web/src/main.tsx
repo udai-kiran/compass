@@ -65,6 +65,9 @@ const NotificationsPage = lazy(() =>
 const SettingsPage = lazy(() =>
   import("./routes/settings/SettingsPage.tsx").then((m) => ({ default: m.SettingsPage })),
 );
+const AccountDetailPage = lazy(() =>
+  import("./routes/settings/AccountDetailPage.tsx").then((m) => ({ default: m.AccountDetailPage })),
+);
 const StatusPage = lazy(() =>
   import("./routes/status/StatusPage.tsx").then((m) => ({ default: m.StatusPage })),
 );
@@ -105,6 +108,7 @@ const router = createBrowserRouter([
       { path: "insights", element: <InsightsPage /> },
       { path: "reports", element: <ReportsPage /> },
       { path: "settings", element: <SettingsPage /> },
+      { path: "settings/accounts/:id", element: <AccountDetailPage /> },
       { path: "status", element: <StatusPage /> },
       { path: "*", element: <NotFound /> },
     ],

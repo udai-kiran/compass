@@ -20,11 +20,73 @@ export function isRetirementAccount(type: AccountType): boolean {
   return (RETIREMENT_ACCOUNT_TYPES as readonly AccountType[]).includes(type);
 }
 
-/** Last 4 digits of the account/card number — never the full number. */
+/** Account types that carry bank details (a/c number, IFSC, branch, subtype). */
+export const BANK_ACCOUNT_TYPES = ["bank"] as const satisfies readonly AccountType[];
+
+export function isBankAccount(type: AccountType): boolean {
+  return (BANK_ACCOUNT_TYPES as readonly AccountType[]).includes(type);
+}
+
+/** Last 4 digits, for display in lists. Derived from the full number when there is one. */
 export const Last4Schema = z
   .string()
   .regex(/^\d{4}$/, "must be exactly 4 digits")
   .nullable();
+
+/** Indian account numbers are digits only; length varies by bank (9–18). */
+export const AccountNumberSchema = z
+  .string()
+  .regex(/^\d{9,18}$/, "must be 9 to 18 digits");
+
+/**
+ * IFSC: 4 letters (bank), a literal 0 (reserved), then 6 alphanumeric (branch).
+ * Uppercased before checking — nobody types these in caps.
+ */
+export const IfscSchema = z
+  .string()
+  .transform((v) => v.trim().toUpperCase())
+  .pipe(z.string().regex(/^[A-Z]{4}0[A-Z0-9]{6}$/, "must look like HDFC0001234"));
+
+/**
+ * UPI VPA: handle@psp. Deliberately loose on the handle — banks allow dots,
+ * hyphens and underscores, and a bare mobile number is also valid.
+ */
+export const UpiIdSchema = z
+  .string()
+  .transform((v) => v.trim().toLowerCase())
+  .pipe(
+    z
+      .string()
+      .regex(/^[a-z0-9._-]{2,256}@[a-z][a-z0-9.]{1,63}$/, "must look like name@okhdfcbank"),
+  );
+
+export const BankAccountSubtypeSchema = z.enum(["savings", "current", "salary", "nre", "nro"]);
+export type BankAccountSubtype = z.infer<typeof BankAccountSubtypeSchema>;
+
+export const BankDetailsSchema = z.object({
+  accountId: z.uuid(),
+  accountNumber: z.string(),
+  ifsc: z.string(),
+  branch: z.string(),
+  subtype: BankAccountSubtypeSchema.nullable(),
+});
+export type BankDetails = z.infer<typeof BankDetailsSchema>;
+
+/** Empty string clears a field — the forms send "" for "I don't want this recorded". */
+export const UpsertBankDetailsSchema = z.object({
+  accountNumber: z.union([AccountNumberSchema, z.literal("")]).default(""),
+  ifsc: z.union([IfscSchema, z.literal("")]).default(""),
+  branch: z.string().max(120).default(""),
+  subtype: BankAccountSubtypeSchema.nullable().default(null),
+});
+/** z.input, not z.infer: IFSC is uppercased on the way through, and fields default. */
+export type UpsertBankDetails = z.input<typeof UpsertBankDetailsSchema>;
+
+/** Primary handle first — that's the one shown when there isn't room for all of them. */
+export const UpiIdsSchema = z
+  .array(UpiIdSchema)
+  .max(10)
+  .refine((ids) => new Set(ids).size === ids.length, "duplicate UPI ID");
 
 export const AccountSchema = z.object({
   id: z.uuid(),
@@ -32,6 +94,8 @@ export const AccountSchema = z.object({
   type: AccountTypeSchema,
   institution: z.string().nullable(),
   accountLast4: z.string().nullable(),
+  holderName: z.string().nullable(),
+  upiIds: z.array(z.string()),
   currency: z.string(),
   openingBalancePaise: z.number().int(),
   sortOrder: z.number().int(),
@@ -49,6 +113,7 @@ export const CreateAccountSchema = z.object({
   type: AccountTypeSchema,
   institution: z.string().min(1).nullable().default(null),
   accountLast4: Last4Schema.default(null),
+  holderName: z.string().min(1).max(120).nullable().default(null),
   currency: z.string().min(3).max(3).default("INR"),
   openingBalancePaise: z.number().int().default(0),
 });
@@ -59,11 +124,14 @@ export const UpdateAccountSchema = z.object({
   type: AccountTypeSchema.optional(),
   institution: z.string().min(1).nullable().optional(),
   accountLast4: Last4Schema.optional(),
+  holderName: z.string().min(1).max(120).nullable().optional(),
+  upiIds: UpiIdsSchema.optional(),
   openingBalancePaise: z.number().int().optional(),
   sortOrder: z.number().int().optional(),
   archived: z.boolean().optional(),
 });
 export type UpdateAccount = z.infer<typeof UpdateAccountSchema>;
+export type UpdateAccountInput = z.input<typeof UpdateAccountSchema>;
 
 // ---------- Categories ----------
 

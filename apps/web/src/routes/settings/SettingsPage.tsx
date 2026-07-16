@@ -1,6 +1,8 @@
 import { useState, type FormEvent } from "react";
+import { Link } from "react-router";
 import { formatINR, type AccountType, type Category, type CategoryKind } from "@compass/shared";
 import { toast } from "../../lib/toast.tsx";
+import { ACCOUNT_TYPES, ACCOUNT_TYPE_LABELS } from "../../lib/account-meta.ts";
 import {
   InstitutionDatalist,
   InstitutionIcon,
@@ -15,26 +17,6 @@ import {
 import { RulesPanel } from "./RulesPanel.tsx";
 import { RecurringPanel } from "./RecurringPanel.tsx";
 import { AboutPanel, DataPanel, NotificationsPanel, ProfilePanel, SessionsPanel } from "./GeneralPanels.tsx";
-
-const ACCOUNT_TYPES: AccountType[] = [
-  "bank",
-  "cash",
-  "credit_card",
-  "investment",
-  "loan",
-  "ppf",
-  "epf",
-];
-
-const ACCOUNT_TYPE_LABELS: Record<AccountType, string> = {
-  bank: "Bank",
-  cash: "Cash",
-  credit_card: "Credit card",
-  investment: "Investment",
-  loan: "Loan",
-  ppf: "PPF",
-  epf: "EPF",
-};
 
 const TABS = [
   "profile",
@@ -99,6 +81,9 @@ function AccountsPanel() {
         type,
         institution: institution || null,
         accountLast4: last4 || null,
+        // Holder name, UPI and bank details are set afterwards, in Details —
+        // this form stays the short path to getting an account on the books.
+        holderName: null,
         currency: "INR",
         openingBalancePaise: Math.round(parseFloat(opening || "0") * 100),
       },
@@ -198,6 +183,9 @@ function AccountsPanel() {
               ))}
             </select>
             <span className="ml-auto tabular-nums text-slate-600">{formatINR(a.balancePaise)}</span>
+            <Link to={`/settings/accounts/${a.id}`} className="text-xs text-slate-500 underline">
+              Details
+            </Link>
             {a.archivedAt ? (
               <button className="text-xs text-slate-500 underline" onClick={() => update.mutate({ id: a.id, archived: false })}>Restore</button>
             ) : (
