@@ -3,6 +3,7 @@ import { formatINR, type Goal, type GoalType } from "@compass/shared";
 import { toast } from "../../lib/toast.tsx";
 import { useAccounts } from "../../lib/queries.ts";
 import { useGoalMutations, useGoalProgress, useGoals } from "../../lib/goal-queries.ts";
+import { useNetWorthByGoal } from "../../lib/wealth-queries.ts";
 import { Meter } from "../../lib/viz.tsx";
 
 const GOAL_TYPES: Array<{ value: GoalType; label: string }> = [
@@ -142,11 +143,13 @@ function GoalForm({ onDone }: { onDone: () => void }) {
 
 function GoalCard({ goal }: { goal: Goal }) {
   const { data: p } = useGoalProgress(goal.id);
+  const { data: byGoal } = useNetWorthByGoal();
   const { update, remove, contribute, removeContribution } = useGoalMutations();
   const [amountR, setAmountR] = useState("");
   const [open, setOpen] = useState(false);
 
   const typeLabel = GOAL_TYPES.find((t) => t.value === goal.type)?.label ?? goal.type;
+  const tagged = byGoal?.groups.find((g) => g.goalId === goal.id);
 
   return (
     <div className="rounded-lg border border-slate-200 bg-white p-4">
@@ -158,6 +161,18 @@ function GoalCard({ goal }: { goal: Goal }) {
             {goal.targetDate && ` · by ${goal.targetDate}`}
             {goal.accountId && " · linked account"}
           </p>
+          {tagged && tagged.items.length > 0 && (
+            <p className="mt-1 text-xs text-slate-500">
+              Tagged assets:{" "}
+              <b className="tabular-nums text-slate-700">{formatINR(tagged.netPaise)}</b>
+              <span className="text-slate-400">
+                {" "}
+                ({tagged.items.length} item{tagged.items.length === 1 ? "" : "s"})
+                {goal.targetPaise != null && goal.targetPaise > 0 &&
+                  ` · ${Math.round((tagged.netPaise / goal.targetPaise) * 100)}% of target`}
+              </span>
+            </p>
+          )}
         </div>
         <div className="flex gap-2 text-xs">
           <button className="text-slate-500 underline" onClick={() => update.mutate({ id: goal.id, archived: true })}>

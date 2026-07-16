@@ -10,9 +10,37 @@ import type {
   UpdateTransaction,
 } from "@compass/shared";
 import type { Db } from "../db/index.ts";
-import { transactions, transactionSplits, transferLinks } from "../db/schema.ts";
+import { accounts, categories, transactions, transactionSplits, transferLinks } from "../db/schema.ts";
 import { HttpError } from "../lib/errors.ts";
 import { getMerchantRules, normalizeMerchant } from "./merchants.ts";
+
+/**
+ * The foreign key proves an account/category exists, not that it belongs to the
+ * caller. Without these checks a user could attach a transaction to another
+ * user's account and corrupt the balance that account's owner sees (balances
+ * sum transactions by accountId alone). Validate ownership on every write.
+ */
+async function assertOwnedAccount(db: Db, userId: string, accountId: string): Promise<void> {
+  const row = await db.query.accounts.findFirst({
+    where: and(eq(accounts.id, accountId), eq(accounts.userId, userId)),
+    columns: { id: true },
+  });
+  if (!row) throw new HttpError(404, "Account not found");
+}
+
+/** null/undefined categoryId means "no category" / "leave as-is" — nothing to check. */
+async function assertOwnedCategory(
+  db: Db,
+  userId: string,
+  categoryId: string | null | undefined,
+): Promise<void> {
+  if (!categoryId) return;
+  const row = await db.query.categories.findFirst({
+    where: and(eq(categories.id, categoryId), eq(categories.userId, userId)),
+    columns: { id: true },
+  });
+  if (!row) throw new HttpError(404, "Category not found");
+}
 
 type TxRow = typeof transactions.$inferSelect;
 
@@ -177,6 +205,8 @@ export async function createTransaction(
   userId: string,
   input: CreateTransaction & { source?: "manual" | "import" | "recurring" },
 ): Promise<Transaction> {
+  await assertOwnedAccount(db, userId, input.accountId);
+  await assertOwnedCategory(db, userId, input.categoryId);
   // normalize the merchant; the category is whatever the caller supplied
   // (manual entry now, AI-assisted categorization later)
   const merchantRulesList = await getMerchantRules(db, userId);
@@ -194,6 +224,8 @@ export async function updateTransaction(
   id: string,
   input: UpdateTransaction,
 ): Promise<Transaction> {
+  if (input.accountId !== undefined) await assertOwnedAccount(db, userId, input.accountId);
+  if (input.categoryId !== undefined) await assertOwnedCategory(db, userId, input.categoryId);
   const rows = await db
     .update(transactions)
     .set({ ...input, updatedAt: new Date() })
@@ -226,6 +258,7 @@ export async function setSplits(
     where: and(eq(transactions.id, id), eq(transactions.userId, userId), isNull(transactions.deletedAt)),
   });
   if (!tx) throw new HttpError(404, "Transaction not found");
+  for (const s of splits) await assertOwnedCategory(db, userId, s.categoryId);
   const total = splits.reduce((s, x) => s + x.amountPaise, 0);
   if (splits.length > 0 && total !== tx.amountPaise) {
     throw new HttpError(400, `Splits must sum to the transaction amount (${tx.amountPaise})`);

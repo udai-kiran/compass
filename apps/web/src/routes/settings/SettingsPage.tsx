@@ -107,7 +107,7 @@ function AccountsPanel() {
   const visible = accounts?.filter((a) => showArchived || !a.archivedAt) ?? [];
 
   return (
-    <div className="mt-4 max-w-2xl">
+    <div className="mt-4 max-w-7xl">
       <InstitutionDatalist />
       <form onSubmit={submit} className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-white p-3">
         <input placeholder="Account name" value={name} onChange={(e) => setName(e.target.value)} className="w-44 rounded-md border border-slate-300 px-2 py-1.5 text-sm" />
@@ -148,8 +148,8 @@ function AccountsPanel() {
 
       <ul className="mt-4 divide-y divide-slate-100 rounded-lg border border-slate-200 bg-white">
         {visible.map((a, i) => (
-          <li key={a.id} className={`flex items-center gap-3 px-4 py-3 text-sm ${a.archivedAt ? "opacity-50" : ""}`}>
-            <div className="flex flex-col">
+          <li key={a.id} className={`flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3 text-sm ${a.archivedAt ? "opacity-50" : ""}`}>
+            <div className="flex shrink-0 flex-col">
               <button disabled={i === 0} className="text-xs text-slate-400 disabled:opacity-30" onClick={() => {
                 const above = visible[i - 1]!;
                 update.mutate({ id: a.id, sortOrder: above.sortOrder });
@@ -161,51 +161,65 @@ function AccountsPanel() {
                 update.mutate({ id: below.id, sortOrder: a.sortOrder });
               }}>▼</button>
             </div>
-            <InstitutionIcon institution={a.institution} />
-            <InlineName value={a.name} onSave={(name2) => update.mutate({ id: a.id, name: name2 })} />
-            <InlineField
-              value={a.accountLast4}
-              placeholder="+ last 4"
-              render={(v) => <span className="tabular-nums">•••• {v}</span>}
-              sanitize={(v) => v.replace(/\D/g, "").slice(0, 4)}
-              validate={(v) => (v === "" || /^\d{4}$/.test(v) ? null : "4 digits")}
-              onSave={(v) => update.mutate({ id: a.id, accountLast4: v || null })}
-            />
-            <InlineField
-              value={a.institution}
-              placeholder="+ bank"
-              listId={INSTITUTION_LIST_ID}
-              onSave={(v) => update.mutate({ id: a.id, institution: v || null })}
-            />
-            <select
-              value={a.type}
-              aria-label={`Type of ${a.name}`}
-              onChange={(e) => update.mutate({ id: a.id, type: e.target.value as AccountType })}
-              className="rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500"
-            >
-              {ACCOUNT_TYPES.map((t) => (
-                <option key={t} value={t}>{ACCOUNT_TYPE_LABELS[t]}</option>
-              ))}
-            </select>
-            <span className="ml-auto tabular-nums text-slate-600">{formatINR(a.balancePaise)}</span>
-            <Link to={`/settings/accounts/${a.id}`} className="text-xs text-slate-500 underline">
-              Details
-            </Link>
-            {a.archivedAt ? (
-              <button className="text-xs text-slate-500 underline" onClick={() => update.mutate({ id: a.id, archived: false })}>Restore</button>
-            ) : (
-              <button className="text-xs text-slate-500 underline" onClick={() => update.mutate({ id: a.id, archived: true })}>Archive</button>
-            )}
-            <button
-              className="text-xs text-red-500 underline"
-              onClick={() =>
-                remove.mutate(a.id, {
-                  onSuccess: () => toast("Account deleted", "success"),
-                })
-              }
-            >
-              Delete
-            </button>
+
+            {/* Identity: grows and lets the name truncate rather than push the row wider */}
+            <div className="flex min-w-0 flex-1 items-center gap-2">
+              <InstitutionIcon institution={a.institution} />
+              <div className="min-w-0 flex-1">
+                <InlineName value={a.name} onSave={(name2) => update.mutate({ id: a.id, name: name2 })} />
+              </div>
+              <div className="shrink-0">
+                <InlineField
+                  value={a.accountLast4}
+                  placeholder="+ last 4"
+                  render={(v) => <span className="tabular-nums">•••• {v}</span>}
+                  sanitize={(v) => v.replace(/\D/g, "").slice(0, 4)}
+                  validate={(v) => (v === "" || /^\d{4}$/.test(v) ? null : "4 digits")}
+                  onSave={(v) => update.mutate({ id: a.id, accountLast4: v || null })}
+                />
+              </div>
+              <div className="hidden shrink-0 sm:block">
+                <InlineField
+                  value={a.institution}
+                  placeholder="+ bank"
+                  listId={INSTITUTION_LIST_ID}
+                  onSave={(v) => update.mutate({ id: a.id, institution: v || null })}
+                />
+              </div>
+            </div>
+
+            {/* Controls: fixed width; wraps to its own line on narrow screens */}
+            <div className="flex shrink-0 items-center gap-3">
+              <select
+                value={a.type}
+                aria-label={`Type of ${a.name}`}
+                onChange={(e) => update.mutate({ id: a.id, type: e.target.value as AccountType })}
+                className="rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500"
+              >
+                {ACCOUNT_TYPES.map((t) => (
+                  <option key={t} value={t}>{ACCOUNT_TYPE_LABELS[t]}</option>
+                ))}
+              </select>
+              <span className="w-24 shrink-0 text-right tabular-nums text-slate-600">{formatINR(a.balancePaise)}</span>
+              <Link to={`/settings/accounts/${a.id}`} className="text-xs text-slate-500 underline">
+                Details
+              </Link>
+              {a.archivedAt ? (
+                <button className="text-xs text-slate-500 underline" onClick={() => update.mutate({ id: a.id, archived: false })}>Restore</button>
+              ) : (
+                <button className="text-xs text-slate-500 underline" onClick={() => update.mutate({ id: a.id, archived: true })}>Archive</button>
+              )}
+              <button
+                className="text-xs text-red-500 underline"
+                onClick={() =>
+                  remove.mutate(a.id, {
+                    onSuccess: () => toast("Account deleted", "success"),
+                  })
+                }
+              >
+                Delete
+              </button>
+            </div>
           </li>
         ))}
       </ul>
@@ -288,7 +302,15 @@ function InlineName({ value, onSave }: { value: string; onSave: (v: string) => v
       />
     );
   }
-  return <button className="font-medium text-slate-800" onClick={() => setEditing(true)}>{value}</button>;
+  return (
+    <button
+      className="block max-w-full truncate text-left font-medium text-slate-800"
+      onClick={() => setEditing(true)}
+      title={value}
+    >
+      {value}
+    </button>
+  );
 }
 
 function CategoriesPanel() {

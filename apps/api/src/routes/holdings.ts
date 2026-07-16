@@ -7,8 +7,12 @@ import {
   GoldDetailsSchema,
   HoldingEventSchema,
   HoldingSchema,
+  MfImportInputSchema,
+  MfImportPreviewSchema,
+  MfImportResultSchema,
   NpsDetailsSchema,
   PortfolioSchema,
+  RefreshNavResultSchema,
   SetValuationSchema,
   UpdateHoldingSchema,
   UpsertGoldDetailsSchema,
@@ -26,9 +30,11 @@ import {
   deleteEvent,
   deleteHolding,
   getPortfolio,
+  refreshNav,
   setValuation,
   updateHolding,
 } from "../services/holdings.ts";
+import { commitMfImport, previewMfImport } from "../services/mf-import.ts";
 
 const IdParams = z.object({ id: z.uuid() });
 const EventParams = z.object({ id: z.uuid(), eventId: z.uuid() });
@@ -40,6 +46,24 @@ export async function holdingRoutes(app: FastifyInstance) {
     "/api/portfolio",
     { schema: { response: { 200: PortfolioSchema } } },
     async (req) => getPortfolio(app.db, req.session!.userId),
+  );
+
+  r.post(
+    "/api/holdings/refresh-nav",
+    { schema: { response: { 200: RefreshNavResultSchema } } },
+    async (req) => refreshNav(app.db, req.session!.userId),
+  );
+
+  r.post(
+    "/api/holdings/import-mf/preview",
+    { schema: { body: MfImportInputSchema, response: { 200: MfImportPreviewSchema } } },
+    async (req) => previewMfImport(req.body.csv),
+  );
+
+  r.post(
+    "/api/holdings/import-mf/commit",
+    { schema: { body: MfImportInputSchema, response: { 200: MfImportResultSchema } } },
+    async (req) => commitMfImport(app.db, req.session!.userId, req.body.csv),
   );
 
   r.post(

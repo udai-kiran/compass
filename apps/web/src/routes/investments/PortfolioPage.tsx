@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { Link } from "react-router";
 import {
   formatINR,
   type AssetClass,
@@ -7,7 +8,7 @@ import {
 } from "@compass/shared";
 import { Donut, LineChart, SERIES, StatTile } from "../../lib/viz.tsx";
 import { toast } from "../../lib/toast.tsx";
-import { usePortfolio, useHoldingMutations } from "../../lib/wealth-queries.ts";
+import { usePortfolio, useHoldingMutations, useRefreshNav } from "../../lib/wealth-queries.ts";
 
 // PPF/EPF are not here on purpose — they're account types, managed in Settings.
 const ASSET_LABELS: Record<AssetClass, string> = {
@@ -23,6 +24,20 @@ const ASSET_CLASSES = Object.keys(ASSET_LABELS) as AssetClass[];
 
 export function PortfolioPage() {
   const { data: p, isLoading } = usePortfolio();
+  const refreshNav = useRefreshNav();
+
+  function doRefresh() {
+    refreshNav.mutate(undefined, {
+      onSuccess: (r) =>
+        toast(
+          r.refreshed === 0
+            ? "No mapped funds to refresh"
+            : `Refreshed ${r.refreshed} fund${r.refreshed === 1 ? "" : "s"} · NAV as of ${r.asOf}`,
+          "success",
+        ),
+      onError: () => toast("Couldn't reach AMFI — try again in a moment"),
+    });
+  }
 
   if (isLoading) return <p className="text-sm text-slate-400">Loading…</p>;
   if (!p) return null;
@@ -36,11 +51,28 @@ export function PortfolioPage() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
-      <header>
-        <h1 className="text-xl font-semibold text-slate-800">Investments</h1>
-        <p className="mt-0.5 text-sm text-slate-500">
-          Holdings, valuations, and allocation across asset classes.
-        </p>
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-semibold text-slate-800">Investments</h1>
+          <p className="mt-0.5 text-sm text-slate-500">
+            Holdings, valuations, and allocation across asset classes.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={doRefresh}
+            disabled={refreshNav.isPending}
+            className="rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700 disabled:opacity-50"
+          >
+            {refreshNav.isPending ? "Refreshing…" : "↻ Refresh NAVs"}
+          </button>
+          <Link
+            to="/investments/import"
+            className="rounded-md bg-slate-800 px-3 py-1.5 text-sm text-white"
+          >
+            Import transactions
+          </Link>
+        </div>
       </header>
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -102,7 +134,8 @@ function HoldingRow({ h }: { h: HoldingPosition }) {
         <button onClick={() => setOpen((v) => !v)} className="min-w-0 text-left">
           <h3 className="truncate text-base font-semibold text-slate-800">{h.name}</h3>
           <p className="mt-0.5 text-sm text-slate-500">
-            {ASSET_LABELS[h.assetClass]} · invested {formatINR(h.investedPaise)}
+            {ASSET_LABELS[h.assetClass]} · cost basis {formatINR(h.investedPaise)}
+            {h.realizedPaise !== 0 && ` · realized ${formatINR(h.realizedPaise)}`}
             {h.lastValuationDate && ` · valued ${h.lastValuationDate}`}
           </p>
         </button>

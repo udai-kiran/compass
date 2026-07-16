@@ -3,8 +3,12 @@ import { z } from "zod";
 import {
   HoldingEventSchema,
   HoldingSchema,
+  MfImportPreviewSchema,
+  MfImportResultSchema,
+  NetWorthByGoalSchema,
   NetWorthReportSchema,
   PortfolioSchema,
+  RefreshNavResultSchema,
   type CreateHolding,
   type CreateHoldingEvent,
   type SetValuation,
@@ -67,6 +71,36 @@ export function useHoldingMutations() {
   return { create, update, remove, setValuation, addEvent, removeEvent };
 }
 
+export function useRefreshNav() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => apiPost("/api/holdings/refresh-nav", RefreshNavResultSchema, {}),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["portfolio"] });
+      void qc.invalidateQueries({ queryKey: ["net-worth"] });
+    },
+  });
+}
+
+// ---------- MF import ----------
+
+export function useMfImportPreview() {
+  return useMutation({
+    mutationFn: (csv: string) => apiPost("/api/holdings/import-mf/preview", MfImportPreviewSchema, { csv }),
+  });
+}
+
+export function useMfImportCommit() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (csv: string) => apiPost("/api/holdings/import-mf/commit", MfImportResultSchema, { csv }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["portfolio"] });
+      void qc.invalidateQueries({ queryKey: ["net-worth"] });
+    },
+  });
+}
+
 // ---------- net worth ----------
 
 export function useNetWorth() {
@@ -78,5 +112,32 @@ export function useNetWorthBackfill() {
   return useMutation({
     mutationFn: (months: number) => apiPost("/api/net-worth/backfill", NetWorthReportSchema, { months }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["net-worth"] }),
+  });
+}
+
+// ---------- net worth by goal ----------
+
+export function useNetWorthByGoal() {
+  return useQuery({
+    queryKey: ["net-worth-by-goal"],
+    queryFn: () => apiGet("/api/net-worth/by-goal", NetWorthByGoalSchema),
+  });
+}
+
+/**
+ * Sets the goal tag on one asset. The row may be an account or a holding, so it
+ * routes to the right PATCH endpoint; goalId null clears the tag (Unassigned).
+ */
+export function useAssetGoalMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ kind, id, goalId }: { kind: "account" | "holding"; id: string; goalId: string | null }) =>
+      send("PATCH", `/api/${kind === "account" ? "accounts" : "holdings"}/${id}`, z.unknown(), { goalId }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["net-worth-by-goal"] });
+      void qc.invalidateQueries({ queryKey: ["accounts"] });
+      void qc.invalidateQueries({ queryKey: ["portfolio"] });
+      void qc.invalidateQueries({ queryKey: ["net-worth"] });
+    },
   });
 }

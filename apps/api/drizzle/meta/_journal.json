@@ -78,6 +78,20 @@
       "when": 1784195421963,
       "tag": "0010_eminent_mastermind",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1784200740824,
+      "tag": "0011_fast_lilandra",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1784214285695,
+      "tag": "0012_keen_nomad",
+      "breakpoints": true
     }
   ]
 }

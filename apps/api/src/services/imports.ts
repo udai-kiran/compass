@@ -10,7 +10,7 @@ import type {
 } from "@compass/shared";
 import { ImportMappingSchema } from "@compass/shared";
 import type { Db } from "../db/index.ts";
-import { accounts, importPresets, importRows, imports, transactions } from "../db/schema.ts";
+import { accounts, categories, importPresets, importRows, imports, transactions } from "../db/schema.ts";
 import { parseAmountCell, parseCsv, parseDateCell } from "../lib/csv.ts";
 import { HttpError } from "../lib/errors.ts";
 import { getMerchantRules, normalizeMerchant } from "./merchants.ts";
@@ -483,6 +483,15 @@ export async function updateImportRow(
 ): Promise<ImportRow> {
   const batch = await ownedImport(db, userId, importId);
   if (batch.status !== "staged") throw new HttpError(409, "Import already committed");
+  // A row may only be tagged with one of the user's own categories — otherwise a
+  // foreign category UUID would ride through commit into the ledger.
+  if (input.categoryId) {
+    const cat = await db.query.categories.findFirst({
+      where: and(eq(categories.id, input.categoryId), eq(categories.userId, userId)),
+      columns: { id: true },
+    });
+    if (!cat) throw new HttpError(404, "Category not found");
+  }
   const rows = await db
     .update(importRows)
     .set(input)
@@ -513,6 +522,16 @@ export async function commitImport(db: Db, userId: string, importId: string): Pr
 
   // atomic: either the whole batch lands in transactions or none of it
   await db.transaction(async (t) => {
+    // Claim the batch first, under a row lock: transition staged -> committed
+    // only if it's still staged. A second concurrent commit blocks here, then
+    // matches zero rows and bails — so a batch can never be inserted twice.
+    const claimed = await t
+      .update(imports)
+      .set({ status: "committed", committedAt: new Date() })
+      .where(and(eq(imports.id, importId), eq(imports.status, "staged")))
+      .returning({ id: imports.id });
+    if (claimed.length === 0) throw new HttpError(409, "Import already committed");
+
     for (let i = 0; i < committable.length; i += BATCH) {
       const chunk = committable.slice(i, i + BATCH);
       const inserted = await t
@@ -538,10 +557,6 @@ export async function commitImport(db: Db, userId: string, importId: string): Pr
         where ir.id = u.id
       `);
     }
-    await t
-      .update(imports)
-      .set({ status: "committed", committedAt: new Date() })
-      .where(eq(imports.id, importId));
   });
 
   // card payments (credits) that match a debit on the paying account become

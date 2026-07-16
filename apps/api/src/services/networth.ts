@@ -45,7 +45,7 @@ export async function computeNetWorth(
   asOf: string,
 ): Promise<{ assetsPaise: number; liabilitiesPaise: number; breakdown: Breakdown }> {
   const res = await db.execute(sql`
-    select a.type, coalesce(sum(a.opening_balance_paise + coalesce(t.total, 0)), 0)::bigint as balance
+    select a.type, coalesce(a.opening_balance_paise + coalesce(t.total, 0), 0)::bigint as balance
     from accounts a
     left join (
       select account_id, sum(amount_paise) as total
@@ -54,7 +54,6 @@ export async function computeNetWorth(
       group by account_id
     ) t on t.account_id = a.id
     where a.user_id = ${userId} and a.archived_at is null
-    group by a.type
   `);
   const buckets: Record<AccountBucket, number> = {
     cashPaise: 0,
@@ -62,18 +61,25 @@ export async function computeNetWorth(
     creditCardsPaise: 0,
     loansPaise: 0,
   };
+  // Classify each account by the sign of *its own* balance. Aggregating a type
+  // first would let a positive bank account cancel an overdrawn one, so a real
+  // liability would vanish from the totals even though net worth stayed right.
+  let accountAssets = 0;
+  let accountLiabilities = 0;
   for (const r of res.rows as Array<{ type: string; balance: string }>) {
     const bucket = ACCOUNT_BUCKET[r.type as AccountType];
     // A type Postgres knows but this code doesn't: skipping it would hide money.
     if (!bucket) throw new Error(`Unclassified account type in net worth: ${r.type}`);
-    buckets[bucket] += Number(r.balance);
+    const balance = Number(r.balance);
+    buckets[bucket] += balance;
+    accountAssets += Math.max(0, balance);
+    accountLiabilities += Math.max(0, -balance);
   }
   const holdingsValue = await portfolioValue(db, userId, asOf);
 
   const breakdown: Breakdown = { ...buckets, holdingsPaise: holdingsValue };
-  const accountValues = Object.values(buckets);
-  const assets = accountValues.reduce((s, v) => s + Math.max(0, v), holdingsValue);
-  const liabilities = accountValues.reduce((s, v) => s + Math.max(0, -v), 0);
+  const assets = accountAssets + holdingsValue;
+  const liabilities = accountLiabilities;
   return { assetsPaise: assets, liabilitiesPaise: liabilities, breakdown };
 }
 

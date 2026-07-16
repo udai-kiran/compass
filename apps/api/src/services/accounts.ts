@@ -1,4 +1,4 @@
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import type {
   Account,
   AccountWithBalance,
@@ -22,6 +22,7 @@ function toAccount(row: AccountRow): Account {
     upiIds: row.upiIds,
     currency: row.currency,
     openingBalancePaise: row.openingBalancePaise,
+    goalId: row.goalId,
     sortOrder: row.sortOrder,
     archivedAt: row.archivedAt?.toISOString() ?? null,
   };
@@ -31,7 +32,10 @@ export async function listAccounts(db: Db, userId: string): Promise<AccountWithB
   const rows = await db
     .select({
       account: accounts,
-      txSum: sql<number>`coalesce(sum(${transactions.amountPaise}) filter (where ${transactions.deletedAt} is null), 0)::bigint`,
+      // Current balance is posted, not projected: a future-dated transaction
+      // must not move it. computeNetWorth applies the same date <= today cut, so
+      // the account list and net worth can never disagree about what's posted.
+      txSum: sql<number>`coalesce(sum(${transactions.amountPaise}) filter (where ${transactions.deletedAt} is null and ${transactions.date} <= current_date), 0)::bigint`,
     })
     .from(accounts)
     .leftJoin(transactions, eq(transactions.accountId, accounts.id))
@@ -109,8 +113,11 @@ export async function updateAccount(
 }
 
 export async function deleteAccount(db: Db, userId: string, id: string): Promise<void> {
+  // Any transaction counts, including soft-deleted ones: they still hold a
+  // (non-cascading) FK to the account, so deleting would hit a constraint error
+  // at the DB. Archive is the path for an account that has ever been used.
   const used = await db.query.transactions.findFirst({
-    where: and(eq(transactions.accountId, id), isNull(transactions.deletedAt)),
+    where: eq(transactions.accountId, id),
   });
   if (used) {
     throw new HttpError(409, "Account has transactions — archive it instead of deleting");

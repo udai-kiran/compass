@@ -202,12 +202,19 @@ export const UpsertGoldDetailsSchema = z
   });
 export type UpsertGoldDetails = z.input<typeof UpsertGoldDetailsSchema>;
 
+/** AMFI scheme code: 6 digits. Null = unmapped (no AMFI scheme / not looked up). */
+export const AmfiSchemeCodeSchema = z.number().int().min(100000).max(999999).nullable();
+
 export const HoldingSchema = z.object({
   id: z.uuid(),
   name: z.string(),
   assetClass: AssetClassSchema,
   notes: z.string(),
   targetPct: z.number().int().nullable(),
+  amfiSchemeCode: z.number().int().nullable(),
+  folioNumber: z.string().nullable(),
+  /** Goal this folio is earmarked for; null = Unassigned. */
+  goalId: z.uuid().nullable(),
   archived: z.boolean(),
 });
 export type Holding = z.infer<typeof HoldingSchema>;
@@ -217,6 +224,8 @@ export const CreateHoldingSchema = z.object({
   assetClass: AssetClassSchema,
   notes: z.string().default(""),
   targetPct: z.number().int().min(0).max(100).nullable().default(null),
+  amfiSchemeCode: AmfiSchemeCodeSchema.default(null),
+  folioNumber: z.string().min(1).nullable().default(null),
 });
 export type CreateHolding = z.input<typeof CreateHoldingSchema>;
 
@@ -225,6 +234,9 @@ export const UpdateHoldingSchema = z.object({
   assetClass: AssetClassSchema.optional(),
   notes: z.string().optional(),
   targetPct: z.number().int().min(0).max(100).nullable().optional(),
+  amfiSchemeCode: AmfiSchemeCodeSchema.optional(),
+  folioNumber: z.string().min(1).nullable().optional(),
+  goalId: z.uuid().nullable().optional(),
   archived: z.boolean().optional(),
 });
 export type UpdateHolding = z.infer<typeof UpdateHoldingSchema>;
@@ -239,13 +251,20 @@ export const HoldingEventSchema = z.object({
 });
 export type HoldingEvent = z.infer<typeof HoldingEventSchema>;
 
-export const CreateHoldingEventSchema = z.object({
-  type: z.enum(["buy", "sell", "dividend"]),
-  date: z.iso.date(),
-  amountPaise: z.number().int().positive(),
-  units: z.number().positive().nullable().default(null),
-  note: z.string().default(""),
-});
+export const CreateHoldingEventSchema = z
+  .object({
+    type: z.enum(["buy", "sell", "dividend"]),
+    date: z.iso.date(),
+    amountPaise: z.number().int().positive(),
+    units: z.number().positive().nullable().default(null),
+    note: z.string().default(""),
+  })
+  // A buy/sell with no units carries money but no position, so every valuation
+  // and NAV refresh would understate the holding. Only dividends may omit units.
+  .refine((e) => e.type === "dividend" || e.units !== null, {
+    error: "buy and sell events require units",
+    path: ["units"],
+  });
 export type CreateHoldingEvent = z.input<typeof CreateHoldingEventSchema>;
 
 export const SetValuationSchema = z.object({
@@ -255,9 +274,13 @@ export const SetValuationSchema = z.object({
 export type SetValuation = z.input<typeof SetValuationSchema>;
 
 export const HoldingPositionSchema = HoldingSchema.extend({
+  /** Remaining cost basis of still-held units (average-cost), never negative. */
   investedPaise: z.number().int(),
   currentValuePaise: z.number().int(),
+  /** currentValue − remaining cost basis; pure of realized gain. */
   unrealizedPaise: z.number().int(),
+  /** Gain/loss booked on sells (proceeds − average cost of units sold). */
+  realizedPaise: z.number().int(),
   dividendsPaise: z.number().int(),
   lastValuationDate: z.iso.date().nullable(),
   events: z.array(HoldingEventSchema),
@@ -285,6 +308,61 @@ export const PortfolioSchema = z.object({
   ),
 });
 export type Portfolio = z.infer<typeof PortfolioSchema>;
+
+// ---------- NAV refresh + MF import ----------
+
+/** Result of pulling AMFI NAVs and re-valuing mapped holdings. */
+export const RefreshNavResultSchema = z.object({
+  /** holdings re-valued from a fresh NAV */
+  refreshed: z.number().int(),
+  /** holdings skipped: no scheme code, or the code wasn't in the AMFI feed */
+  skipped: z.number().int(),
+  /** the NAV as-of date (AMFI publishes one date per run); null if nothing refreshed */
+  asOf: z.iso.date().nullable(),
+});
+export type RefreshNavResult = z.infer<typeof RefreshNavResultSchema>;
+
+/** One fund's rollup in an import preview: transactions grouped, scheme resolved. */
+export const MfImportFundSchema = z.object({
+  fundName: z.string(),
+  folioNumber: z.string().nullable(),
+  /** resolved AMFI scheme code, or null when the fund isn't in the map */
+  amfiSchemeCode: z.number().int().nullable(),
+  /** AMFI's official name for the resolved scheme, for the user to eyeball */
+  canonicalName: z.string().nullable(),
+  /** latest NAV from AMFI, when the scheme resolved and was in the feed */
+  latestNav: z.number().nullable(),
+  buyCount: z.number().int(),
+  sellCount: z.number().int(),
+  /** net units after buys − sells across the file */
+  netUnits: z.number(),
+  investedPaise: z.number().int(),
+});
+export type MfImportFund = z.infer<typeof MfImportFundSchema>;
+
+export const MfImportPreviewSchema = z.object({
+  funds: z.array(MfImportFundSchema),
+  totalRows: z.number().int(),
+  /** rows that couldn't be parsed (bad date/amount/order), reported not dropped silently */
+  skippedRows: z.array(z.object({ line: z.number().int(), reason: z.string() })),
+});
+export type MfImportPreview = z.infer<typeof MfImportPreviewSchema>;
+
+export const MfImportResultSchema = z.object({
+  holdingsCreated: z.number().int(),
+  holdingsMatched: z.number().int(),
+  eventsInserted: z.number().int(),
+  /** events already present (same holding/date/type/units/amount) — skipped, so re-import is safe */
+  eventsDuplicate: z.number().int(),
+  valuationsSet: z.number().int(),
+});
+export type MfImportResult = z.infer<typeof MfImportResultSchema>;
+
+/** Body for both preview and commit: the raw CSV text pasted or uploaded. */
+export const MfImportInputSchema = z.object({
+  csv: z.string().min(1).max(2_000_000),
+});
+export type MfImportInput = z.input<typeof MfImportInputSchema>;
 
 // ---------- Net worth ----------
 
@@ -315,3 +393,36 @@ export const NetWorthReportSchema = z.object({
   forecast: z.array(z.object({ date: z.iso.date(), netPaise: z.number().int() })),
 });
 export type NetWorthReport = z.infer<typeof NetWorthReportSchema>;
+
+// ---------- Net worth grouped by goal ----------
+
+/** One tagged asset within a goal group. Liabilities carry a negative valuePaise. */
+export const GoalAssetSchema = z.object({
+  kind: z.enum(["account", "holding"]),
+  id: z.uuid(),
+  name: z.string(),
+  /** e.g. account type, or a folio number — a hint under the name */
+  subtitle: z.string(),
+  /** signed: assets positive, liabilities negative, so a group sums to its net */
+  valuePaise: z.number().int(),
+  goalId: z.uuid().nullable(),
+});
+export type GoalAsset = z.infer<typeof GoalAssetSchema>;
+
+export const GoalGroupSchema = z.object({
+  /** null for the Unassigned group */
+  goalId: z.uuid().nullable(),
+  goalName: z.string(),
+  goalType: z.string().nullable(),
+  targetPaise: z.number().int().nullable(),
+  netPaise: z.number().int(),
+  assetsPaise: z.number().int(),
+  liabilitiesPaise: z.number().int(),
+  items: z.array(GoalAssetSchema),
+});
+export type GoalGroup = z.infer<typeof GoalGroupSchema>;
+
+export const NetWorthByGoalSchema = z.object({
+  groups: z.array(GoalGroupSchema),
+});
+export type NetWorthByGoal = z.infer<typeof NetWorthByGoalSchema>;

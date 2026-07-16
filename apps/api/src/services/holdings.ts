@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import type {
   CreateHolding,
   CreateHoldingEvent,
@@ -6,12 +6,14 @@ import type {
   HoldingEvent,
   HoldingPosition,
   Portfolio,
+  RefreshNavResult,
   SetValuation,
   UpdateHolding,
 } from "@compass/shared";
 import type { Db } from "../db/index.ts";
 import { holdingEvents, holdings, holdingValuations } from "../db/schema.ts";
 import { HttpError } from "../lib/errors.ts";
+import { fetchNavByCode } from "./amfi.ts";
 
 type HoldingRow = typeof holdings.$inferSelect;
 
@@ -22,8 +24,53 @@ function toHolding(h: HoldingRow): Holding {
     assetClass: h.assetClass,
     notes: h.notes,
     targetPct: h.targetPct,
+    amfiSchemeCode: h.amfiSchemeCode,
+    folioNumber: h.folioNumber,
+    goalId: h.goalId,
     archived: h.archivedAt !== null,
   };
+}
+
+/** Net units held: buys add, sells subtract, dividends are cash (no units). */
+export function unitsHeld(events: Array<{ type: string; units: number | null }>): number {
+  return events.reduce(
+    (s, e) => s + (e.units ?? 0) * (e.type === "buy" ? 1 : e.type === "sell" ? -1 : 0),
+    0,
+  );
+}
+
+/**
+ * Average-cost accounting over a holding's events, processed in date order.
+ * Returns the remaining cost basis (what the still-held units cost), the gain
+ * realized on sells, and units held.
+ *
+ * Raw buy-minus-sell cash flow — the old "invested" — goes negative after a
+ * profitable exit and folds realized gain into what should be unrealized.
+ * Remaining cost basis does neither: a sell removes the *average cost* of the
+ * units sold, and the difference from the proceeds is booked as realized gain.
+ */
+export function costBasis(
+  events: Array<{ type: string; date: string; units: number | null; amountPaise: number }>,
+): { remainingCostPaise: number; realizedPaise: number; units: number } {
+  const ordered = [...events].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  let units = 0;
+  let cost = 0;
+  let realized = 0;
+  for (const e of ordered) {
+    if (e.type === "buy" && e.units !== null) {
+      units += e.units;
+      cost += e.amountPaise;
+    } else if (e.type === "sell" && e.units !== null) {
+      const avg = units > 0 ? cost / units : 0;
+      const soldUnits = Math.min(e.units, units); // can't sell more than held
+      const costOut = Math.round(avg * soldUnits);
+      realized += e.amountPaise - costOut;
+      cost = Math.max(0, cost - costOut);
+      units = Math.max(0, units - e.units);
+    }
+    // dividend: cash, no unit or cost change
+  }
+  return { remainingCostPaise: Math.round(cost), realizedPaise: realized, units };
 }
 
 async function ownedHolding(db: Db, userId: string, id: string): Promise<HoldingRow> {
@@ -133,22 +180,24 @@ export async function getPortfolio(db: Db, userId: string): Promise<Portfolio> {
       ])
     : [[], []];
 
+  const today = new Date().toISOString().slice(0, 10);
   const positions: HoldingPosition[] = rows.map((h) => {
     const evts = events.filter((e) => e.holdingId === h.id);
-    const invested = evts.reduce(
-      (s, e) => s + (e.type === "buy" ? e.amountPaise : e.type === "sell" ? -e.amountPaise : 0),
-      0,
-    );
-    const dividends = evts
+    // Only posted (date <= today) events and valuations shape the *current*
+    // position: a future-dated buy or valuation must not move today's numbers.
+    const posted = evts.filter((e) => e.date <= today);
+    const { remainingCostPaise, realizedPaise } = costBasis(posted);
+    const dividends = posted
       .filter((e) => e.type === "dividend")
       .reduce((s, e) => s + e.amountPaise, 0);
-    const latest = valuations.find((v) => v.holdingId === h.id) ?? null;
-    const value = latest?.valuePaise ?? Math.max(0, invested);
+    const latest = valuations.find((v) => v.holdingId === h.id && v.date <= today) ?? null;
+    const value = latest?.valuePaise ?? remainingCostPaise;
     return {
       ...toHolding(h),
-      investedPaise: invested,
+      investedPaise: remainingCostPaise,
       currentValuePaise: value,
-      unrealizedPaise: value - Math.max(0, invested),
+      unrealizedPaise: value - remainingCostPaise,
+      realizedPaise,
       dividendsPaise: dividends,
       lastValuationDate: latest?.date ?? null,
       events: evts.slice(0, 20).map((e) => ({
@@ -228,11 +277,45 @@ export async function portfolioValue(db: Db, userId: string, asOf?: string): Pro
     const latest = valuations.find((v) => v.holdingId === id && v.date <= asOf);
     if (latest) total += latest.valuePaise;
     else {
-      const inv = events
-        .filter((e) => e.holdingId === id && e.date <= asOf)
-        .reduce((s, e) => s + (e.type === "buy" ? e.amountPaise : e.type === "sell" ? -e.amountPaise : 0), 0);
-      total += Math.max(0, inv);
+      // No valuation yet at this date: fall back to remaining cost basis of
+      // whatever was held as of asOf.
+      const { remainingCostPaise } = costBasis(
+        events.filter((e) => e.holdingId === id && e.date <= asOf),
+      );
+      total += remainingCostPaise;
     }
   }
   return total;
+}
+
+/**
+ * Pulls AMFI's latest NAVs and re-values every active holding that has a scheme
+ * code: value = unitsHeld × NAV, recorded as a valuation at AMFI's as-of date
+ * (reusing setValuation's upsert, so re-running the same day is idempotent).
+ * Holdings with no code, or a code AMFI doesn't list, are left untouched.
+ */
+export async function refreshNav(db: Db, userId: string): Promise<RefreshNavResult> {
+  const held = await db.query.holdings.findMany({
+    where: and(eq(holdings.userId, userId), isNull(holdings.archivedAt)),
+  });
+  const mapped = held.filter((h) => h.amfiSchemeCode !== null);
+  if (mapped.length === 0) return { refreshed: 0, skipped: held.length, asOf: null };
+
+  const navByCode = await fetchNavByCode();
+  const events = await db.query.holdingEvents.findMany({
+    where: inArray(holdingEvents.holdingId, mapped.map((h) => h.id)),
+  });
+
+  let refreshed = 0;
+  let asOf: string | null = null;
+  for (const h of mapped) {
+    const nav = navByCode.get(h.amfiSchemeCode!);
+    if (!nav) continue; // code not in today's feed (new/suspended scheme)
+    const units = unitsHeld(events.filter((e) => e.holdingId === h.id));
+    const valuePaise = Math.round(units * nav.nav * 100);
+    await setValuation(db, userId, h.id, { date: nav.date, valuePaise: Math.max(0, valuePaise) });
+    asOf = nav.date;
+    refreshed += 1;
+  }
+  return { refreshed, skipped: held.length - refreshed, asOf };
 }
