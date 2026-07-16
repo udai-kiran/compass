@@ -274,9 +274,13 @@ export const SetValuationSchema = z.object({
 export type SetValuation = z.input<typeof SetValuationSchema>;
 
 export const HoldingPositionSchema = HoldingSchema.extend({
+  /** Remaining cost basis of still-held units (average-cost), never negative. */
   investedPaise: z.number().int(),
   currentValuePaise: z.number().int(),
+  /** currentValue − remaining cost basis; pure of realized gain. */
   unrealizedPaise: z.number().int(),
+  /** Gain/loss booked on sells (proceeds − average cost of units sold). */
+  realizedPaise: z.number().int(),
   dividendsPaise: z.number().int(),
   lastValuationDate: z.iso.date().nullable(),
   events: z.array(HoldingEventSchema),

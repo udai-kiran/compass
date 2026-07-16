@@ -32,7 +32,10 @@ export async function listAccounts(db: Db, userId: string): Promise<AccountWithB
   const rows = await db
     .select({
       account: accounts,
-      txSum: sql<number>`coalesce(sum(${transactions.amountPaise}) filter (where ${transactions.deletedAt} is null), 0)::bigint`,
+      // Current balance is posted, not projected: a future-dated transaction
+      // must not move it. computeNetWorth applies the same date <= today cut, so
+      // the account list and net worth can never disagree about what's posted.
+      txSum: sql<number>`coalesce(sum(${transactions.amountPaise}) filter (where ${transactions.deletedAt} is null and ${transactions.date} <= current_date), 0)::bigint`,
     })
     .from(accounts)
     .leftJoin(transactions, eq(transactions.accountId, accounts.id))

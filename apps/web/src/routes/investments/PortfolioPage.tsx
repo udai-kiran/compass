@@ -134,7 +134,8 @@ function HoldingRow({ h }: { h: HoldingPosition }) {
         <button onClick={() => setOpen((v) => !v)} className="min-w-0 text-left">
           <h3 className="truncate text-base font-semibold text-slate-800">{h.name}</h3>
           <p className="mt-0.5 text-sm text-slate-500">
-            {ASSET_LABELS[h.assetClass]} · invested {formatINR(h.investedPaise)}
+            {ASSET_LABELS[h.assetClass]} · cost basis {formatINR(h.investedPaise)}
+            {h.realizedPaise !== 0 && ` · realized ${formatINR(h.realizedPaise)}`}
             {h.lastValuationDate && ` · valued ${h.lastValuationDate}`}
           </p>
         </button>
