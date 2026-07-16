@@ -147,6 +147,8 @@ function GoalCard({ goal }: { goal: Goal }) {
   const { update, remove, contribute, removeContribution } = useGoalMutations();
   const [amountR, setAmountR] = useState("");
   const [open, setOpen] = useState(false);
+  const [editingTargetDate, setEditingTargetDate] = useState(false);
+  const [targetDate, setTargetDate] = useState(goal.targetDate ?? "");
 
   const typeLabel = GOAL_TYPES.find((t) => t.value === goal.type)?.label ?? goal.type;
   const tagged = byGoal?.groups.find((g) => g.goalId === goal.id);
@@ -156,11 +158,70 @@ function GoalCard({ goal }: { goal: Goal }) {
       <div className="flex items-start justify-between gap-3">
         <div>
           <h2 className="font-semibold text-slate-800">{goal.name}</h2>
-          <p className="text-xs text-slate-400">
-            {typeLabel}
-            {goal.targetDate && ` · by ${goal.targetDate}`}
-            {goal.accountId && " · linked account"}
-          </p>
+          {editingTargetDate ? (
+            <form
+              className="mt-1 flex flex-wrap items-center gap-2 text-xs"
+              onSubmit={(e) => {
+                e.preventDefault();
+                update.mutate(
+                  { id: goal.id, targetDate: targetDate || null },
+                  {
+                    onSuccess: () => {
+                      setEditingTargetDate(false);
+                      toast("Target date updated", "success");
+                    },
+                    onError: () => toast("Couldn't update the target date"),
+                  },
+                );
+              }}
+            >
+              <label htmlFor={`target-date-${goal.id}`} className="text-slate-500">
+                Target date
+              </label>
+              <input
+                id={`target-date-${goal.id}`}
+                type="date"
+                value={targetDate}
+                onChange={(e) => setTargetDate(e.target.value)}
+                className="rounded-md border border-slate-300 px-2 py-1 text-slate-700"
+                autoFocus
+              />
+              <button
+                type="submit"
+                disabled={update.isPending || targetDate === (goal.targetDate ?? "")}
+                className="rounded-md bg-slate-800 px-2.5 py-1 text-white disabled:opacity-40"
+              >
+                {update.isPending ? "Saving…" : "Save"}
+              </button>
+              <button
+                type="button"
+                className="text-slate-500 underline"
+                onClick={() => {
+                  setTargetDate(goal.targetDate ?? "");
+                  setEditingTargetDate(false);
+                }}
+              >
+                Cancel
+              </button>
+            </form>
+          ) : (
+            <p className="text-xs text-slate-400">
+              {typeLabel}
+              {goal.targetDate ? ` · by ${goal.targetDate}` : " · no target date"}
+              {goal.accountId && " · linked account"}
+              {" · "}
+              <button
+                type="button"
+                className="text-slate-500 underline"
+                onClick={() => {
+                  setTargetDate(goal.targetDate ?? "");
+                  setEditingTargetDate(true);
+                }}
+              >
+                Edit date
+              </button>
+            </p>
+          )}
           {tagged && tagged.items.length > 0 && (
             <p className="mt-1 text-xs text-slate-500">
               Tagged assets:{" "}
