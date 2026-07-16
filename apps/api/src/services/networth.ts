@@ -32,6 +32,7 @@ export const ACCOUNT_BUCKET: Record<AccountType, AccountBucket> = {
   ssy: "investmentAccountsPaise",
   credit_card: "creditCardsPaise",
   loan: "loansPaise",
+  overdraft: "loansPaise",
   // Overdraft home loan: the balance is what you owe (net of parked surplus),
   // so it's a liability like any other loan. The drawing power is liquidity, not
   // a separate asset — counting it would double what the surplus already offset.

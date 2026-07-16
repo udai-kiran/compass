@@ -46,6 +46,9 @@ export const accountType = pgEnum("account_type", [
   "credit_card",
   "investment",
   "loan",
+  // Generic overdraft/line-of-credit account. It shares drawing-power details
+  // with an overdraft home loan but is kept distinct for reporting and labels.
+  "overdraft",
   "ppf",
   "epf",
   // Sukanya Samriddhi: a PPF twin (fixed govt rate, credited annually, matures
@@ -631,7 +634,7 @@ export const retirementDetails = pgTable("retirement_details", {
 });
 
 /**
- * Extra detail for `home_loan_od` (overdraft home loan) accounts.
+ * Extra detail for generic overdraft and `home_loan_od` accounts.
  *
  * Only the sanctioned limit is stored — the amount owed is the account balance
  * (already net of parked surplus, like the bank's own screen), and drawing

@@ -8,6 +8,7 @@ export const AccountTypeSchema = z.enum([
   "credit_card",
   "investment",
   "loan",
+  "overdraft",
   "ppf",
   "epf",
   "ssy",
@@ -28,7 +29,7 @@ export function isRetirementAccount(type: AccountType): boolean {
 }
 
 /** Account types that carry overdraft details (sanctioned limit, rate). */
-export const OVERDRAFT_ACCOUNT_TYPES = ["home_loan_od"] as const satisfies readonly AccountType[];
+export const OVERDRAFT_ACCOUNT_TYPES = ["overdraft", "home_loan_od"] as const satisfies readonly AccountType[];
 
 export function isOverdraftAccount(type: AccountType): boolean {
   return (OVERDRAFT_ACCOUNT_TYPES as readonly AccountType[]).includes(type);
