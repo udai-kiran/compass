@@ -3,10 +3,20 @@ import assert from "node:assert/strict";
 import { CreateAccountSchema, isRetirementAccount } from "./ledger.ts";
 import {
   AssetClassSchema,
+  CreateHoldingEventSchema,
   UpsertGoldDetailsSchema,
   UpsertNpsDetailsSchema,
   UpsertRetirementDetailsSchema,
 } from "./wealth.ts";
+
+test("a buy or sell holding event requires units; a dividend need not", () => {
+  const base = { date: "2026-07-06", amountPaise: 100000 };
+  assert.equal(CreateHoldingEventSchema.safeParse({ ...base, type: "buy", units: 10 }).success, true);
+  assert.equal(CreateHoldingEventSchema.safeParse({ ...base, type: "buy" }).success, false);
+  assert.equal(CreateHoldingEventSchema.safeParse({ ...base, type: "sell", units: null }).success, false);
+  // A dividend is cash, no units.
+  assert.equal(CreateHoldingEventSchema.safeParse({ ...base, type: "dividend" }).success, true);
+});
 
 test("PPF and EPF are account types, not asset classes", () => {
   // The whole point of the split: a credited balance is an account, a

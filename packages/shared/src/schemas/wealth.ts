@@ -251,13 +251,20 @@ export const HoldingEventSchema = z.object({
 });
 export type HoldingEvent = z.infer<typeof HoldingEventSchema>;
 
-export const CreateHoldingEventSchema = z.object({
-  type: z.enum(["buy", "sell", "dividend"]),
-  date: z.iso.date(),
-  amountPaise: z.number().int().positive(),
-  units: z.number().positive().nullable().default(null),
-  note: z.string().default(""),
-});
+export const CreateHoldingEventSchema = z
+  .object({
+    type: z.enum(["buy", "sell", "dividend"]),
+    date: z.iso.date(),
+    amountPaise: z.number().int().positive(),
+    units: z.number().positive().nullable().default(null),
+    note: z.string().default(""),
+  })
+  // A buy/sell with no units carries money but no position, so every valuation
+  // and NAV refresh would understate the holding. Only dividends may omit units.
+  .refine((e) => e.type === "dividend" || e.units !== null, {
+    error: "buy and sell events require units",
+    path: ["units"],
+  });
 export type CreateHoldingEvent = z.input<typeof CreateHoldingEventSchema>;
 
 export const SetValuationSchema = z.object({

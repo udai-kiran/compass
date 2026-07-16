@@ -1,4 +1,4 @@
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import type {
   Account,
   AccountWithBalance,
@@ -110,8 +110,11 @@ export async function updateAccount(
 }
 
 export async function deleteAccount(db: Db, userId: string, id: string): Promise<void> {
+  // Any transaction counts, including soft-deleted ones: they still hold a
+  // (non-cascading) FK to the account, so deleting would hit a constraint error
+  // at the DB. Archive is the path for an account that has ever been used.
   const used = await db.query.transactions.findFirst({
-    where: and(eq(transactions.accountId, id), isNull(transactions.deletedAt)),
+    where: eq(transactions.accountId, id),
   });
   if (used) {
     throw new HttpError(409, "Account has transactions — archive it instead of deleting");

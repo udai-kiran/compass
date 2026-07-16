@@ -162,11 +162,22 @@ test("re-importing the same rows inserts nothing (idempotent dedupe)", () => {
   assert.equal(second.duplicates, 2);
 });
 
-test("a row repeated within one file is inserted once", () => {
+test("two genuinely identical same-day transactions are both kept", () => {
+  // Multiset matching: without an existing event to match, an identical repeat
+  // is a separate real transaction (e.g. two same-day SIP executions), not a dup.
   const r = row({});
-  const { toInsert, duplicates } = partitionEvents([], [r, r]);
-  assert.equal(toInsert.length, 1);
-  assert.equal(duplicates, 1);
+  const first = partitionEvents([], [r, r]);
+  assert.equal(first.toInsert.length, 2);
+  assert.equal(first.duplicates, 0);
+  // But re-importing that file matches both existing events — nothing new.
+  const existing = [eventDedupeKey(r), eventDedupeKey(r)];
+  const second = partitionEvents(existing, [r, r]);
+  assert.equal(second.toInsert.length, 0);
+  assert.equal(second.duplicates, 2);
+  // A third identical row (existing has only two) inserts just the one extra.
+  const third = partitionEvents(existing, [r, r, r]);
+  assert.equal(third.toInsert.length, 1);
+  assert.equal(third.duplicates, 2);
 });
 
 test("a buy and sell of equal units/amount on one day stay distinct events", () => {
