@@ -7,8 +7,10 @@ export const ACCOUNT_TYPES: AccountType[] = [
   "credit_card",
   "investment",
   "loan",
+  "home_loan_od",
   "ppf",
   "epf",
+  "ssy",
 ];
 
 export const ACCOUNT_TYPE_LABELS: Record<AccountType, string> = {
@@ -17,8 +19,10 @@ export const ACCOUNT_TYPE_LABELS: Record<AccountType, string> = {
   credit_card: "Credit card",
   investment: "Investment",
   loan: "Loan",
+  home_loan_od: "Home loan (overdraft)",
   ppf: "PPF",
   epf: "EPF",
+  ssy: "Sukanya Samriddhi",
 };
 
 /** Masks all but the last 4 — the account number is shown only on request. */

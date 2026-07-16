@@ -18,6 +18,7 @@ test("PPF and EPF are account types, not asset classes", () => {
 
   assert.equal(isRetirementAccount("ppf"), true);
   assert.equal(isRetirementAccount("epf"), true);
+  assert.equal(isRetirementAccount("ssy"), true);
   assert.equal(isRetirementAccount("bank"), false);
   assert.equal(isRetirementAccount("investment"), false);
 });
