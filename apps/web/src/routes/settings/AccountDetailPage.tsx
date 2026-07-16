@@ -34,6 +34,14 @@ const SUBTYPE_LABELS: Record<BankAccountSubtype, string> = {
   nro: "NRO",
 };
 
+const NON_UPI_ACCOUNT_TYPES: readonly AccountWithBalance["type"][] = [
+  "loan",
+  "overdraft",
+  "home_loan_od",
+  "epf",
+  "ppf",
+];
+
 /** Validates with the same schema the API enforces, so the two can't disagree. */
 function errorOf(schema: { safeParse: (v: unknown) => { success: boolean; error?: unknown } }, value: string) {
   if (value === "") return null;
@@ -63,6 +71,8 @@ export function AccountDetailPage() {
 }
 
 function AccountDetail({ account }: { account: AccountWithBalance }) {
+  const supportsUpi = !NON_UPI_ACCOUNT_TYPES.includes(account.type);
+
   return (
     <div className="mx-auto max-w-2xl p-6">
       <InstitutionDatalist />
@@ -82,7 +92,7 @@ function AccountDetail({ account }: { account: AccountWithBalance }) {
       </header>
 
       <IdentitySection account={account} />
-      <UpiSection account={account} />
+      {supportsUpi && <UpiSection account={account} />}
       {isBankAccount(account.type) && <BankSection account={account} />}
       {isOverdraftAccount(account.type) && <OverdraftSection account={account} />}
       {isRetirementAccount(account.type) && <RetirementSection account={account} />}
@@ -451,9 +461,9 @@ function OverdraftSection({ account }: { account: AccountWithBalance }) {
         </Field>
 
         <div className="space-y-2 rounded-md bg-slate-50 p-3">
-          <DerivedRow label="Outstanding" value={formatINR(owedPaise)} hint="what you owe now" />
+          <DerivedRow label="Limit availed" value={formatINR(owedPaise)} hint="what you owe now" />
           <DerivedRow
-            label="Available to draw"
+            label="Limit available"
             value={formatINR(availablePaise)}
             hint={limitPaise === 0 ? "set a limit to see this" : "surplus you can withdraw"}
           />

@@ -112,7 +112,11 @@ async function cashAndLiabilities(
   `);
   const byType = new Map((res.rows as Array<{ type: string; balance: string }>).map((r) => [r.type, Number(r.balance)]));
   const cash = (byType.get("bank") ?? 0) + (byType.get("cash") ?? 0);
-  const liabilities = Math.max(0, -(byType.get("credit_card") ?? 0)) + Math.max(0, -(byType.get("loan") ?? 0));
+  const liabilities =
+    Math.max(0, -(byType.get("credit_card") ?? 0)) +
+    Math.max(0, -(byType.get("loan") ?? 0)) +
+    Math.max(0, -(byType.get("overdraft") ?? 0)) +
+    Math.max(0, -(byType.get("home_loan_od") ?? 0));
   return { cashPaise: cash, liabilitiesPaise: liabilities };
 }
 

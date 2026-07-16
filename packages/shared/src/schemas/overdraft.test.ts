@@ -20,6 +20,7 @@ test("drawing power never goes negative", () => {
 });
 
 test("only overdraft loans carry overdraft details", () => {
+  assert.equal(isOverdraftAccount("overdraft"), true);
   assert.equal(isOverdraftAccount("home_loan_od"), true);
   // A plain loan has no drawing power — it must not offer the section.
   assert.equal(isOverdraftAccount("loan"), false);

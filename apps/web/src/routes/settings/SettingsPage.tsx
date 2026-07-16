@@ -1,6 +1,13 @@
 import { useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router";
-import { formatINR, type AccountType, type Category, type CategoryKind } from "@compass/shared";
+import {
+  formatINR,
+  OverdraftDetailsSchema,
+  type AccountType,
+  type Category,
+  type CategoryKind,
+} from "@compass/shared";
+import { apiPut } from "../../lib/api.ts";
 import { toast } from "../../lib/toast.tsx";
 import { ACCOUNT_TYPES, ACCOUNT_TYPE_LABELS } from "../../lib/account-meta.ts";
 import {
@@ -77,15 +84,24 @@ function AccountsPanel() {
   const [institution, setInstitution] = useState("");
   const [last4, setLast4] = useState("");
   const [opening, setOpening] = useState("0");
+  const [limitAvailed, setLimitAvailed] = useState("");
+  const [limitAvailable, setLimitAvailable] = useState("");
   const [showArchived, setShowArchived] = useState(false);
 
   const last4Invalid = last4 !== "" && !/^\d{4}$/.test(last4);
 
-  function submit(e: FormEvent) {
+  const availedPaise = Math.round(Number(limitAvailed || "0") * 100);
+  const availablePaise = Math.round(Number(limitAvailable || "0") * 100);
+  const isOverdraft = type === "overdraft" || type === "home_loan_od";
+  const overdraftInvalid =
+    isOverdraft &&
+    (!Number.isFinite(availedPaise) || availedPaise < 0 || !Number.isFinite(availablePaise) || availablePaise < 0);
+
+  async function submit(e: FormEvent) {
     e.preventDefault();
-    if (!name || last4Invalid) return;
-    create.mutate(
-      {
+    if (!name || last4Invalid || overdraftInvalid) return;
+    try {
+      const account = await create.mutateAsync({
         name,
         type,
         institution: institution || null,
@@ -94,18 +110,28 @@ function AccountsPanel() {
         // this form stays the short path to getting an account on the books.
         holderName: null,
         currency: "INR",
-        openingBalancePaise: Math.round(parseFloat(opening || "0") * 100),
-      },
-      {
-        onSuccess: () => {
-          setName("");
-          setInstitution("");
-          setLast4("");
-          setOpening("0");
-          toast("Account created", "success");
-        },
-      },
-    );
+        // Liability balances are negative. For Maxgain, limit availed is the
+        // current amount owed and therefore becomes the opening balance.
+        openingBalancePaise:
+          isOverdraft ? -availedPaise : Math.round(parseFloat(opening || "0") * 100),
+      });
+      if (isOverdraft) {
+        await apiPut(
+          `/api/accounts/${account.id}/overdraft-details`,
+          OverdraftDetailsSchema,
+          { sanctionedLimitPaise: availedPaise + availablePaise, annualRateBps: 0 },
+        );
+      }
+      setName("");
+      setInstitution("");
+      setLast4("");
+      setOpening("0");
+      setLimitAvailed("");
+      setLimitAvailable("");
+      toast("Account created", "success");
+    } catch {
+      toast("Couldn't create the account");
+    }
   }
 
   const visible = accounts?.filter((a) => showArchived || !a.archivedAt) ?? [];
@@ -135,11 +161,37 @@ function AccountsPanel() {
           aria-invalid={last4Invalid}
           className={`w-20 rounded-md border px-2 py-1.5 text-sm ${last4Invalid ? "border-red-400" : "border-slate-300"}`}
         />
-        <input placeholder="Opening ₹" value={opening} onChange={(e) => setOpening(e.target.value)} inputMode="decimal" className="w-28 rounded-md border border-slate-300 px-2 py-1.5 text-right text-sm" />
-        <button type="submit" disabled={last4Invalid} className="rounded-md bg-slate-800 px-3 py-1.5 text-sm text-white disabled:opacity-50">Add account</button>
+        {isOverdraft ? (
+          <>
+            <input
+              placeholder="Limit availed ₹"
+              aria-label="Limit availed"
+              value={limitAvailed}
+              onChange={(e) => setLimitAvailed(e.target.value)}
+              inputMode="decimal"
+              className="w-36 rounded-md border border-slate-300 px-2 py-1.5 text-right text-sm"
+            />
+            <input
+              placeholder="Limit available ₹"
+              aria-label="Limit available"
+              value={limitAvailable}
+              onChange={(e) => setLimitAvailable(e.target.value)}
+              inputMode="decimal"
+              className="w-36 rounded-md border border-slate-300 px-2 py-1.5 text-right text-sm"
+            />
+          </>
+        ) : (
+          <input placeholder="Opening ₹" value={opening} onChange={(e) => setOpening(e.target.value)} inputMode="decimal" className="w-28 rounded-md border border-slate-300 px-2 py-1.5 text-right text-sm" />
+        )}
+        <button type="submit" disabled={last4Invalid || overdraftInvalid || create.isPending} className="rounded-md bg-slate-800 px-3 py-1.5 text-sm text-white disabled:opacity-50">Add account</button>
         {last4Invalid && (
           <p role="alert" className="w-full text-xs text-red-600">
             Last 4 must be exactly 4 digits — we only ever store the last four, never the full number.
+          </p>
+        )}
+        {overdraftInvalid && (
+          <p role="alert" className="w-full text-xs text-red-600">
+            Limit availed and limit available must be positive amounts.
           </p>
         )}
       </form>
