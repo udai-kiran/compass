@@ -8,7 +8,13 @@ import {
 } from "@compass/shared";
 import { Donut, LineChart, SERIES, StatTile } from "../../lib/viz.tsx";
 import { toast } from "../../lib/toast.tsx";
-import { usePortfolio, useHoldingMutations, useRefreshNav } from "../../lib/wealth-queries.ts";
+import { useGoals } from "../../lib/goal-queries.ts";
+import {
+  useAssetGoalMutation,
+  usePortfolio,
+  useHoldingMutations,
+  useRefreshNav,
+} from "../../lib/wealth-queries.ts";
 
 // PPF/EPF are not here on purpose — they're account types, managed in Settings.
 const ASSET_LABELS: Record<AssetClass, string> = {
@@ -24,6 +30,8 @@ const ASSET_CLASSES = Object.keys(ASSET_LABELS) as AssetClass[];
 
 export function PortfolioPage() {
   const { data: p, isLoading } = usePortfolio();
+  const { data: goals } = useGoals();
+  const setGoal = useAssetGoalMutation();
   const refreshNav = useRefreshNav();
 
   function doRefresh() {
@@ -112,7 +120,19 @@ export function PortfolioPage() {
       <NewHoldingForm />
 
       <div className="space-y-3">
-        {p.positions.filter((h) => !h.archived).map((h) => <HoldingRow key={h.id} h={h} />)}
+        {p.positions.filter((h) => !h.archived).map((h) => (
+          <HoldingRow
+            key={h.id}
+            h={h}
+            goals={goals?.filter((g) => !g.archived) ?? []}
+            onSetGoal={(goalId) =>
+              setGoal.mutate(
+                { kind: "holding", id: h.id, goalId },
+                { onError: () => toast("Couldn't update the goal") },
+              )
+            }
+          />
+        ))}
         {p.positions.filter((h) => !h.archived).length === 0 && (
           <p className="rounded-lg border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">
             No holdings yet. Add one above.
@@ -123,7 +143,15 @@ export function PortfolioPage() {
   );
 }
 
-function HoldingRow({ h }: { h: HoldingPosition }) {
+function HoldingRow({
+  h,
+  goals,
+  onSetGoal,
+}: {
+  h: HoldingPosition;
+  goals: Array<{ id: string; name: string }>;
+  onSetGoal: (goalId: string | null) => void;
+}) {
   const { update, remove, setValuation, addEvent, removeEvent } = useHoldingMutations();
   const [open, setOpen] = useState(false);
   const unrealized = h.currentValuePaise - h.investedPaise;
@@ -139,7 +167,19 @@ function HoldingRow({ h }: { h: HoldingPosition }) {
             {h.lastValuationDate && ` · valued ${h.lastValuationDate}`}
           </p>
         </button>
-        <div className="flex shrink-0 items-center gap-4 text-right">
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-3 text-right">
+          <label className="text-left text-xs text-slate-500">
+            <span className="sr-only">Goal for {h.name}</span>
+            <select
+              value={h.goalId ?? ""}
+              aria-label={`Goal for ${h.name}`}
+              onChange={(e) => onSetGoal(e.target.value || null)}
+              className="max-w-40 rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-600"
+            >
+              <option value="">No goal</option>
+              {goals.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+            </select>
+          </label>
           <div>
             <p className="text-sm font-semibold text-slate-800">{formatINR(h.currentValuePaise)}</p>
             <p className={`text-xs ${unrealized >= 0 ? "text-emerald-600" : "text-red-600"}`}>
