@@ -135,6 +135,8 @@ export const AccountSchema = z.object({
   upiIds: z.array(z.string()),
   currency: z.string(),
   openingBalancePaise: z.number().int(),
+  /** Goal this account is earmarked for; null = Unassigned. */
+  goalId: z.uuid().nullable(),
   sortOrder: z.number().int(),
   archivedAt: z.string().nullable(),
 });
@@ -163,6 +165,7 @@ export const UpdateAccountSchema = z.object({
   accountLast4: Last4Schema.optional(),
   holderName: z.string().min(1).max(120).nullable().optional(),
   upiIds: UpiIdsSchema.optional(),
+  goalId: z.uuid().nullable().optional(),
   openingBalancePaise: z.number().int().optional(),
   sortOrder: z.number().int().optional(),
   archived: z.boolean().optional(),

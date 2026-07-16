@@ -213,6 +213,8 @@ export const HoldingSchema = z.object({
   targetPct: z.number().int().nullable(),
   amfiSchemeCode: z.number().int().nullable(),
   folioNumber: z.string().nullable(),
+  /** Goal this folio is earmarked for; null = Unassigned. */
+  goalId: z.uuid().nullable(),
   archived: z.boolean(),
 });
 export type Holding = z.infer<typeof HoldingSchema>;
@@ -234,6 +236,7 @@ export const UpdateHoldingSchema = z.object({
   targetPct: z.number().int().min(0).max(100).nullable().optional(),
   amfiSchemeCode: AmfiSchemeCodeSchema.optional(),
   folioNumber: z.string().min(1).nullable().optional(),
+  goalId: z.uuid().nullable().optional(),
   archived: z.boolean().optional(),
 });
 export type UpdateHolding = z.infer<typeof UpdateHoldingSchema>;
@@ -379,3 +382,36 @@ export const NetWorthReportSchema = z.object({
   forecast: z.array(z.object({ date: z.iso.date(), netPaise: z.number().int() })),
 });
 export type NetWorthReport = z.infer<typeof NetWorthReportSchema>;
+
+// ---------- Net worth grouped by goal ----------
+
+/** One tagged asset within a goal group. Liabilities carry a negative valuePaise. */
+export const GoalAssetSchema = z.object({
+  kind: z.enum(["account", "holding"]),
+  id: z.uuid(),
+  name: z.string(),
+  /** e.g. account type, or a folio number — a hint under the name */
+  subtitle: z.string(),
+  /** signed: assets positive, liabilities negative, so a group sums to its net */
+  valuePaise: z.number().int(),
+  goalId: z.uuid().nullable(),
+});
+export type GoalAsset = z.infer<typeof GoalAssetSchema>;
+
+export const GoalGroupSchema = z.object({
+  /** null for the Unassigned group */
+  goalId: z.uuid().nullable(),
+  goalName: z.string(),
+  goalType: z.string().nullable(),
+  targetPaise: z.number().int().nullable(),
+  netPaise: z.number().int(),
+  assetsPaise: z.number().int(),
+  liabilitiesPaise: z.number().int(),
+  items: z.array(GoalAssetSchema),
+});
+export type GoalGroup = z.infer<typeof GoalGroupSchema>;
+
+export const NetWorthByGoalSchema = z.object({
+  groups: z.array(GoalGroupSchema),
+});
+export type NetWorthByGoal = z.infer<typeof NetWorthByGoalSchema>;

@@ -1,8 +1,9 @@
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
-import { NetWorthReportSchema } from "@compass/shared";
+import { NetWorthByGoalSchema, NetWorthReportSchema } from "@compass/shared";
 import { backfillSnapshots, getNetWorthReport } from "../services/networth.ts";
+import { netWorthByGoal } from "../services/goal-networth.ts";
 
 export async function netWorthRoutes(app: FastifyInstance) {
   const r = app.withTypeProvider<ZodTypeProvider>();
@@ -11,6 +12,12 @@ export async function netWorthRoutes(app: FastifyInstance) {
     "/api/net-worth",
     { schema: { response: { 200: NetWorthReportSchema } } },
     async (req) => getNetWorthReport(app.db, req.session!.userId),
+  );
+
+  r.get(
+    "/api/net-worth/by-goal",
+    { schema: { response: { 200: NetWorthByGoalSchema } } },
+    async (req) => netWorthByGoal(app.db, req.session!.userId),
   );
 
   r.post(

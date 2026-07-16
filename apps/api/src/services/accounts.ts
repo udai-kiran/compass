@@ -22,6 +22,7 @@ function toAccount(row: AccountRow): Account {
     upiIds: row.upiIds,
     currency: row.currency,
     openingBalancePaise: row.openingBalancePaise,
+    goalId: row.goalId,
     sortOrder: row.sortOrder,
     archivedAt: row.archivedAt?.toISOString() ?? null,
   };

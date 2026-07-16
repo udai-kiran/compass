@@ -13,6 +13,7 @@ import {
   timestamp,
   uniqueIndex,
   uuid,
+  type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 
 /**
@@ -95,6 +96,15 @@ export const accounts = pgTable(
     openingBalancePaise: bigint("opening_balance_paise", { mode: "number" })
       .notNull()
       .default(0),
+    /**
+     * Goal this account is earmarked for; net worth groups by it. Null = the
+     * "Unassigned" bucket. Set-null on goal delete so the account survives.
+     * The inverse of goals.accountId (which links a goal to one account for
+     * contribution auto-sync) — different direction, different purpose.
+     */
+    // AnyPgColumn annotation breaks the accounts↔goals type-inference cycle
+    // (goals.accountId references accounts, accounts.goalId references goals).
+    goalId: uuid("goal_id").references((): AnyPgColumn => goals.id, { onDelete: "set null" }),
     sortOrder: integer("sort_order").notNull().default(0),
     archivedAt: timestamp("archived_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -714,6 +724,8 @@ export const holdings = pgTable(
     amfiSchemeCode: integer("amfi_scheme_code"),
     /** MF folio number; free-form, may be non-numeric */
     folioNumber: text("folio_number"),
+    /** Goal this holding (folio) is earmarked for; null = "Unassigned". See accounts.goalId. */
+    goalId: uuid("goal_id").references(() => goals.id, { onDelete: "set null" }),
     archivedAt: timestamp("archived_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

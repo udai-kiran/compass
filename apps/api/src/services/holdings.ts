@@ -26,6 +26,7 @@ function toHolding(h: HoldingRow): Holding {
     targetPct: h.targetPct,
     amfiSchemeCode: h.amfiSchemeCode,
     folioNumber: h.folioNumber,
+    goalId: h.goalId,
     archived: h.archivedAt !== null,
   };
 }

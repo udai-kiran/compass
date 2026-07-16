@@ -1,7 +1,13 @@
-import { formatINR } from "@compass/shared";
+import { formatINR, type GoalGroup } from "@compass/shared";
 import { LineChart, SERIES, StatTile } from "../../lib/viz.tsx";
 import { toast } from "../../lib/toast.tsx";
-import { useNetWorth, useNetWorthBackfill } from "../../lib/wealth-queries.ts";
+import {
+  useAssetGoalMutation,
+  useNetWorth,
+  useNetWorthByGoal,
+  useNetWorthBackfill,
+} from "../../lib/wealth-queries.ts";
+import { useGoals } from "../../lib/goal-queries.ts";
 
 export function NetWorthPage() {
   const { data: nw, isLoading } = useNetWorth();
@@ -76,6 +82,8 @@ export function NetWorthPage() {
         </div>
       </div>
 
+      <ByGoalSection />
+
       {nw.forecast.length > 0 && (
         <div className="rounded-lg border border-slate-200 bg-white p-4">
           <h2 className="mb-3 text-sm font-semibold text-slate-700">
@@ -90,6 +98,104 @@ export function NetWorthPage() {
             ))}
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+function ByGoalSection() {
+  const { data, isLoading } = useNetWorthByGoal();
+  const { data: goals } = useGoals();
+  const setGoal = useAssetGoalMutation();
+
+  if (isLoading || !data) return null;
+  const options = (goals ?? []).filter((g) => !g.archived);
+
+  const anyItems = data.groups.some((g) => g.items.length > 0);
+  if (!anyItems) return null;
+
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white p-4">
+      <div className="mb-1 flex items-baseline justify-between">
+        <h2 className="text-sm font-semibold text-slate-700">By goal</h2>
+        <span className="text-xs text-slate-400">Pick a goal per row to earmark it</span>
+      </div>
+      <div className="divide-y divide-slate-100">
+        {data.groups.map((group) => (
+          <GoalGroupBlock
+            key={group.goalId ?? "unassigned"}
+            group={group}
+            options={options.map((g) => ({ id: g.id, name: g.name }))}
+            onSet={(kind, id, goalId) =>
+              setGoal.mutate({ kind, id, goalId }, { onError: () => toast("Couldn't update the tag") })
+            }
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function GoalGroupBlock({
+  group,
+  options,
+  onSet,
+}: {
+  group: GoalGroup;
+  options: Array<{ id: string; name: string }>;
+  onSet: (kind: "account" | "holding", id: string, goalId: string | null) => void;
+}) {
+  const pct =
+    group.targetPaise && group.targetPaise > 0
+      ? Math.min(100, Math.round((group.netPaise / group.targetPaise) * 100))
+      : null;
+
+  return (
+    <div className="py-3">
+      <div className="flex items-baseline justify-between">
+        <div>
+          <span className="text-sm font-medium text-slate-800">{group.goalName}</span>
+          {group.targetPaise != null && (
+            <span className="ml-2 text-xs text-slate-400">of {formatINR(group.targetPaise)} target</span>
+          )}
+        </div>
+        <span className={`tabular-nums text-sm font-semibold ${group.netPaise < 0 ? "text-red-600" : "text-slate-800"}`}>
+          {formatINR(group.netPaise)}
+        </span>
+      </div>
+
+      {pct !== null && (
+        <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+          <div className="h-full rounded-full bg-emerald-500" style={{ width: `${Math.max(0, pct)}%` }} />
+        </div>
+      )}
+
+      {group.items.length === 0 ? (
+        <p className="mt-2 text-xs text-slate-400">Nothing tagged here yet.</p>
+      ) : (
+        <ul className="mt-2 space-y-1">
+          {group.items.map((it) => (
+            <li key={`${it.kind}-${it.id}`} className="flex items-center gap-2 text-sm">
+              <span className="min-w-0 flex-1 truncate text-slate-600">
+                {it.name} <span className="text-xs text-slate-400">· {it.subtitle}</span>
+              </span>
+              <span className={`w-28 shrink-0 text-right tabular-nums ${it.valuePaise < 0 ? "text-red-600" : "text-slate-700"}`}>
+                {formatINR(it.valuePaise)}
+              </span>
+              <select
+                value={it.goalId ?? ""}
+                aria-label={`Goal for ${it.name}`}
+                onChange={(e) => onSet(it.kind, it.id, e.target.value || null)}
+                className="w-36 shrink-0 rounded border border-slate-200 bg-slate-50 px-1.5 py-1 text-xs text-slate-600"
+              >
+                <option value="">Unassigned</option>
+                {options.map((o) => (
+                  <option key={o.id} value={o.id}>{o.name}</option>
+                ))}
+              </select>
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   );
