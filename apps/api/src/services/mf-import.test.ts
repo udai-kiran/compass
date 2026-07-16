@@ -49,6 +49,42 @@ test("the header row is ignored, not parsed as data", () => {
   assert.equal(rows.length, 1);
 });
 
+test("quoted fields with embedded commas keep their columns aligned", () => {
+  // A broker export may quote a thousands-separated amount, or a fund name with
+  // a comma. Splitting on bare commas would shift every column after it.
+  const csv =
+    '2026-07-06,11216780,"Some Fund, Direct Growth",buy,"1,234.567",90,"90.9438","1,35,998.20"';
+  const { rows, skipped } = parseMfCsv(csv);
+  assert.equal(skipped.length, 0);
+  assert.equal(rows.length, 1);
+  const r = rows[0]!;
+  assert.equal(r.fundName, "Some Fund, Direct Growth");
+  assert.equal(r.units, 1234.567);
+  assert.equal(r.currentNav, 90.9438);
+  assert.equal(r.amountPaise, 13599820); // ₹1,35,998.20
+});
+
+test("a buy or sell without valid units is skipped, not stored unitless", () => {
+  // Money with no units would carry an amount but add nothing to the position,
+  // so every valuation and NAV refresh would understate the holding.
+  const csv =
+    "2026-07-06,F1,Some Fund,buy,,90,90,5000\n" + // blank units
+    "2026-07-06,F1,Some Fund,sell,0,90,90,5000"; // zero units
+  const { rows, skipped } = parseMfCsv(csv);
+  assert.equal(rows.length, 0);
+  assert.equal(skipped.length, 2);
+  assert.match(skipped[0]!.reason, /units/);
+  assert.match(skipped[1]!.reason, /units/);
+});
+
+test("a dividend legitimately carries no units", () => {
+  const { rows, skipped } = parseMfCsv("2026-07-06,F1,Some Fund,dividend,,90,90,1500");
+  assert.equal(skipped.length, 0);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]!.type, "dividend");
+  assert.equal(rows[0]!.units, null);
+});
+
 test("bad rows are reported, not silently dropped", () => {
   const csv =
     "2026-13-40,F1,Some Fund,buy,10,5,5,50\n" + // impossible date
