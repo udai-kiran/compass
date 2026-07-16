@@ -10,14 +10,37 @@ export const AccountTypeSchema = z.enum([
   "loan",
   "ppf",
   "epf",
+  "ssy",
+  "home_loan_od",
 ]);
 export type AccountType = z.infer<typeof AccountTypeSchema>;
 
-/** Account types that carry retirement details (rate, maturity, UAN/PPF number). */
-export const RETIREMENT_ACCOUNT_TYPES = ["ppf", "epf"] as const satisfies readonly AccountType[];
+/**
+ * Fixed-rate, credited-balance small-savings schemes: they share one detail
+ * shape (rate, maturity, account/reference number). Named "retirement" for
+ * historical reasons — SSY is a child's scheme, not retirement — but the
+ * structure is identical, so it reuses the same table and form.
+ */
+export const RETIREMENT_ACCOUNT_TYPES = ["ppf", "epf", "ssy"] as const satisfies readonly AccountType[];
 
 export function isRetirementAccount(type: AccountType): boolean {
   return (RETIREMENT_ACCOUNT_TYPES as readonly AccountType[]).includes(type);
+}
+
+/** Account types that carry overdraft details (sanctioned limit, rate). */
+export const OVERDRAFT_ACCOUNT_TYPES = ["home_loan_od"] as const satisfies readonly AccountType[];
+
+export function isOverdraftAccount(type: AccountType): boolean {
+  return (OVERDRAFT_ACCOUNT_TYPES as readonly AccountType[]).includes(type);
+}
+
+/**
+ * Drawing power on an overdraft loan: what you can withdraw back out. It's the
+ * limit minus what you currently owe. `owedPaise` is the positive amount owed
+ * (i.e. −balance for a liability). Clamped at 0 — you can't draw past the limit.
+ */
+export function availableToDrawPaise(sanctionedLimitPaise: number, owedPaise: number): number {
+  return Math.max(0, sanctionedLimitPaise - owedPaise);
 }
 
 /** Account types that carry bank details (a/c number, IFSC, branch, subtype). */
@@ -81,6 +104,20 @@ export const UpsertBankDetailsSchema = z.object({
 });
 /** z.input, not z.infer: IFSC is uppercased on the way through, and fields default. */
 export type UpsertBankDetails = z.input<typeof UpsertBankDetailsSchema>;
+
+export const OverdraftDetailsSchema = z.object({
+  accountId: z.uuid(),
+  sanctionedLimitPaise: z.number().int(),
+  annualRateBps: z.number().int(),
+});
+export type OverdraftDetails = z.infer<typeof OverdraftDetailsSchema>;
+
+export const UpsertOverdraftDetailsSchema = z.object({
+  sanctionedLimitPaise: z.number().int().min(0).default(0),
+  // 0–20% in basis points; a home-loan rate above 20% is a typo, not a rate.
+  annualRateBps: z.number().int().min(0).max(2000).default(0),
+});
+export type UpsertOverdraftDetails = z.input<typeof UpsertOverdraftDetailsSchema>;
 
 /** Primary handle first — that's the one shown when there isn't room for all of them. */
 export const UpiIdsSchema = z

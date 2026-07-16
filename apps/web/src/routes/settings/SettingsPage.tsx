@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { Link } from "react-router";
+import { Link, useSearchParams } from "react-router";
 import { formatINR, type AccountType, type Category, type CategoryKind } from "@compass/shared";
 import { toast } from "../../lib/toast.tsx";
 import { ACCOUNT_TYPES, ACCOUNT_TYPE_LABELS } from "../../lib/account-meta.ts";
@@ -32,7 +32,12 @@ const TABS = [
 type Tab = (typeof TABS)[number];
 
 export function SettingsPage() {
-  const [tab, setTab] = useState<Tab>("profile");
+  // Tab lives in the URL so returning from a sub-page (e.g. account details)
+  // lands back on the tab you left, and so tabs are linkable.
+  const [params, setParams] = useSearchParams();
+  const raw = params.get("tab");
+  const tab: Tab = (TABS as readonly string[]).includes(raw ?? "") ? (raw as Tab) : "profile";
+  const setTab = (t: Tab) => setParams({ tab: t }, { replace: true });
   return (
     <div>
       <h1 className="text-2xl font-semibold text-slate-800">Settings</h1>

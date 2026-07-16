@@ -12,9 +12,10 @@ test("every account type has a net-worth bucket", () => {
   }
 });
 
-test("PPF and EPF count as investment assets, not cash or debt", () => {
+test("credited-balance schemes count as investment assets, not cash or debt", () => {
   assert.equal(ACCOUNT_BUCKET.ppf, "investmentAccountsPaise");
   assert.equal(ACCOUNT_BUCKET.epf, "investmentAccountsPaise");
+  assert.equal(ACCOUNT_BUCKET.ssy, "investmentAccountsPaise");
 });
 
 test("account types map to the bucket their sign convention expects", () => {

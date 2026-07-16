@@ -2,10 +2,12 @@ import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useParams } from "react-router";
 import {
   AccountNumberSchema,
+  availableToDrawPaise,
   BankAccountSubtypeSchema,
   formatINR,
   IfscSchema,
   isBankAccount,
+  isOverdraftAccount,
   isRetirementAccount,
   UpiIdSchema,
   type AccountWithBalance,
@@ -15,6 +17,8 @@ import { ACCOUNT_TYPE_LABELS, maskAccountNumber } from "../../lib/account-meta.t
 import {
   useBankDetails,
   useBankDetailsMutation,
+  useOverdraftDetails,
+  useOverdraftDetailsMutation,
   useRetirementDetails,
   useRetirementDetailsMutation,
 } from "../../lib/account-detail-queries.ts";
@@ -49,7 +53,7 @@ export function AccountDetailPage() {
     return (
       <div className="p-6">
         <p className="text-sm text-slate-500">That account no longer exists.</p>
-        <Link to="/settings" className="mt-2 inline-block text-sm text-slate-600 underline">
+        <Link to="/settings?tab=accounts" className="mt-2 inline-block text-sm text-slate-600 underline">
           Back to accounts
         </Link>
       </div>
@@ -62,7 +66,7 @@ function AccountDetail({ account }: { account: AccountWithBalance }) {
   return (
     <div className="mx-auto max-w-2xl p-6">
       <InstitutionDatalist />
-      <Link to="/settings" className="text-xs text-slate-500 underline">
+      <Link to="/settings?tab=accounts" className="text-xs text-slate-500 underline">
         ‹ Back to accounts
       </Link>
 
@@ -80,6 +84,7 @@ function AccountDetail({ account }: { account: AccountWithBalance }) {
       <IdentitySection account={account} />
       <UpiSection account={account} />
       {isBankAccount(account.type) && <BankSection account={account} />}
+      {isOverdraftAccount(account.type) && <OverdraftSection account={account} />}
       {isRetirementAccount(account.type) && <RetirementSection account={account} />}
     </div>
   );
@@ -365,6 +370,114 @@ function BankSection({ account }: { account: AccountWithBalance }) {
   );
 }
 
+function DerivedRow({ label, value, hint }: { label: string; value: string; hint?: string }) {
+  return (
+    <div className="flex items-baseline gap-3 text-sm">
+      <span className="w-32 shrink-0 text-slate-500">{label}</span>
+      <span className="flex-1">
+        <span className="tabular-nums text-slate-700">{value}</span>
+        {hint && <span className="ml-2 text-xs text-slate-400">{hint}</span>}
+      </span>
+    </div>
+  );
+}
+
+function OverdraftSection({ account }: { account: AccountWithBalance }) {
+  const { data, isPending } = useOverdraftDetails(account.id, true);
+  const save = useOverdraftDetailsMutation(account.id);
+  const [limit, setLimit] = useState("");
+  const [rate, setRate] = useState("");
+
+  useEffect(() => {
+    if (!data) return;
+    setLimit(data.sanctionedLimitPaise === 0 ? "" : (data.sanctionedLimitPaise / 100).toString());
+    setRate(data.annualRateBps === 0 ? "" : (data.annualRateBps / 100).toFixed(2));
+  }, [data]);
+
+  const limitPaise = limit === "" ? 0 : Math.round(Number(limit) * 100);
+  const rateBps = rate === "" ? 0 : Math.round(Number(rate) * 100);
+  const limitError = limit !== "" && (Number.isNaN(limitPaise) || limitPaise < 0) ? "must be a positive amount" : null;
+  const rateError = rate !== "" && (Number.isNaN(rateBps) || rateBps < 0 || rateBps > 2000) ? "0–20%" : null;
+
+  // Balance is negative for a liability; owed is the positive amount you owe.
+  const owedPaise = Math.max(0, -account.balancePaise);
+  const availablePaise = availableToDrawPaise(limitPaise, owedPaise);
+  const interestSavedPaise = Math.round((availablePaise * rateBps) / 10000);
+
+  const dirty = limitPaise !== (data?.sanctionedLimitPaise ?? 0) || rateBps !== (data?.annualRateBps ?? 0);
+
+  function submit(e: FormEvent) {
+    e.preventDefault();
+    if (limitError || rateError) return;
+    save.mutate(
+      { sanctionedLimitPaise: limitPaise, annualRateBps: rateBps },
+      { onSuccess: () => toast("Overdraft details saved", "success") },
+    );
+  }
+
+  if (isPending) return <Section title="Overdraft"><p className="text-sm text-slate-400">Loading…</p></Section>;
+
+  return (
+    <form onSubmit={submit}>
+      <Section
+        title="Overdraft"
+        hint="Park surplus into the loan to cut interest — it stays withdrawable as drawing power."
+      >
+        <Field label="Sanctioned limit" error={limitError}>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-slate-400">₹</span>
+            <input
+              value={limit}
+              onChange={(e) => setLimit(e.target.value)}
+              inputMode="decimal"
+              placeholder="5000000"
+              aria-invalid={limitError !== null}
+              className={`${inputClass} tabular-nums ${limitError ? "border-red-400" : ""}`}
+            />
+          </div>
+        </Field>
+        <Field label="Interest rate" error={rateError}>
+          <div className="flex items-center gap-2">
+            <input
+              value={rate}
+              onChange={(e) => setRate(e.target.value)}
+              inputMode="decimal"
+              placeholder="8.55"
+              aria-invalid={rateError !== null}
+              className={`${inputClass} ${rateError ? "border-red-400" : ""}`}
+            />
+            <span className="text-sm text-slate-400">%</span>
+          </div>
+        </Field>
+
+        <div className="space-y-2 rounded-md bg-slate-50 p-3">
+          <DerivedRow label="Outstanding" value={formatINR(owedPaise)} hint="what you owe now" />
+          <DerivedRow
+            label="Available to draw"
+            value={formatINR(availablePaise)}
+            hint={limitPaise === 0 ? "set a limit to see this" : "surplus you can withdraw"}
+          />
+          {interestSavedPaise > 0 && (
+            <DerivedRow
+              label="Interest saved"
+              value={`≈ ${formatINR(interestSavedPaise)}/yr`}
+              hint="estimate, at this rate"
+            />
+          )}
+        </div>
+
+        <div className="pt-1">
+          <SaveButton
+            dirty={dirty}
+            disabled={limitError !== null || rateError !== null}
+            pending={save.isPending}
+          />
+        </div>
+      </Section>
+    </form>
+  );
+}
+
 function RetirementSection({ account }: { account: AccountWithBalance }) {
   const { data, isPending } = useRetirementDetails(account.id, true);
   const save = useRetirementDetailsMutation(account.id);
@@ -372,6 +485,8 @@ function RetirementSection({ account }: { account: AccountWithBalance }) {
   const [maturity, setMaturity] = useState("");
   const [reference, setReference] = useState("");
   const isEpf = account.type === "epf";
+  const referenceLabel =
+    account.type === "epf" ? "UAN" : account.type === "ssy" ? "SSY account number" : "PPF account number";
 
   useEffect(() => {
     if (!data) return;
@@ -417,7 +532,7 @@ function RetirementSection({ account }: { account: AccountWithBalance }) {
             <span className="text-sm text-slate-400">%</span>
           </div>
         </Field>
-        <Field label={isEpf ? "UAN" : "PPF account number"}>
+        <Field label={referenceLabel}>
           <input
             value={reference}
             onChange={(e) => setReference(e.target.value)}

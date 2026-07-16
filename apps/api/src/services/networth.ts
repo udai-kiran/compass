@@ -26,11 +26,16 @@ export const ACCOUNT_BUCKET: Record<AccountType, AccountBucket> = {
   bank: "cashPaise",
   cash: "cashPaise",
   investment: "investmentAccountsPaise",
-  // PPF/EPF balances are real, credited money — assets, same as any investment account.
+  // PPF/EPF/SSY balances are real, credited money — assets, same as any investment account.
   ppf: "investmentAccountsPaise",
   epf: "investmentAccountsPaise",
+  ssy: "investmentAccountsPaise",
   credit_card: "creditCardsPaise",
   loan: "loansPaise",
+  // Overdraft home loan: the balance is what you owe (net of parked surplus),
+  // so it's a liability like any other loan. The drawing power is liquidity, not
+  // a separate asset — counting it would double what the surplus already offset.
+  home_loan_od: "loansPaise",
 };
 
 /** Balance-sheet math as of a date: account balances by type + holding values. */

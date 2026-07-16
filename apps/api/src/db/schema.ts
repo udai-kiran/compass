@@ -34,10 +34,10 @@ export const users = pgTable("users", {
 });
 
 /**
- * `ppf` and `epf` are accounts rather than holdings because their balance is
- * known exactly — interest is credited, not estimated. NPS and gold move with
- * a daily NAV/price, so they stay holdings, where a valuation carries the
- * as-of date that makes the estimate honest.
+ * `ppf`, `epf` and `ssy` are accounts rather than holdings because their balance
+ * is known exactly — interest is credited at a fixed rate, not estimated. NPS
+ * and gold move with a daily NAV/price, so they stay holdings, where a valuation
+ * carries the as-of date that makes the estimate honest.
  */
 export const accountType = pgEnum("account_type", [
   "bank",
@@ -47,6 +47,15 @@ export const accountType = pgEnum("account_type", [
   "loan",
   "ppf",
   "epf",
+  // Sukanya Samriddhi: a PPF twin (fixed govt rate, credited annually, matures
+  // ~21 years out, has an account number). Reuses the scheme-details structure.
+  "ssy",
+  // Overdraft home loan (SBI Maxgain and its equivalents). A distinct type, not
+  // just a loan: you park surplus into it to cut interest and can withdraw it
+  // back, so it carries a sanctioned limit and a drawing power a term loan has
+  // no notion of. The balance is still what you owe (net of parked surplus), so
+  // it lands in the loans bucket like any liability.
+  "home_loan_od",
 ]);
 
 export const accounts = pgTable(
@@ -607,6 +616,29 @@ export const retirementDetails = pgTable("retirement_details", {
   maturityDate: date("maturity_date"),
   /** UAN for EPF, account number for PPF — free-form, may be non-numeric */
   referenceNumber: text("reference_number").notNull().default(""),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * Extra detail for `home_loan_od` (overdraft home loan) accounts.
+ *
+ * Only the sanctioned limit is stored — the amount owed is the account balance
+ * (already net of parked surplus, like the bank's own screen), and drawing
+ * power derives as limit − owed. Storing surplus separately would let it drift
+ * from the balance; deriving it keeps one source of truth.
+ */
+export const overdraftDetails = pgTable("overdraft_details", {
+  accountId: uuid("account_id")
+    .primaryKey()
+    .references(() => accounts.id, { onDelete: "cascade" }),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => users.id),
+  /** drawing-power ceiling, i.e. the bank's "Limit" figure */
+  sanctionedLimitPaise: bigint("sanctioned_limit_paise", { mode: "number" }).notNull().default(0),
+  /** annual interest rate in basis points (855 = 8.55%); drives the interest-saved estimate */
+  annualRateBps: integer("annual_rate_bps").notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
