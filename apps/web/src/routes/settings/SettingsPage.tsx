@@ -107,7 +107,7 @@ function AccountsPanel() {
   const visible = accounts?.filter((a) => showArchived || !a.archivedAt) ?? [];
 
   return (
-    <div className="mt-4 max-w-4xl">
+    <div className="mt-4 max-w-7xl">
       <InstitutionDatalist />
       <form onSubmit={submit} className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-white p-3">
         <input placeholder="Account name" value={name} onChange={(e) => setName(e.target.value)} className="w-44 rounded-md border border-slate-300 px-2 py-1.5 text-sm" />
