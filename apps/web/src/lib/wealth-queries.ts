@@ -3,8 +3,11 @@ import { z } from "zod";
 import {
   HoldingEventSchema,
   HoldingSchema,
+  MfImportPreviewSchema,
+  MfImportResultSchema,
   NetWorthReportSchema,
   PortfolioSchema,
+  RefreshNavResultSchema,
   type CreateHolding,
   type CreateHoldingEvent,
   type SetValuation,
@@ -65,6 +68,36 @@ export function useHoldingMutations() {
     onSuccess: invalidate,
   });
   return { create, update, remove, setValuation, addEvent, removeEvent };
+}
+
+export function useRefreshNav() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => apiPost("/api/holdings/refresh-nav", RefreshNavResultSchema, {}),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["portfolio"] });
+      void qc.invalidateQueries({ queryKey: ["net-worth"] });
+    },
+  });
+}
+
+// ---------- MF import ----------
+
+export function useMfImportPreview() {
+  return useMutation({
+    mutationFn: (csv: string) => apiPost("/api/holdings/import-mf/preview", MfImportPreviewSchema, { csv }),
+  });
+}
+
+export function useMfImportCommit() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (csv: string) => apiPost("/api/holdings/import-mf/commit", MfImportResultSchema, { csv }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["portfolio"] });
+      void qc.invalidateQueries({ queryKey: ["net-worth"] });
+    },
+  });
 }
 
 // ---------- net worth ----------

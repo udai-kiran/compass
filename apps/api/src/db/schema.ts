@@ -706,6 +706,14 @@ export const holdings = pgTable(
     notes: text("notes").notNull().default(""),
     /** optional allocation target, % of portfolio */
     targetPct: integer("target_pct"),
+    /**
+     * AMFI scheme code (6 digits, e.g. 122639). The key NAV refresh looks up.
+     * Null = unmapped: a fund with no AMFI scheme (e.g. a platform product like
+     * Kuvera SaveSmart), valued from imported data only and skipped by refresh.
+     */
+    amfiSchemeCode: integer("amfi_scheme_code"),
+    /** MF folio number; free-form, may be non-numeric */
+    folioNumber: text("folio_number"),
     archivedAt: timestamp("archived_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

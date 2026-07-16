@@ -202,12 +202,17 @@ export const UpsertGoldDetailsSchema = z
   });
 export type UpsertGoldDetails = z.input<typeof UpsertGoldDetailsSchema>;
 
+/** AMFI scheme code: 6 digits. Null = unmapped (no AMFI scheme / not looked up). */
+export const AmfiSchemeCodeSchema = z.number().int().min(100000).max(999999).nullable();
+
 export const HoldingSchema = z.object({
   id: z.uuid(),
   name: z.string(),
   assetClass: AssetClassSchema,
   notes: z.string(),
   targetPct: z.number().int().nullable(),
+  amfiSchemeCode: z.number().int().nullable(),
+  folioNumber: z.string().nullable(),
   archived: z.boolean(),
 });
 export type Holding = z.infer<typeof HoldingSchema>;
@@ -217,6 +222,8 @@ export const CreateHoldingSchema = z.object({
   assetClass: AssetClassSchema,
   notes: z.string().default(""),
   targetPct: z.number().int().min(0).max(100).nullable().default(null),
+  amfiSchemeCode: AmfiSchemeCodeSchema.default(null),
+  folioNumber: z.string().min(1).nullable().default(null),
 });
 export type CreateHolding = z.input<typeof CreateHoldingSchema>;
 
@@ -225,6 +232,8 @@ export const UpdateHoldingSchema = z.object({
   assetClass: AssetClassSchema.optional(),
   notes: z.string().optional(),
   targetPct: z.number().int().min(0).max(100).nullable().optional(),
+  amfiSchemeCode: AmfiSchemeCodeSchema.optional(),
+  folioNumber: z.string().min(1).nullable().optional(),
   archived: z.boolean().optional(),
 });
 export type UpdateHolding = z.infer<typeof UpdateHoldingSchema>;
@@ -285,6 +294,61 @@ export const PortfolioSchema = z.object({
   ),
 });
 export type Portfolio = z.infer<typeof PortfolioSchema>;
+
+// ---------- NAV refresh + MF import ----------
+
+/** Result of pulling AMFI NAVs and re-valuing mapped holdings. */
+export const RefreshNavResultSchema = z.object({
+  /** holdings re-valued from a fresh NAV */
+  refreshed: z.number().int(),
+  /** holdings skipped: no scheme code, or the code wasn't in the AMFI feed */
+  skipped: z.number().int(),
+  /** the NAV as-of date (AMFI publishes one date per run); null if nothing refreshed */
+  asOf: z.iso.date().nullable(),
+});
+export type RefreshNavResult = z.infer<typeof RefreshNavResultSchema>;
+
+/** One fund's rollup in an import preview: transactions grouped, scheme resolved. */
+export const MfImportFundSchema = z.object({
+  fundName: z.string(),
+  folioNumber: z.string().nullable(),
+  /** resolved AMFI scheme code, or null when the fund isn't in the map */
+  amfiSchemeCode: z.number().int().nullable(),
+  /** AMFI's official name for the resolved scheme, for the user to eyeball */
+  canonicalName: z.string().nullable(),
+  /** latest NAV from AMFI, when the scheme resolved and was in the feed */
+  latestNav: z.number().nullable(),
+  buyCount: z.number().int(),
+  sellCount: z.number().int(),
+  /** net units after buys − sells across the file */
+  netUnits: z.number(),
+  investedPaise: z.number().int(),
+});
+export type MfImportFund = z.infer<typeof MfImportFundSchema>;
+
+export const MfImportPreviewSchema = z.object({
+  funds: z.array(MfImportFundSchema),
+  totalRows: z.number().int(),
+  /** rows that couldn't be parsed (bad date/amount/order), reported not dropped silently */
+  skippedRows: z.array(z.object({ line: z.number().int(), reason: z.string() })),
+});
+export type MfImportPreview = z.infer<typeof MfImportPreviewSchema>;
+
+export const MfImportResultSchema = z.object({
+  holdingsCreated: z.number().int(),
+  holdingsMatched: z.number().int(),
+  eventsInserted: z.number().int(),
+  /** events already present (same holding/date/type/units/amount) — skipped, so re-import is safe */
+  eventsDuplicate: z.number().int(),
+  valuationsSet: z.number().int(),
+});
+export type MfImportResult = z.infer<typeof MfImportResultSchema>;
+
+/** Body for both preview and commit: the raw CSV text pasted or uploaded. */
+export const MfImportInputSchema = z.object({
+  csv: z.string().min(1).max(2_000_000),
+});
+export type MfImportInput = z.input<typeof MfImportInputSchema>;
 
 // ---------- Net worth ----------
 

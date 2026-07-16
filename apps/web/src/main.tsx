@@ -48,6 +48,9 @@ const EMIsPage = lazy(() =>
 const PortfolioPage = lazy(() =>
   import("./routes/investments/PortfolioPage.tsx").then((m) => ({ default: m.PortfolioPage })),
 );
+const MfImportPage = lazy(() =>
+  import("./routes/investments/MfImportPage.tsx").then((m) => ({ default: m.MfImportPage })),
+);
 const NetWorthPage = lazy(() =>
   import("./routes/networth/NetWorthPage.tsx").then((m) => ({ default: m.NetWorthPage })),
 );
@@ -101,6 +104,7 @@ const router = createBrowserRouter([
       { path: "cash-flow", element: <CashFlowPage /> },
       { path: "notifications", element: <NotificationsPage /> },
       { path: "investments", element: <PortfolioPage /> },
+      { path: "investments/import", element: <MfImportPage /> },
       { path: "net-worth", element: <NetWorthPage /> },
       { path: "cards", element: <CardsPage /> },
       { path: "emis", element: <EMIsPage /> },

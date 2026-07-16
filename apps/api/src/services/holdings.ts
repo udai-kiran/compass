@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import type {
   CreateHolding,
   CreateHoldingEvent,
@@ -6,12 +6,14 @@ import type {
   HoldingEvent,
   HoldingPosition,
   Portfolio,
+  RefreshNavResult,
   SetValuation,
   UpdateHolding,
 } from "@compass/shared";
 import type { Db } from "../db/index.ts";
 import { holdingEvents, holdings, holdingValuations } from "../db/schema.ts";
 import { HttpError } from "../lib/errors.ts";
+import { fetchNavByCode } from "./amfi.ts";
 
 type HoldingRow = typeof holdings.$inferSelect;
 
@@ -22,8 +24,18 @@ function toHolding(h: HoldingRow): Holding {
     assetClass: h.assetClass,
     notes: h.notes,
     targetPct: h.targetPct,
+    amfiSchemeCode: h.amfiSchemeCode,
+    folioNumber: h.folioNumber,
     archived: h.archivedAt !== null,
   };
+}
+
+/** Net units held: buys add, sells subtract, dividends are cash (no units). */
+export function unitsHeld(events: Array<{ type: string; units: number | null }>): number {
+  return events.reduce(
+    (s, e) => s + (e.units ?? 0) * (e.type === "buy" ? 1 : e.type === "sell" ? -1 : 0),
+    0,
+  );
 }
 
 async function ownedHolding(db: Db, userId: string, id: string): Promise<HoldingRow> {
@@ -235,4 +247,36 @@ export async function portfolioValue(db: Db, userId: string, asOf?: string): Pro
     }
   }
   return total;
+}
+
+/**
+ * Pulls AMFI's latest NAVs and re-values every active holding that has a scheme
+ * code: value = unitsHeld × NAV, recorded as a valuation at AMFI's as-of date
+ * (reusing setValuation's upsert, so re-running the same day is idempotent).
+ * Holdings with no code, or a code AMFI doesn't list, are left untouched.
+ */
+export async function refreshNav(db: Db, userId: string): Promise<RefreshNavResult> {
+  const held = await db.query.holdings.findMany({
+    where: and(eq(holdings.userId, userId), isNull(holdings.archivedAt)),
+  });
+  const mapped = held.filter((h) => h.amfiSchemeCode !== null);
+  if (mapped.length === 0) return { refreshed: 0, skipped: held.length, asOf: null };
+
+  const navByCode = await fetchNavByCode();
+  const events = await db.query.holdingEvents.findMany({
+    where: inArray(holdingEvents.holdingId, mapped.map((h) => h.id)),
+  });
+
+  let refreshed = 0;
+  let asOf: string | null = null;
+  for (const h of mapped) {
+    const nav = navByCode.get(h.amfiSchemeCode!);
+    if (!nav) continue; // code not in today's feed (new/suspended scheme)
+    const units = unitsHeld(events.filter((e) => e.holdingId === h.id));
+    const valuePaise = Math.round(units * nav.nav * 100);
+    await setValuation(db, userId, h.id, { date: nav.date, valuePaise: Math.max(0, valuePaise) });
+    asOf = nav.date;
+    refreshed += 1;
+  }
+  return { refreshed, skipped: held.length - refreshed, asOf };
 }
