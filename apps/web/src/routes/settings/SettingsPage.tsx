@@ -14,6 +14,8 @@ import {
   useCategories,
   useCategoryMutations,
 } from "../../lib/queries.ts";
+import { useGoals } from "../../lib/goal-queries.ts";
+import { useAssetGoalMutation } from "../../lib/wealth-queries.ts";
 import { RulesPanel } from "./RulesPanel.tsx";
 import { RecurringPanel } from "./RecurringPanel.tsx";
 import { AboutPanel, DataPanel, NotificationsPanel, ProfilePanel, SessionsPanel } from "./GeneralPanels.tsx";
@@ -67,7 +69,9 @@ export function SettingsPage() {
 
 function AccountsPanel() {
   const { data: accounts } = useAccounts();
+  const { data: goals } = useGoals();
   const { create, update, remove } = useAccountMutations();
+  const setGoal = useAssetGoalMutation();
   const [name, setName] = useState("");
   const [type, setType] = useState<AccountType>("bank");
   const [institution, setInstitution] = useState("");
@@ -154,7 +158,7 @@ function AccountsPanel() {
           >
             <span />
             <span />
-            <span>Account</span>
+            <span>Account / goal</span>
             <span>Number</span>
             <span>Institution</span>
             <span>Type</span>
@@ -184,6 +188,22 @@ function AccountsPanel() {
 
             <div className="min-w-0">
               <InlineName value={a.name} onSave={(name2) => update.mutate({ id: a.id, name: name2 })} />
+              <select
+                value={a.goalId ?? ""}
+                aria-label={`Goal for ${a.name}`}
+                onChange={(e) =>
+                  setGoal.mutate(
+                    { kind: "account", id: a.id, goalId: e.target.value || null },
+                    { onError: () => toast("Couldn't update the goal") },
+                  )
+                }
+                className="mt-1 block max-w-full rounded bg-slate-100 px-1.5 py-1 text-xs text-slate-500"
+              >
+                <option value="">No goal</option>
+                {goals?.filter((g) => !g.archived).map((g) => (
+                  <option key={g.id} value={g.id}>{g.name}</option>
+                ))}
+              </select>
             </div>
 
             <div className="col-start-3 md:col-start-auto">
