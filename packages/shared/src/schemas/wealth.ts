@@ -345,6 +345,8 @@ export const MfImportPreviewSchema = z.object({
   totalRows: z.number().int(),
   /** rows that couldn't be parsed (bad date/amount/order), reported not dropped silently */
   skippedRows: z.array(z.object({ line: z.number().int(), reason: z.string() })),
+  /** recognised bookkeeping rows that intentionally do not represent fund units */
+  ignoredRows: z.array(z.object({ line: z.number().int(), reason: z.string() })),
 });
 export type MfImportPreview = z.infer<typeof MfImportPreviewSchema>;
 
