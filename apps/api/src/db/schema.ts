@@ -62,10 +62,26 @@ export const accounts = pgTable(
     /** issuing bank/institution; a lookup key for import matching, not a display badge */
     institution: text("institution"),
     /**
-     * Last 4 digits only. Enough to tell two HDFC accounts apart; storing the
-     * full number would put PII in a shared, unencrypted database for no gain.
+     * Last 4 digits, shown in lists so two HDFC accounts are tellable apart.
+     * Derived from bank_details.account_number whenever one exists — see
+     * syncAccountLast4 — so the two can never disagree. Set by hand only when
+     * the full number isn't recorded.
      */
     accountLast4: text("account_last4"),
+    /**
+     * Whose account this is. Universal, not bank-only: a card has a name on it
+     * and a PPF has a holder. Without this the holder gets packed into `name`
+     * ("HDFC Ammu PPF"), which is the same trap the last-4 used to be in.
+     */
+    holderName: text("holder_name"),
+    /**
+     * UPI handles that resolve to this account, primary first. Not bank-only —
+     * RuPay credit cards link to UPI too, so this can't live on bank_details.
+     */
+    upiIds: text("upi_ids")
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
     currency: text("currency").notNull().default("INR"),
     openingBalancePaise: bigint("opening_balance_paise", { mode: "number" })
       .notNull()
@@ -544,6 +560,40 @@ export const cardDetails = pgTable("card_details", {
  * 1:1 optional extension keyed by account, so the core accounts table stays
  * free of type-specific columns.
  */
+export const bankAccountSubtype = pgEnum("bank_account_subtype", [
+  "savings",
+  "current",
+  "salary",
+  "nre",
+  "nro",
+]);
+
+/**
+ * The details you'd read out to someone paying you. Holder name and UPI live on
+ * `accounts` (every type has them); only bank-specific fields belong here.
+ *
+ * The account number is stored in the clear on purpose: it is a receiving
+ * address, not a secret — it's printed on cheques and handed to employers, and
+ * money cannot be pulled with it. Encrypting it would cost searchability and a
+ * key to lose, while protecting a value that gets given out by design.
+ */
+export const bankDetails = pgTable("bank_details", {
+  accountId: uuid("account_id")
+    .primaryKey()
+    .references(() => accounts.id, { onDelete: "cascade" }),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => users.id),
+  /** full account number; digits only, length varies by bank (9–18) */
+  accountNumber: text("account_number").notNull().default(""),
+  /** IFSC, e.g. "HDFC0001234" — 4 letters, a literal 0, then 6 alphanumeric */
+  ifsc: text("ifsc").notNull().default(""),
+  branch: text("branch").notNull().default(""),
+  subtype: bankAccountSubtype("subtype"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const retirementDetails = pgTable("retirement_details", {
   accountId: uuid("account_id")
     .primaryKey()
