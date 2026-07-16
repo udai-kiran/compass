@@ -1,9 +1,30 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseMfCsv } from "./mf-import.ts";
+import {
+  eventDedupeKey,
+  groupByPosition,
+  parseMfCsv,
+  partitionEvents,
+  type ParsedRow,
+} from "./mf-import.ts";
 import { MF_SCHEME_MAP, resolveScheme } from "./mf-scheme-map.ts";
 import { parseAmfiDate, parseNavAll } from "./amfi.ts";
 import { unitsHeld } from "./holdings.ts";
+
+/** Minimal parsed row for grouping/partition tests. */
+function row(over: Partial<ParsedRow>): ParsedRow {
+  return {
+    line: 1,
+    date: "2026-07-06",
+    folio: "F1",
+    fundName: "Parag Parikh Flexi Cap Growth Direct Plan",
+    type: "buy",
+    units: 100,
+    currentNav: 90,
+    amountPaise: 900000,
+    ...over,
+  };
+}
 
 const SAMPLE =
   "Date, Folio Number, Name of the Fund, Order, Units, NAV, Current Nav, Amount (INR)\n" +
@@ -64,6 +85,60 @@ test("no CSV name is mapped twice, and every code is 6 digits", () => {
       assert.ok(e.schemeCode >= 100000 && e.schemeCode <= 999999, `${e.csvName} code not 6 digits`);
     }
   }
+});
+
+test("the same fund in two folios is two positions, not one merged holding", () => {
+  // Units are transacted per (fund, folio), so folio is part of identity.
+  const parse = {
+    rows: [
+      row({ folio: "F1", units: 100 }),
+      row({ folio: "F2", units: 50 }),
+      row({ folio: "F1", units: 25, date: "2026-08-01" }),
+    ],
+    skipped: [],
+  };
+  const groups = groupByPosition(parse);
+  assert.equal(groups.length, 2);
+  const f1 = groups.find((g) => g.folio === "F1")!;
+  const f2 = groups.find((g) => g.folio === "F2")!;
+  assert.equal(f1.rows.length, 2);
+  assert.equal(f2.rows.length, 1);
+  // Both resolve to the same scheme — same fund, different folio.
+  assert.equal(f1.schemeCode, f2.schemeCode);
+});
+
+test("rows of one fund in one folio group into a single position", () => {
+  const parse = { rows: [row({ date: "2026-06-05" }), row({ date: "2026-07-06" })], skipped: [] };
+  const groups = groupByPosition(parse);
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0]!.rows.length, 2);
+});
+
+test("re-importing the same rows inserts nothing (idempotent dedupe)", () => {
+  const rows = [row({ date: "2026-06-05" }), row({ date: "2026-07-06", units: 50 })];
+  const first = partitionEvents([], rows);
+  assert.equal(first.toInsert.length, 2);
+  assert.equal(first.duplicates, 0);
+  // Second run, with the first run's events already present.
+  const existing = first.toInsert.map(eventDedupeKey);
+  const second = partitionEvents(existing, rows);
+  assert.equal(second.toInsert.length, 0);
+  assert.equal(second.duplicates, 2);
+});
+
+test("a row repeated within one file is inserted once", () => {
+  const r = row({});
+  const { toInsert, duplicates } = partitionEvents([], [r, r]);
+  assert.equal(toInsert.length, 1);
+  assert.equal(duplicates, 1);
+});
+
+test("a buy and sell of equal units/amount on one day stay distinct events", () => {
+  // The dedupe key includes direction, so these must not collapse.
+  const buy = row({ type: "buy", units: 10, amountPaise: 1000 });
+  const sell = row({ type: "sell", units: 10, amountPaise: 1000 });
+  const { toInsert } = partitionEvents([], [buy, sell]);
+  assert.equal(toInsert.length, 2);
 });
 
 test("units held: buys add, sells subtract, dividends carry no units", () => {
