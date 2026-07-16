@@ -110,8 +110,15 @@ function ByGoalSection() {
 
   if (isLoading || !data) return null;
   const options = (goals ?? []).filter((g) => !g.archived);
+  // A zero-value holding is usually a fully redeemed MF folio. Keep zero-balance
+  // accounts visible (they can still be useful containers), but do not clutter
+  // the goal breakdown with closed/empty folios.
+  const groups = data.groups.map((group) => ({
+    ...group,
+    items: group.items.filter((item) => item.kind !== "holding" || item.valuePaise !== 0),
+  }));
 
-  const anyItems = data.groups.some((g) => g.items.length > 0);
+  const anyItems = groups.some((g) => g.items.length > 0);
   if (!anyItems) return null;
 
   return (
@@ -121,7 +128,7 @@ function ByGoalSection() {
         <span className="text-xs text-slate-400">Pick a goal per row to earmark it</span>
       </div>
       <div className="divide-y divide-slate-100">
-        {data.groups.map((group) => (
+        {groups.map((group) => (
           <GoalGroupBlock
             key={group.goalId ?? "unassigned"}
             group={group}
