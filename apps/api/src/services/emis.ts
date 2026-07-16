@@ -4,6 +4,7 @@ import { CreateEmiSchema, standardEmiPaise, UpsertEmiDetailsSchema } from "@comp
 import type { Db } from "../db/index.ts";
 import { accounts, emiDetails, recurringTemplates } from "../db/schema.ts";
 import { HttpError } from "../lib/errors.ts";
+import { assertOwnedCategory } from "./ownership.ts";
 
 function monthsSince(startDate: string, today: string): number {
   const [sy, sm, sd] = startDate.split("-").map(Number) as [number, number, number];
@@ -62,6 +63,7 @@ export async function createEmi(db: Db, userId: string, input: CreateEmi): Promi
     where: and(eq(accounts.id, parsed.accountId), eq(accounts.userId, userId)),
   });
   if (!acc) throw new HttpError(404, "Account not found");
+  await assertOwnedCategory(db, userId, parsed.categoryId);
 
   const installment = standardEmiPaise(
     parsed.principalPaise,

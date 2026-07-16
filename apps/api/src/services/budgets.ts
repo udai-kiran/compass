@@ -11,6 +11,7 @@ import { CreateBudgetSchema } from "@compass/shared";
 import type { Db } from "../db/index.ts";
 import { budgetLines, budgets } from "../db/schema.ts";
 import { HttpError } from "../lib/errors.ts";
+import { assertOwnedCategory } from "./ownership.ts";
 import { currentPeriodKey, periodRange, prevPeriodKey, spentByCategory } from "./periods.ts";
 
 /** Past periods are closed: viewable with their then-current budget, never editable. */
@@ -58,6 +59,7 @@ export async function upsertBudget(
 ): Promise<Budget> {
   const parsed = CreateBudgetSchema.parse(input);
   assertWritable(parsed.period, parsed.periodKey);
+  for (const l of parsed.lines) await assertOwnedCategory(db, userId, l.categoryId);
   const budget = await db.transaction(async (t) => {
     let b = await t.query.budgets.findFirst({
       where: and(
@@ -96,6 +98,7 @@ export async function upsertBudgetLine(
   line: { categoryId: string; amountPaise: number; rollover: boolean },
 ): Promise<Budget> {
   assertWritable(period, key);
+  await assertOwnedCategory(db, userId, line.categoryId);
   await db.transaction(async (t) => {
     let b = await t.query.budgets.findFirst({
       where: and(eq(budgets.userId, userId), eq(budgets.period, period), eq(budgets.periodKey, key)),

@@ -3,7 +3,9 @@ import type { NotificationPref, NotificationType, UpsertNotificationPref } from 
 import { formatINR, UpsertNotificationPrefSchema } from "@compass/shared";
 import type { Db } from "../db/index.ts";
 import { alertLedger, notificationPrefs } from "../db/schema.ts";
+import { bankCashBalances } from "./balances.ts";
 import { createNotification } from "./notifications.ts";
+import { assertOwnedAccount } from "./ownership.ts";
 
 type PrefRow = typeof notificationPrefs.$inferSelect;
 
@@ -31,6 +33,9 @@ export async function upsertPref(
   input: UpsertNotificationPref,
 ): Promise<NotificationPref> {
   const parsed = UpsertNotificationPrefSchema.parse(input);
+  // A per-account pref must point at the caller's own account, or a low-balance
+  // alert would fire on — and name — someone else's account.
+  await assertOwnedAccount(db, userId, parsed.accountId);
   const existing = await db.query.notificationPrefs.findFirst({
     where: and(
       eq(notificationPrefs.userId, userId),
@@ -122,24 +127,15 @@ export async function evaluateLowBalance(db: Db, userId: string): Promise<number
     (p) => p.type === "low_balance" && p.enabled && p.thresholdPaise !== null,
   );
   if (prefs.length === 0) return 0;
-  const res = await db.execute(sql`
-    select a.id, a.name, (a.opening_balance_paise + coalesce(t.total, 0))::bigint as balance
-    from accounts a
-    left join (
-      select account_id, sum(amount_paise) as total
-      from transactions
-      where user_id = ${userId} and deleted_at is null
-      group by account_id
-    ) t on t.account_id = a.id
-    where a.user_id = ${userId} and a.archived_at is null and a.type in ('bank', 'cash')
-  `);
-  const balances = res.rows as Array<{ id: string; name: string; balance: string }>;
+  // Posted balance (future-dated credits excluded): a low-balance alert reflects
+  // money that has actually landed, not a scheduled salary that hasn't.
+  const balances = await bankCashBalances(db, userId);
   const today = new Date().toISOString().slice(0, 10);
   let fired = 0;
   for (const pref of prefs) {
     for (const acc of balances) {
       if (pref.accountId !== null && pref.accountId !== acc.id) continue;
-      const balance = Number(acc.balance);
+      const balance = acc.balancePaise;
       if (balance >= pref.thresholdPaise!) continue;
       const inserted = await db
         .insert(alertLedger)

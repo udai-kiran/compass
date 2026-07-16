@@ -8,6 +8,7 @@ import type {
 import type { Db } from "../db/index.ts";
 import { accounts, bankDetails, transactions } from "../db/schema.ts";
 import { HttpError } from "../lib/errors.ts";
+import { assertOwnedGoal } from "./ownership.ts";
 
 type AccountRow = typeof accounts.$inferSelect;
 
@@ -90,6 +91,8 @@ export async function updateAccount(
   input: UpdateAccount,
 ): Promise<Account> {
   const { archived, ...fields } = input;
+  // Earmarking to a goal must point at the caller's own goal.
+  await assertOwnedGoal(db, userId, fields.goalId);
   if (fields.accountLast4 !== undefined) {
     const bank = await db.query.bankDetails.findFirst({
       where: and(eq(bankDetails.accountId, id), eq(bankDetails.userId, userId)),

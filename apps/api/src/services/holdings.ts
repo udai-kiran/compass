@@ -14,6 +14,7 @@ import type { Db } from "../db/index.ts";
 import { holdingEvents, holdings, holdingValuations } from "../db/schema.ts";
 import { HttpError } from "../lib/errors.ts";
 import { fetchNavByCode } from "./amfi.ts";
+import { assertOwnedGoal } from "./ownership.ts";
 
 type HoldingRow = typeof holdings.$inferSelect;
 
@@ -93,6 +94,8 @@ export async function updateHolding(
   input: UpdateHolding,
 ): Promise<Holding> {
   const { archived, ...rest } = input;
+  // Earmarking to a goal must point at the caller's own goal.
+  await assertOwnedGoal(db, userId, rest.goalId);
   const set: Record<string, unknown> = { ...rest, updatedAt: new Date() };
   if (archived !== undefined) set.archivedAt = archived ? new Date() : null;
   const rows = await db

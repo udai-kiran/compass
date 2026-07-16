@@ -11,6 +11,7 @@ import type { Db } from "../db/index.ts";
 import { alertLedger, goalContributions, goals, transactions } from "../db/schema.ts";
 import { HttpError } from "../lib/errors.ts";
 import { createNotification } from "./notifications.ts";
+import { assertOwnedAccount } from "./ownership.ts";
 import { incomeExpense, periodRange, prevPeriodKey, currentPeriodKey } from "./periods.ts";
 import { prefEnabled } from "./prefs.ts";
 
@@ -45,6 +46,7 @@ export async function listGoals(db: Db, userId: string): Promise<Goal[]> {
 
 export async function createGoal(db: Db, userId: string, input: CreateGoal): Promise<Goal> {
   const parsed = CreateGoalSchema.parse(input);
+  await assertOwnedAccount(db, userId, parsed.accountId);
   const rows = await db.insert(goals).values({ ...parsed, userId }).returning();
   return toGoal(rows[0]!);
 }
@@ -56,6 +58,7 @@ export async function updateGoal(
   input: UpdateGoal,
 ): Promise<Goal> {
   const { archived, ...rest } = input;
+  await assertOwnedAccount(db, userId, rest.accountId);
   const set: Record<string, unknown> = { ...rest, updatedAt: new Date() };
   if (archived !== undefined) set.archivedAt = archived ? new Date() : null;
   const rows = await db

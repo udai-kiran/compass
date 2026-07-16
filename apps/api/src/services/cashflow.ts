@@ -4,6 +4,7 @@ import type { CashflowMonth, Forecast } from "@compass/shared";
 import type { Db } from "../db/index.ts";
 import { recurringTemplates } from "../db/schema.ts";
 import { toCsv } from "../lib/csv.ts";
+import { bankCashTotal } from "./balances.ts";
 import { cached } from "./cache.ts";
 import { getTrends } from "./dashboard.ts";
 import { advanceDate } from "./recurring.ts";
@@ -51,18 +52,7 @@ function isoPlusDays(base: Date, days: number): string {
  */
 export async function getForecast(db: Db, redis: Redis, userId: string): Promise<Forecast> {
   return cached(redis, userId, "forecast:90", TTL, async () => {
-    const balRes = await db.execute(sql`
-      select coalesce(sum(a.opening_balance_paise + coalesce(t.total, 0)), 0)::bigint as cash
-      from accounts a
-      left join (
-        select account_id, sum(amount_paise) as total
-        from transactions
-        where user_id = ${userId} and deleted_at is null
-        group by account_id
-      ) t on t.account_id = a.id
-      where a.user_id = ${userId} and a.archived_at is null and a.type in ('bank', 'cash')
-    `);
-    const startBalancePaise = Number((balRes.rows[0] as { cash: string }).cash);
+    const startBalancePaise = await bankCashTotal(db, userId);
 
     const now = new Date();
     const today = now.toISOString().slice(0, 10);

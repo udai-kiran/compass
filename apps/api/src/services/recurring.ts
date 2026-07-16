@@ -7,6 +7,7 @@ import type {
 import type { Db } from "../db/index.ts";
 import { recurringTemplates, transactions } from "../db/schema.ts";
 import { HttpError } from "../lib/errors.ts";
+import { assertOwnedAccount, assertOwnedCategory } from "./ownership.ts";
 
 type TemplateRow = typeof recurringTemplates.$inferSelect;
 
@@ -76,6 +77,8 @@ export async function createTemplate(
   userId: string,
   input: CreateRecurringTemplate,
 ): Promise<RecurringTemplate> {
+  await assertOwnedAccount(db, userId, input.accountId);
+  await assertOwnedCategory(db, userId, input.categoryId);
   const rows = await db
     .insert(recurringTemplates)
     .values({ ...input, userId })
@@ -90,6 +93,8 @@ export async function updateTemplate(
   input: UpdateRecurringTemplate,
 ): Promise<RecurringTemplate> {
   const { paused, ...rest } = input;
+  await assertOwnedAccount(db, userId, rest.accountId);
+  await assertOwnedCategory(db, userId, rest.categoryId);
   const set: Record<string, unknown> = { ...rest, updatedAt: new Date() };
   if (paused !== undefined) set.pausedAt = paused ? new Date() : null;
   const rows = await db
