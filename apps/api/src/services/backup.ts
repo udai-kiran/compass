@@ -8,17 +8,17 @@ import { encryptBackup } from "../lib/crypto-backup.ts";
 
 /**
  * Every application table in a stable logical order. This is not, and cannot be,
- * a strict FK topological order: accounts.goal_id and goals.account_id form a
- * cycle, and categories.parent_id is self-referential. Restore code must handle
- * those references in two passes. Kept exhaustive on purpose: a table missing
- * here silently drops out of the encrypted backup, so the schema-coverage test
- * guards it against drift as new tables are added.
+ * a strict FK topological order: accounts.goal_id references goals (which is
+ * listed later), and categories.parent_id is self-referential. Restore code must
+ * handle those references in two passes. Kept exhaustive on purpose: a table
+ * missing here silently drops out of the encrypted backup, so the schema-coverage
+ * test guards it against drift as new tables are added.
  */
 export const ALL_TABLES = [
   "users", "accounts", "categories", "transactions", "transaction_splits", "transfer_links",
   "attachments", "imports", "import_rows", "import_presets", "merchant_rules",
   "budgets", "budget_lines", "budget_alerts", "notifications", "recurring_templates",
-  "goals", "goal_contributions", "alert_ledger", "subscription_dismissals", "notification_prefs",
+  "goals", "alert_ledger", "subscription_dismissals", "notification_prefs",
   "card_details", "bank_details", "retirement_details", "overdraft_details",
   "reward_entries", "emi_details", "holdings", "nps_details", "gold_details",
   "holding_valuations", "holding_events", "net_worth_snapshots",
@@ -46,7 +46,6 @@ export const LINKED_TABLES: Record<string, { fk: string; parent: string }> = {
   attachments: { fk: "transaction_id", parent: "transactions" },
   import_rows: { fk: "import_id", parent: "imports" },
   budget_lines: { fk: "budget_id", parent: "budgets" },
-  goal_contributions: { fk: "goal_id", parent: "goals" },
   holding_valuations: { fk: "holding_id", parent: "holdings" },
   holding_events: { fk: "holding_id", parent: "holdings" },
 };

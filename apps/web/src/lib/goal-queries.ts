@@ -59,17 +59,7 @@ export function useGoalMutations() {
     mutationFn: (id: string) => send("DELETE", `/api/goals/${id}`, OkSchema),
     onSuccess: invalidate,
   });
-  const contribute = useMutation({
-    mutationFn: ({ id, ...body }: { id: string; amountPaise: number; date: string; note: string }) =>
-      apiPost(`/api/goals/${id}/contributions`, GoalProgressSchema, body),
-    onSuccess: invalidate,
-  });
-  const removeContribution = useMutation({
-    mutationFn: ({ goalId, id }: { goalId: string; id: string }) =>
-      send("DELETE", `/api/goals/${goalId}/contributions/${id}`, OkSchema),
-    onSuccess: invalidate,
-  });
-  return { create, update, remove, contribute, removeContribution };
+  return { create, update, remove };
 }
 
 // ---------- cash flow & forecast ----------

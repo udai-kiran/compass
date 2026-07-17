@@ -100,13 +100,12 @@ export const accounts = pgTable(
       .notNull()
       .default(0),
     /**
-     * Goal this account is earmarked for; net worth groups by it. Null = the
-     * "Unassigned" bucket. Set-null on goal delete so the account survives.
-     * The inverse of goals.accountId (which links a goal to one account for
-     * contribution auto-sync) — different direction, different purpose.
+     * Goal this account is earmarked for; net worth and goal funding group by
+     * it. Null = the "Unassigned" bucket. Set-null on goal delete so the account
+     * survives. A goal's funded value is the sum of the assets that point here.
      */
-    // AnyPgColumn annotation breaks the accounts↔goals type-inference cycle
-    // (goals.accountId references accounts, accounts.goalId references goals).
+    // AnyPgColumn keeps inference stable across the accounts → goals reference
+    // (goals is declared after accounts in this file).
     goalId: uuid("goal_id").references((): AnyPgColumn => goals.id, { onDelete: "set null" }),
     sortOrder: integer("sort_order").notNull().default(0),
     archivedAt: timestamp("archived_at", { withTimezone: true }),
@@ -443,36 +442,11 @@ export const goals = pgTable(
     /** emergency_fund preset: target = N months of trailing average expenses */
     targetMonths: integer("target_months"),
     targetDate: date("target_date"),
-    /** inflows to a linked account are auto-recorded as contributions */
-    accountId: uuid("account_id").references(() => accounts.id),
     archivedAt: timestamp("archived_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("goals_user_idx").on(t.userId)],
-);
-
-export const goalContributions = pgTable(
-  "goal_contributions",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    goalId: uuid("goal_id")
-      .notNull()
-      .references(() => goals.id, { onDelete: "cascade" }),
-    transactionId: uuid("transaction_id").references(() => transactions.id, {
-      onDelete: "set null",
-    }),
-    amountPaise: bigint("amount_paise", { mode: "number" }).notNull(),
-    date: date("date").notNull(),
-    note: text("note").notNull().default(""),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  },
-  (t) => [
-    index("goal_contributions_goal_idx").on(t.goalId),
-    uniqueIndex("goal_contributions_tx_idx")
-      .on(t.goalId, t.transactionId)
-      .where(sql`transaction_id is not null`),
-  ],
 );
 
 /** Generic once-only ledger for milestone/reminder/threshold notifications. */

@@ -1,17 +1,20 @@
-import { and, desc, eq, gt, isNull, sql } from "drizzle-orm";
+import { and, eq, gt, inArray, isNull, sql } from "drizzle-orm";
 import type {
   CreateGoal,
   Goal,
-  GoalContribution,
+  GoalAssetProgress,
   GoalProgress,
   UpdateGoal,
 } from "@compass/shared";
-import { CreateGoalSchema } from "@compass/shared";
+import { CreateGoalSchema, isRetirementAccount } from "@compass/shared";
 import type { Db } from "../db/index.ts";
-import { alertLedger, goalContributions, goals, transactions } from "../db/schema.ts";
+import { alertLedger, goals, holdingEvents, retirementDetails, transactions } from "../db/schema.ts";
 import { HttpError } from "../lib/errors.ts";
+import { listAccounts } from "./accounts.ts";
+import { getPortfolio } from "./holdings.ts";
+import { accountReturnBps, assetClassReturnBps } from "./goal-returns.ts";
+import { projectGoal } from "./goal-projection.ts";
 import { createNotification } from "./notifications.ts";
-import { assertOwnedAccount } from "./ownership.ts";
 import { incomeExpense, periodRange, prevPeriodKey, currentPeriodKey } from "./periods.ts";
 import { prefEnabled } from "./prefs.ts";
 
@@ -25,7 +28,6 @@ function toGoal(g: GoalRow): Goal {
     targetPaise: g.targetPaise,
     targetMonths: g.targetMonths,
     targetDate: g.targetDate,
-    accountId: g.accountId,
     archived: g.archivedAt !== null,
   };
 }
@@ -46,7 +48,6 @@ export async function listGoals(db: Db, userId: string): Promise<Goal[]> {
 
 export async function createGoal(db: Db, userId: string, input: CreateGoal): Promise<Goal> {
   const parsed = CreateGoalSchema.parse(input);
-  await assertOwnedAccount(db, userId, parsed.accountId);
   const rows = await db.insert(goals).values({ ...parsed, userId }).returning();
   return toGoal(rows[0]!);
 }
@@ -58,7 +59,6 @@ export async function updateGoal(
   input: UpdateGoal,
 ): Promise<Goal> {
   const { archived, ...rest } = input;
-  await assertOwnedAccount(db, userId, rest.accountId);
   const set: Record<string, unknown> = { ...rest, updatedAt: new Date() };
   if (archived !== undefined) set.archivedAt = archived ? new Date() : null;
   const rows = await db
@@ -95,34 +95,64 @@ async function effectiveTarget(db: Db, userId: string, g: GoalRow): Promise<numb
   return 0;
 }
 
-/** Auto-record inflows to the linked account as contributions (idempotent). */
-async function syncLinkedContributions(db: Db, userId: string, g: GoalRow): Promise<void> {
-  if (!g.accountId) return;
-  const inflows = await db
-    .select({ id: transactions.id, amountPaise: transactions.amountPaise, date: transactions.date })
-    .from(transactions)
-    .where(
-      and(
-        eq(transactions.userId, userId),
-        eq(transactions.accountId, g.accountId),
-        gt(transactions.amountPaise, 0),
-        isNull(transactions.deletedAt),
-        sql`${transactions.date} >= ${g.createdAt.toISOString().slice(0, 10)}`,
-      ),
-    );
-  if (inflows.length === 0) return;
-  await db
-    .insert(goalContributions)
-    .values(
-      inflows.map((t) => ({
-        goalId: g.id,
-        transactionId: t.id,
-        amountPaise: t.amountPaise,
-        date: t.date,
-        note: "linked account inflow",
-      })),
-    )
-    .onConflictDoNothing();
+/**
+ * Ongoing contribution rate into a goal's mapped assets, paise/month.
+ *
+ * "Money in" is measured where it actually lands: positive transactions into the
+ * mapped accounts (PPF/EPF deposits, cash top-ups) plus net purchases — buys
+ * minus sells — into the mapped holdings, since MF/stock contributions arrive as
+ * purchase events, not as bank transactions on the account. A single trailing
+ * 12-month window then averages to a month, smoothing lumpy SIP timing and
+ * one-off lump sums. Floored at 0: a net redemption isn't a contribution.
+ */
+async function mappedContributionRate(
+  db: Db,
+  userId: string,
+  accountIds: string[],
+  holdingIds: string[],
+): Promise<number> {
+  const cutoff = new Date();
+  cutoff.setUTCDate(cutoff.getUTCDate() - 365);
+  const cutoffIso = cutoff.toISOString().slice(0, 10);
+  const today = new Date().toISOString().slice(0, 10);
+
+  let total = 0;
+  if (accountIds.length > 0) {
+    const [row] = await db
+      .select({ total: sql<number>`coalesce(sum(${transactions.amountPaise}), 0)::bigint` })
+      .from(transactions)
+      .where(
+        and(
+          eq(transactions.userId, userId),
+          inArray(transactions.accountId, accountIds),
+          gt(transactions.amountPaise, 0),
+          isNull(transactions.deletedAt),
+          sql`${transactions.date} >= ${cutoffIso}`,
+          sql`${transactions.date} <= ${today}`,
+        ),
+      );
+    total += Number(row?.total ?? 0);
+  }
+  if (holdingIds.length > 0) {
+    // amount_paise is always positive; the event type carries direction.
+    const [row] = await db
+      .select({
+        total: sql<number>`coalesce(sum(case
+          when ${holdingEvents.type} = 'buy' then ${holdingEvents.amountPaise}
+          when ${holdingEvents.type} = 'sell' then -${holdingEvents.amountPaise}
+          else 0 end), 0)::bigint`,
+      })
+      .from(holdingEvents)
+      .where(
+        and(
+          inArray(holdingEvents.holdingId, holdingIds),
+          sql`${holdingEvents.date} >= ${cutoffIso}`,
+          sql`${holdingEvents.date} <= ${today}`,
+        ),
+      );
+    total += Number(row?.total ?? 0);
+  }
+  return Math.max(0, Math.round(total / 12));
 }
 
 const MILESTONES = [100, 75, 50, 25] as const;
@@ -160,38 +190,75 @@ function monthsBetween(from: Date, to: Date): number {
 
 export async function getGoalProgress(db: Db, userId: string, id: string): Promise<GoalProgress> {
   const g = await ownedGoal(db, userId, id);
-  await syncLinkedContributions(db, userId, g);
 
-  const contribs = await db.query.goalContributions.findMany({
-    where: eq(goalContributions.goalId, g.id),
-    orderBy: [desc(goalContributions.date), desc(goalContributions.createdAt)],
+  const [accountList, portfolio, target] = await Promise.all([
+    listAccounts(db, userId),
+    getPortfolio(db, userId),
+    effectiveTarget(db, userId, g),
+  ]);
+
+  const mappedAccounts = accountList.filter((a) => a.goalId === g.id && a.archivedAt === null);
+  const mappedHoldings = portfolio.positions.filter((p) => p.goalId === g.id && !p.archived);
+
+  // Credited-rate accounts (PPF/EPF/SSY) project at their stored rate, not a guess.
+  const retirementIds = mappedAccounts.filter((a) => isRetirementAccount(a.type)).map((a) => a.id);
+  const rateRows = retirementIds.length
+    ? await db
+        .select({ accountId: retirementDetails.accountId, bps: retirementDetails.annualRateBps })
+        .from(retirementDetails)
+        .where(inArray(retirementDetails.accountId, retirementIds))
+    : [];
+  const rateByAccount = new Map(rateRows.map((r) => [r.accountId, r.bps]));
+
+  const assets: GoalAssetProgress[] = [
+    ...mappedAccounts.map(
+      (a): GoalAssetProgress => ({
+        kind: "account",
+        id: a.id,
+        name: a.name,
+        subtitle: a.accountLast4 ? `•••• ${a.accountLast4}` : a.type,
+        valuePaise: a.balancePaise,
+        annualReturnBps: accountReturnBps(a.type, rateByAccount.get(a.id) ?? null),
+      }),
+    ),
+    ...mappedHoldings.map(
+      (p): GoalAssetProgress => ({
+        kind: "holding",
+        id: p.id,
+        name: p.name,
+        subtitle: p.folioNumber ? `Folio ${p.folioNumber}` : p.assetClass,
+        valuePaise: p.currentValuePaise,
+        annualReturnBps: assetClassReturnBps(p.assetClass),
+      }),
+    ),
+  ];
+
+  const monthlyInflowPaise = await mappedContributionRate(
+    db,
+    userId,
+    mappedAccounts.map((a) => a.id),
+    mappedHoldings.map((p) => p.id),
+  );
+  const monthsToTarget = g.targetDate
+    ? Math.max(0, monthsBetween(new Date(), new Date(`${g.targetDate}T00:00:00Z`)))
+    : null;
+
+  const proj = projectGoal({
+    assets: assets.map((a) => ({ valuePaise: a.valuePaise, annualReturnBps: a.annualReturnBps })),
+    targetPaise: target,
+    monthsToTarget,
+    monthlyInflowPaise,
   });
-  const saved = contribs.reduce((s, c) => s + c.amountPaise, 0);
-  const target = await effectiveTarget(db, userId, g);
-  const remaining = Math.max(0, target - saved);
-  const percent = target > 0 ? (saved / target) * 100 : 0;
 
-  // trailing 3-month contribution rate
-  const cutoff = new Date();
-  cutoff.setUTCDate(cutoff.getUTCDate() - 91);
-  const cutoffIso = cutoff.toISOString().slice(0, 10);
-  const recent = contribs.filter((c) => c.date >= cutoffIso).reduce((s, c) => s + c.amountPaise, 0);
-  const monthlyRate = Math.round(recent / 3);
+  const funded = proj.fundedPaise;
+  const remaining = Math.max(0, target - funded);
+  const percent = target > 0 ? (funded / target) * 100 : 0;
 
-  const projectedMonths = remaining === 0 ? 0 : monthlyRate > 0 ? remaining / monthlyRate : null;
   let projectedDate: string | null = null;
-  if (projectedMonths !== null) {
+  if (proj.projectedMonths !== null) {
     const d = new Date();
-    d.setUTCDate(d.getUTCDate() + Math.round(projectedMonths * 30.44));
+    d.setUTCDate(d.getUTCDate() + Math.round(proj.projectedMonths * 30.44));
     projectedDate = d.toISOString().slice(0, 10);
-  }
-
-  let requiredMonthly: number | null = null;
-  let onTrack: boolean | null = null;
-  if (g.targetDate) {
-    const monthsLeft = Math.max(0.1, monthsBetween(new Date(), new Date(`${g.targetDate}T00:00:00Z`)));
-    requiredMonthly = Math.ceil(remaining / monthsLeft);
-    onTrack = remaining === 0 || monthlyRate >= requiredMonthly;
   }
 
   await checkGoalMilestones(db, userId, g.id, percent, g.name);
@@ -199,47 +266,17 @@ export async function getGoalProgress(db: Db, userId: string, id: string): Promi
   return {
     ...toGoal(g),
     effectiveTargetPaise: target,
-    savedPaise: saved,
+    fundedPaise: funded,
     remainingPaise: remaining,
     percent: Math.round(percent * 10) / 10,
-    monthlyRatePaise: monthlyRate,
-    projectedMonths: projectedMonths === null ? null : Math.round(projectedMonths * 10) / 10,
+    blendedReturnBps: proj.blendedReturnBps,
+    monthlyInflowPaise,
+    projectedValuePaise: proj.projectedValuePaise,
+    shortfallPaise: proj.shortfallPaise,
+    projectedMonths: proj.projectedMonths === null ? null : Math.round(proj.projectedMonths * 10) / 10,
     projectedDate,
-    requiredMonthlyPaise: requiredMonthly,
-    onTrack,
-    contributions: contribs.slice(0, 50).map(
-      (c): GoalContribution => ({
-        id: c.id,
-        transactionId: c.transactionId,
-        amountPaise: c.amountPaise,
-        date: c.date,
-        note: c.note,
-      }),
-    ),
+    requiredMonthlyPaise: proj.requiredMonthlyPaise,
+    onTrack: proj.onTrack,
+    assets,
   };
-}
-
-export async function addContribution(
-  db: Db,
-  userId: string,
-  goalId: string,
-  input: { amountPaise: number; date: string; note: string },
-): Promise<GoalProgress> {
-  const g = await ownedGoal(db, userId, goalId);
-  await db.insert(goalContributions).values({ goalId: g.id, ...input });
-  return getGoalProgress(db, userId, goalId);
-}
-
-export async function deleteContribution(
-  db: Db,
-  userId: string,
-  goalId: string,
-  contributionId: string,
-): Promise<void> {
-  await ownedGoal(db, userId, goalId);
-  const rows = await db
-    .delete(goalContributions)
-    .where(and(eq(goalContributions.id, contributionId), eq(goalContributions.goalId, goalId)))
-    .returning({ id: goalContributions.id });
-  if (rows.length === 0) throw new HttpError(404, "Contribution not found");
 }

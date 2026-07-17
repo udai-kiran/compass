@@ -21,7 +21,6 @@ export const GoalSchema = z.object({
   targetPaise: z.number().int().nullable(),
   targetMonths: z.number().int().nullable(),
   targetDate: z.iso.date().nullable(),
-  accountId: z.uuid().nullable(),
   archived: z.boolean(),
 });
 export type Goal = z.infer<typeof GoalSchema>;
@@ -33,7 +32,6 @@ export const CreateGoalSchema = z
     targetPaise: z.number().int().positive().nullable().default(null),
     targetMonths: z.number().int().min(1).max(36).nullable().default(null),
     targetDate: z.iso.date().nullable().default(null),
-    accountId: z.uuid().nullable().default(null),
   })
   .check((ctx) => {
     if (ctx.value.type === "emergency_fund") {
@@ -52,47 +50,49 @@ export type CreateGoal = z.input<typeof CreateGoalSchema>;
 
 export const UpdateGoalSchema = z.object({
   name: z.string().min(1).optional(),
+  type: GoalTypeSchema.optional(),
   targetPaise: z.number().int().positive().nullable().optional(),
   targetMonths: z.number().int().min(1).max(36).nullable().optional(),
   targetDate: z.iso.date().nullable().optional(),
-  accountId: z.uuid().nullable().optional(),
   archived: z.boolean().optional(),
 });
 export type UpdateGoal = z.infer<typeof UpdateGoalSchema>;
 
-export const GoalContributionSchema = z.object({
+/** One account/holding earmarked to a goal, with the growth rate its projection uses. */
+export const GoalAssetProgressSchema = z.object({
+  kind: z.enum(["account", "holding"]),
   id: z.uuid(),
-  transactionId: z.uuid().nullable(),
-  amountPaise: z.number().int(),
-  date: z.iso.date(),
-  note: z.string(),
+  name: z.string(),
+  subtitle: z.string(),
+  valuePaise: z.number().int(),
+  /** assumed annual return, basis points (710 = 7.10%) */
+  annualReturnBps: z.number().int(),
 });
-export type GoalContribution = z.infer<typeof GoalContributionSchema>;
-
-export const CreateContributionSchema = z.object({
-  amountPaise: z
-    .number()
-    .int()
-    .refine((v) => v !== 0, "Amount cannot be zero"),
-  date: z.iso.date(),
-  note: z.string().default(""),
-});
+export type GoalAssetProgress = z.infer<typeof GoalAssetProgressSchema>;
 
 export const GoalProgressSchema = GoalSchema.extend({
   /** resolved target (emergency fund: months × trailing avg expenses) */
   effectiveTargetPaise: z.number().int(),
-  savedPaise: z.number().int(),
+  /** current market value of every asset mapped to this goal */
+  fundedPaise: z.number().int(),
+  /** nominal gap today: max(0, target − funded) */
   remainingPaise: z.number().int(),
   percent: z.number(),
-  /** trailing 3-month contribution rate, paise/month */
-  monthlyRatePaise: z.number().int(),
-  /** months to completion at the current rate; null if rate <= 0 */
+  /** value-weighted annual return of the mapped assets, basis points */
+  blendedReturnBps: z.number().int(),
+  /** trailing 3-month net inflow into the mapped accounts, paise/month */
+  monthlyInflowPaise: z.number().int(),
+  /** projected value at the target date (corpus growth + ongoing inflow); null without a target date */
+  projectedValuePaise: z.number().int().nullable(),
+  /** target − projectedValue (positive = behind); null without a target date */
+  shortfallPaise: z.number().int().nullable(),
+  /** months to reach the target from growth + inflow; null if unreachable or already met */
   projectedMonths: z.number().nullable(),
   projectedDate: z.iso.date().nullable(),
-  /** required monthly contribution to hit targetDate; null without a target date */
+  /** required monthly inflow to hit targetDate given growth; null without a target date */
   requiredMonthlyPaise: z.number().int().nullable(),
   onTrack: z.boolean().nullable(),
-  contributions: z.array(GoalContributionSchema),
+  assets: z.array(GoalAssetProgressSchema),
 });
 export type GoalProgress = z.infer<typeof GoalProgressSchema>;
 
