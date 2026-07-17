@@ -260,13 +260,21 @@ function ProjectionLine({ p }: { p: GoalProgress }) {
   );
 }
 
+// A zero-value holding is usually a fully redeemed MF folio. Hide those (keep
+// zero-balance accounts, which can still be useful containers) — same rule the
+// net-worth by-goal breakdown uses.
+function hasValue(a: { kind: string; valuePaise: number }): boolean {
+  return a.kind !== "holding" || a.valuePaise !== 0;
+}
+
 /** Assets mapped to this goal, plus a picker to map an unassigned one. */
 function MappedAssets({ goalId, p }: { goalId: string; p: GoalProgress }) {
   const { data: byGoal } = useNetWorthByGoal();
   const map = useAssetGoalMutation();
   const [pick, setPick] = useState("");
 
-  const unassigned = byGoal?.groups.find((g) => g.goalId === null)?.items ?? [];
+  const assets = p.assets.filter(hasValue);
+  const unassigned = (byGoal?.groups.find((g) => g.goalId === null)?.items ?? []).filter(hasValue);
 
   function addMapping(value: string) {
     // value = "kind:id"
@@ -278,7 +286,7 @@ function MappedAssets({ goalId, p }: { goalId: string; p: GoalProgress }) {
   return (
     <div className="mt-3 rounded-md border border-slate-200">
       <div className="flex items-center justify-between gap-2 border-b border-slate-100 px-3 py-1.5">
-        <span className="text-xs font-medium text-slate-500">Mapped assets ({p.assets.length})</span>
+        <span className="text-xs font-medium text-slate-500">Mapped assets ({assets.length})</span>
         {unassigned.length > 0 && (
           <select
             value={pick}
@@ -295,13 +303,13 @@ function MappedAssets({ goalId, p }: { goalId: string; p: GoalProgress }) {
           </select>
         )}
       </div>
-      {p.assets.length === 0 ? (
+      {assets.length === 0 ? (
         <p className="px-3 py-3 text-center text-xs text-slate-400">
           No assets mapped yet — map an account or folio to fund this goal.
         </p>
       ) : (
         <ul className="divide-y divide-slate-100 text-sm">
-          {p.assets.map((a) => (
+          {assets.map((a) => (
             <li key={`${a.kind}:${a.id}`} className="flex items-center gap-3 px-3 py-1.5">
               <span className="truncate text-slate-700">{a.name}</span>
               <span className="truncate text-xs text-slate-400">{a.subtitle}</span>
