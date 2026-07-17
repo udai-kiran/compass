@@ -31,14 +31,20 @@ export async function getRetirementDetails(
   userId: string,
   accountId: string,
 ): Promise<RetirementDetails | null> {
-  await ownedRetirementAccount(db, userId, accountId);
+  const acc = await ownedRetirementAccount(db, userId, accountId);
   const row = await db.query.retirementDetails.findFirst({
     where: and(
       eq(retirementDetails.accountId, accountId),
       eq(retirementDetails.userId, userId),
     ),
   });
-  return row ? toDetails(row) : null;
+  if (!row) return null;
+  const details = toDetails(row);
+  // Defense in depth: never surface a value the type can't hold, even if a row
+  // went stale. EPS is EPF-only; EPF has no maturity date.
+  if (acc.type !== "epf") details.epsBalancePaise = null;
+  if (acc.type === "epf") details.maturityDate = null;
+  return details;
 }
 
 export async function upsertRetirementDetails(

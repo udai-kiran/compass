@@ -5,8 +5,9 @@ import type {
   CreateAccount,
   UpdateAccount,
 } from "@compass/shared";
+import { accountCanHaveGoal } from "@compass/shared";
 import type { Db } from "../db/index.ts";
-import { accounts, bankDetails, transactions } from "../db/schema.ts";
+import { accounts, bankDetails, retirementDetails, transactions } from "../db/schema.ts";
 import { HttpError } from "../lib/errors.ts";
 import { assertOwnedGoal } from "./ownership.ts";
 
@@ -91,8 +92,24 @@ export async function updateAccount(
   input: UpdateAccount,
 ): Promise<Account> {
   const { archived, ...fields } = input;
+  const current = await db.query.accounts.findFirst({
+    where: and(eq(accounts.id, id), eq(accounts.userId, userId)),
+  });
+  if (!current) throw new HttpError(404, "Account not found");
+
+  const nextType = fields.type ?? current.type;
+  const typeChanged = fields.type !== undefined && fields.type !== current.type;
+
+  // A goal earmark only applies to accounts you accumulate toward a goal. If the
+  // resulting type can't hold one, drop the assignment — whether it's being set
+  // now or was left over from before a type change — so it never lingers,
+  // hidden from the UI, still counted in goal funding.
+  if (!accountCanHaveGoal(nextType)) {
+    fields.goalId = null;
+  }
   // Earmarking to a goal must point at the caller's own goal.
   await assertOwnedGoal(db, userId, fields.goalId);
+
   if (fields.accountLast4 !== undefined) {
     const bank = await db.query.bankDetails.findFirst({
       where: and(eq(bankDetails.accountId, id), eq(bankDetails.userId, userId)),
@@ -112,6 +129,18 @@ export async function updateAccount(
     .where(and(eq(accounts.id, id), eq(accounts.userId, userId)))
     .returning();
   if (rows.length === 0) throw new HttpError(404, "Account not found");
+
+  // Keep scheme details consistent with the new type: EPS is EPF-only, and EPF
+  // has no maturity date. Clear whichever the transition invalidates so a stale
+  // value can't survive the type editor.
+  if (typeChanged) {
+    const patch = nextType === "epf" ? { maturityDate: null } : { epsBalancePaise: null };
+    await db
+      .update(retirementDetails)
+      .set({ ...patch, updatedAt: new Date() })
+      .where(and(eq(retirementDetails.accountId, id), eq(retirementDetails.userId, userId)));
+  }
+
   return toAccount(rows[0]!);
 }
 
