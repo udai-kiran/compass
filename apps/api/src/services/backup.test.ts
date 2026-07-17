@@ -42,9 +42,10 @@ test("restore defers cyclic and self-referencing foreign keys", () => {
     firstPassRow("categories", { id: "child", parent_id: "parent", name: "Dining" }),
     { id: "child", parent_id: null, name: "Dining" },
   );
-  assert.deepEqual(firstPassRow("goals", { id: "g", account_id: "a" }), {
+  // A table with no deferred columns passes through untouched.
+  assert.deepEqual(firstPassRow("goals", { id: "g", target_paise: 100 }), {
     id: "g",
-    account_id: "a",
+    target_paise: 100,
   });
   assert.deepEqual(
     firstPassRow("transactions", { id: "t", merchant: "Cafe", search: "'cafe':1" }),

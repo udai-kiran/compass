@@ -138,6 +138,9 @@ export function useAssetGoalMutation() {
       void qc.invalidateQueries({ queryKey: ["accounts"] });
       void qc.invalidateQueries({ queryKey: ["portfolio"] });
       void qc.invalidateQueries({ queryKey: ["net-worth"] });
+      // A goal's funded value and projection are the sum of its mapped assets.
+      void qc.invalidateQueries({ queryKey: ["goals"] });
+      void qc.invalidateQueries({ queryKey: ["goal-progress"] });
     },
   });
 }
