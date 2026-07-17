@@ -12,6 +12,10 @@ import {
 export function CardsPage() {
   const { data: cards, isLoading } = useCards();
 
+  // Total credit-card liability = what's owed across every card (each card's
+  // balance is signed, negative when owed), summed and shown up top.
+  const totalOwed = (cards ?? []).reduce((sum, c) => sum + Math.max(0, -c.balancePaise), 0);
+
   return (
     <div className="mx-auto max-w-4xl">
       <header className="mb-4">
@@ -20,6 +24,18 @@ export function CardsPage() {
           Statement periods, amounts due, and utilization for your credit-card accounts.
         </p>
       </header>
+
+      {cards && cards.length > 0 && (
+        <div className="mb-4 flex items-center justify-between rounded-lg border border-rose-200 bg-rose-50 px-4 py-3">
+          <div>
+            <p className="text-xs font-medium uppercase tracking-wide text-rose-700">Current liability</p>
+            <p className="text-2xl font-semibold tabular-nums text-rose-900">{formatINR(totalOwed)}</p>
+          </div>
+          <p className="text-sm text-rose-700">
+            owed across {cards.length} card{cards.length === 1 ? "" : "s"}
+          </p>
+        </div>
+      )}
 
       {isLoading && <p className="text-sm text-slate-400">Loading…</p>}
 
