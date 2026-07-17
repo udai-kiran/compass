@@ -108,6 +108,9 @@ export type AcceptExtractedTxn = z.input<typeof AcceptExtractedTxnSchema>;
 
 // ---------- Queue message ----------
 
+/** BullMQ queue the ingestor produces to and the extractor consumes from. */
+export const EXTRACT_QUEUE = "email.extract";
+
 /** The BullMQ job the ingestor enqueues and the extractor consumes. */
 export const ExtractJobSchema = z.object({
   ingestionId: z.uuid(),
