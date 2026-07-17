@@ -117,6 +117,20 @@ export function matchAccount(hint: string, accounts: AccountRef[]): string | nul
   return null;
 }
 
+/**
+ * A calendar-valid `YYYY-MM-DD`, or null. Format alone isn't enough — the model
+ * can emit `2026-99-42`, which Postgres would reject and take the whole
+ * saveResults transaction down with it. Round-trips through Date to reject
+ * impossible months/days (including `2026-02-30`).
+ */
+export function validIsoDate(value: string | null): string | null {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const [y, m, d] = value.split("-").map(Number) as [number, number, number];
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  const ok = dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
+  return ok ? value : null;
+}
+
 /** Stable dedupe key: the bank reference when present, else a signature hash. */
 export function dedupeHashFor(row: {
   amountPaise: number;
@@ -167,7 +181,7 @@ export async function runExtraction(
   for (const t of model.transactions) {
     const amountPaise = Math.round(Math.abs(t.amount) * 100);
     if (!Number.isFinite(amountPaise) || amountPaise <= 0) continue; // discard junk amounts
-    const occurredAt = t.date && /^\d{4}-\d{2}-\d{2}$/.test(t.date) ? t.date : ctx.receivedDate;
+    const occurredAt = validIsoDate(t.date) ?? ctx.receivedDate;
     const base = {
       amountPaise,
       direction: t.direction,

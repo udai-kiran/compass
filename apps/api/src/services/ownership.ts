@@ -1,5 +1,5 @@
 import { and, eq } from "drizzle-orm";
-import type { Db } from "../db/index.ts";
+import type { DbOrTx } from "../db/index.ts";
 import { accounts, categories, goals } from "../db/schema.ts";
 import { HttpError } from "../lib/errors.ts";
 
@@ -15,7 +15,7 @@ import { HttpError } from "../lib/errors.ts";
  */
 
 export async function assertOwnedAccount(
-  db: Db,
+  db: DbOrTx,
   userId: string,
   accountId: string | null | undefined,
 ): Promise<void> {
@@ -28,7 +28,7 @@ export async function assertOwnedAccount(
 }
 
 export async function assertOwnedCategory(
-  db: Db,
+  db: DbOrTx,
   userId: string,
   categoryId: string | null | undefined,
 ): Promise<void> {
@@ -41,7 +41,7 @@ export async function assertOwnedCategory(
 }
 
 export async function assertOwnedGoal(
-  db: Db,
+  db: DbOrTx,
   userId: string,
   goalId: string | null | undefined,
 ): Promise<void> {

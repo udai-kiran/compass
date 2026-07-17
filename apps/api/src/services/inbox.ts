@@ -113,8 +113,14 @@ async function reload(db: Db, userId: string, id: string): Promise<ExtractedTran
 /**
  * Accept a draft into the ledger. `debit` becomes a negative (outflow) amount,
  * `credit` a positive (inflow) one. The created transaction carries no category
- * — categorization stays a manual step. Idempotency: only a `pending` draft can
- * be accepted, and the created transaction id is stamped back onto the draft.
+ * — categorization stays a manual step.
+ *
+ * Concurrency-safe: the whole thing runs in one transaction that first *claims*
+ * the draft with `UPDATE … WHERE status = 'pending' RETURNING`. Row locking
+ * means only one of two racing requests matches the still-pending row; the other
+ * matches nothing and 409s, so a draft can never be double-posted. If creating
+ * the ledger transaction fails, the transaction rolls back and the draft stays
+ * pending.
  */
 export async function acceptExtracted(
   db: Db,
@@ -122,25 +128,45 @@ export async function acceptExtracted(
   id: string,
   input: AcceptExtractedTxn,
 ): Promise<ExtractedTransaction> {
-  const draft = await loadOne(db, userId, id);
-  if (draft.status !== "pending") throw new HttpError(409, "Draft is not pending");
-
   const signed = input.direction === "debit" ? -input.amountPaise : input.amountPaise;
-  const txn = await createTransaction(db, userId, {
-    accountId: input.accountId,
-    date: input.occurredAt,
-    amountPaise: signed,
-    merchant: input.merchant,
-    categoryId: null,
-    notes: draft.bankRef ? `Imported from email · ref ${draft.bankRef}` : "Imported from email",
-    tags: [],
-    source: "import",
-  });
 
-  await db
-    .update(extractedTransactions)
-    .set({ status: "accepted", transactionId: txn.id, updatedAt: new Date() })
-    .where(and(eq(extractedTransactions.id, id), eq(extractedTransactions.userId, userId)));
+  await db.transaction(async (tx) => {
+    const [claimed] = await tx
+      .update(extractedTransactions)
+      .set({ status: "accepted", updatedAt: new Date() })
+      .where(
+        and(
+          eq(extractedTransactions.id, id),
+          eq(extractedTransactions.userId, userId),
+          eq(extractedTransactions.status, "pending"),
+        ),
+      )
+      .returning({ bankRef: extractedTransactions.bankRef });
+    if (!claimed) {
+      // Nothing to claim: the draft is missing, or already settled / lost a race.
+      const [exists] = await tx
+        .select({ id: extractedTransactions.id })
+        .from(extractedTransactions)
+        .where(and(eq(extractedTransactions.id, id), eq(extractedTransactions.userId, userId)));
+      throw new HttpError(exists ? 409 : 404, exists ? "Draft is not pending" : "Draft not found");
+    }
+
+    const txn = await createTransaction(tx, userId, {
+      accountId: input.accountId,
+      date: input.occurredAt,
+      amountPaise: signed,
+      merchant: input.merchant,
+      categoryId: null,
+      notes: claimed.bankRef ? `Imported from email · ref ${claimed.bankRef}` : "Imported from email",
+      tags: [],
+      source: "import",
+    });
+
+    await tx
+      .update(extractedTransactions)
+      .set({ transactionId: txn.id })
+      .where(and(eq(extractedTransactions.id, id), eq(extractedTransactions.userId, userId)));
+  });
 
   return reload(db, userId, id);
 }

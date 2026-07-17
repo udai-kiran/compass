@@ -6,6 +6,7 @@ import {
   dedupeHashFor,
   matchAccount,
   runExtraction,
+  validIsoDate,
   type AccountRef,
 } from "./extract.ts";
 import type { ParsedEmail } from "./email.ts";
@@ -100,6 +101,26 @@ test("runExtraction: alert → one normalized row (rupees→paise, ref dedupe)",
   assert.equal(row.occurredAt, "2026-07-08");
   assert.equal(row.suggestedAccountId, "a1");
   assert.equal(row.dedupeHash, "ref:txn-7788");
+});
+
+test("validIsoDate accepts real dates, rejects impossible ones", () => {
+  assert.equal(validIsoDate("2026-07-08"), "2026-07-08");
+  assert.equal(validIsoDate(null), null);
+  assert.equal(validIsoDate("2026-99-42"), null); // format ok, calendar nonsense
+  assert.equal(validIsoDate("2026-02-30"), null); // Feb never has 30
+  assert.equal(validIsoDate("08/07/2026"), null); // wrong format
+});
+
+test("runExtraction: an impossible model date falls back to the received date", async () => {
+  const ai = fakeAi(
+    JSON.stringify({
+      classification: "transaction_alert",
+      transactions: [{ amount: 100, direction: "debit", date: "2026-99-42", counterparty: "X", accountHint: "", bankRef: null, sourceQuote: "", confidence: 0.5 }],
+    }),
+  );
+  const out = await runExtraction(email("..."), ai, ctx());
+  assert.equal(out.rows.length, 1);
+  assert.equal(out.rows[0]!.occurredAt, "2026-07-10"); // not the bogus date
 });
 
 test("runExtraction: missing date falls back to received date; junk amount dropped", async () => {

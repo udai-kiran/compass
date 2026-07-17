@@ -9,7 +9,7 @@ import type {
   TransactionPage,
   UpdateTransaction,
 } from "@compass/shared";
-import type { Db } from "../db/index.ts";
+import type { Db, DbOrTx } from "../db/index.ts";
 import { transactions, transactionSplits, transferLinks } from "../db/schema.ts";
 import { HttpError } from "../lib/errors.ts";
 import { getMerchantRules, normalizeMerchant } from "./merchants.ts";
@@ -73,7 +73,7 @@ function decodeCursor(cursor: string): { date: string; id: string } {
   return { date, id };
 }
 
-async function hydrate(db: Db, rows: TxRow[]): Promise<Transaction[]> {
+async function hydrate(db: DbOrTx, rows: TxRow[]): Promise<Transaction[]> {
   if (rows.length === 0) return [];
   const ids = rows.map((r) => r.id);
   const [splitRows, linkRows] = await Promise.all([
@@ -174,7 +174,7 @@ export async function getTransaction(db: Db, userId: string, id: string): Promis
 }
 
 export async function createTransaction(
-  db: Db,
+  db: DbOrTx,
   userId: string,
   input: CreateTransaction & { source?: "manual" | "import" | "recurring" },
 ): Promise<Transaction> {

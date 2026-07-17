@@ -4,8 +4,8 @@ import { loadConfig } from "./config.ts";
 import { decryptSecret } from "./crypto.ts";
 import {
   createPool,
-  loadActiveMailboxes,
-  insertIngestion,
+  loadSyncableMailboxes,
+  recordIngestion,
   markMailboxError,
   saveWatermark,
   type MailboxRow,
@@ -68,13 +68,15 @@ async function syncPass(mb: MailboxRow): Promise<void> {
     const fresh = filterNew(fetched, plan.fromUid!);
     let enqueued = 0;
     for (const msg of fresh) {
-      const id = await insertIngestion(pool, {
+      const rec = await recordIngestion(pool, {
         userId: mb.userId,
         mailboxId: mb.id,
         msg: toIngestion(msg, mb.emailAddress),
       });
-      if (id) {
-        await enqueue(id);
+      // Enqueue anything still awaiting extraction — a new insert, or a prior
+      // insert whose enqueue never landed. Already-processed rows are skipped.
+      if (rec.status === "pending") {
+        await enqueue(rec.id);
         enqueued++;
       }
     }
@@ -89,7 +91,7 @@ async function syncPass(mb: MailboxRow): Promise<void> {
 }
 
 async function runAll(): Promise<void> {
-  const mailboxes = await loadActiveMailboxes(pool).catch((err: unknown) => {
+  const mailboxes = await loadSyncableMailboxes(pool).catch((err: unknown) => {
     log("error", "failed to load mailboxes", { err: String(err) });
     return [] as MailboxRow[];
   });
