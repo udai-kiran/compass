@@ -106,6 +106,15 @@ export const AcceptExtractedTxnSchema = z.object({
 });
 export type AcceptExtractedTxn = z.input<typeof AcceptExtractedTxnSchema>;
 
+/** Which review-inbox rows to list. */
+export const InboxStatusFilterSchema = z.object({
+  status: ExtractedTxnReviewStatusSchema.default("pending"),
+});
+
+/** Pending-count for the nav badge. */
+export const InboxCountSchema = z.object({ pending: z.number().int() });
+export type InboxCount = z.infer<typeof InboxCountSchema>;
+
 // ---------- Queue message ----------
 
 /** BullMQ queue the ingestor produces to and the extractor consumes from. */
