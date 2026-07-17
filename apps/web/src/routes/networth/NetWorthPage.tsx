@@ -130,7 +130,7 @@ function ByGoalSection() {
       <div className="divide-y divide-slate-100">
         {groups.map((group) => (
           <GoalGroupBlock
-            key={group.goalId ?? "unassigned"}
+            key={group.goalId ?? group.goalName}
             group={group}
             options={options.map((g) => ({ id: g.id, name: g.name }))}
             onSet={(kind, id, goalId) =>
@@ -189,17 +189,21 @@ function GoalGroupBlock({
               <span className={`w-28 shrink-0 text-right tabular-nums ${it.valuePaise < 0 ? "text-red-600" : "text-slate-700"}`}>
                 {formatINR(it.valuePaise)}
               </span>
-              <select
-                value={it.goalId ?? ""}
-                aria-label={`Goal for ${it.name}`}
-                onChange={(e) => onSet(it.kind, it.id, e.target.value || null)}
-                className="w-36 shrink-0 rounded border border-slate-200 bg-slate-50 px-1.5 py-1 text-xs text-slate-600"
-              >
-                <option value="">Unassigned</option>
-                {options.map((o) => (
-                  <option key={o.id} value={o.id}>{o.name}</option>
-                ))}
-              </select>
+              {group.assignable ? (
+                <select
+                  value={it.goalId ?? ""}
+                  aria-label={`Goal for ${it.name}`}
+                  onChange={(e) => onSet(it.kind, it.id, e.target.value || null)}
+                  className="w-36 shrink-0 rounded border border-slate-200 bg-slate-50 px-1.5 py-1 text-xs text-slate-600"
+                >
+                  <option value="">Unassigned</option>
+                  {options.map((o) => (
+                    <option key={o.id} value={o.id}>{o.name}</option>
+                  ))}
+                </select>
+              ) : (
+                <span className="w-36 shrink-0" aria-hidden="true" />
+              )}
             </li>
           ))}
         </ul>

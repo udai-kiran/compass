@@ -68,6 +68,18 @@ export function accountCanHaveGoal(type: AccountType): boolean {
   return (GOAL_ELIGIBLE_ACCOUNT_TYPES as readonly AccountType[]).includes(type);
 }
 
+/** Account types whose balance is money owed — a liability, not an asset. */
+export const LIABILITY_ACCOUNT_TYPES = [
+  "credit_card",
+  "loan",
+  "overdraft",
+  "home_loan_od",
+] as const satisfies readonly AccountType[];
+
+export function isLiabilityAccount(type: AccountType): boolean {
+  return (LIABILITY_ACCOUNT_TYPES as readonly AccountType[]).includes(type);
+}
+
 /** Last 4 digits, for display in lists. Derived from the full number when there is one. */
 export const Last4Schema = z
   .string()
