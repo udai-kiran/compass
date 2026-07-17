@@ -35,7 +35,7 @@ export const SessionInfoSchema = z.object({
 });
 
 export const CapabilitiesSchema = z.object({
-  aiProvider: z.enum(["none", "anthropic", "ollama"]),
+  aiProvider: z.enum(["none", "anthropic", "ollama", "openrouter", "deepseek"]),
   aiEnabled: z.boolean(),
   features: z.object({
     categorization: z.boolean(),

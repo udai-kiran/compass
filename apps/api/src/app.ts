@@ -84,6 +84,10 @@ export async function buildApp(config: Config): Promise<FastifyInstance> {
       anthropicModel: config.ANTHROPIC_MODEL,
       ollamaBaseUrl: config.OLLAMA_BASE_URL,
       ollamaModel: config.OLLAMA_MODEL,
+      openrouterApiKey: config.OPENROUTER_API_KEY,
+      openrouterModel: config.OPENROUTER_MODEL,
+      deepseekApiKey: config.DEEPSEEK_API_KEY,
+      deepseekModel: config.DEEPSEEK_MODEL,
     }),
   );
   await startJobs(app);
