@@ -38,6 +38,8 @@ export const RetirementDetailsSchema = z.object({
   annualRateBps: z.number().int(),
   maturityDate: z.iso.date().nullable(),
   referenceNumber: z.string(),
+  /** EPF only: accumulated Employee Pension Scheme (EPS) balance, paise. Null elsewhere. */
+  epsBalancePaise: z.number().int().nullable(),
 });
 export type RetirementDetails = z.infer<typeof RetirementDetailsSchema>;
 
@@ -48,6 +50,8 @@ export const UpsertRetirementDetailsSchema = z.object({
   maturityDate: z.iso.date().nullable().default(null),
   /** UAN (EPF) or account number (PPF) */
   referenceNumber: z.string().default(""),
+  /** EPF only: EPS pension balance, paise; ignored (stored null) for PPF/SSY */
+  epsBalancePaise: z.number().int().min(0).nullable().default(null),
 });
 export type UpsertRetirementDetails = z.input<typeof UpsertRetirementDetailsSchema>;
 

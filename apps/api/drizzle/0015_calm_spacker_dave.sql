@@ -1,0 +1,1 @@
+ALTER TABLE "retirement_details" ADD COLUMN "eps_balance_paise" bigint;

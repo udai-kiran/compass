@@ -603,6 +603,12 @@ export const retirementDetails = pgTable("retirement_details", {
   maturityDate: date("maturity_date"),
   /** UAN for EPF, account number for PPF — free-form, may be non-numeric */
   referenceNumber: text("reference_number").notNull().default(""),
+  /**
+   * EPF only: the accumulated Employee Pension Scheme (EPS) balance. EPFO tracks
+   * it separately from the provident-fund corpus, so it's a distinct figure the
+   * account balance doesn't include. Null for PPF/SSY (and for EPF until entered).
+   */
+  epsBalancePaise: bigint("eps_balance_paise", { mode: "number" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

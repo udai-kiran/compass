@@ -51,6 +51,23 @@ export function isBankAccount(type: AccountType): boolean {
   return (BANK_ACCOUNT_TYPES as readonly AccountType[]).includes(type);
 }
 
+/**
+ * Account types you earmark toward a goal: long-horizon assets you accumulate
+ * (investments and the credited-balance schemes). Transactional accounts
+ * (bank/cash) and liabilities (cards/loans/overdrafts) are excluded — a savings
+ * account or a credit card isn't a pot you're growing toward a target.
+ */
+export const GOAL_ELIGIBLE_ACCOUNT_TYPES = [
+  "investment",
+  "ppf",
+  "epf",
+  "ssy",
+] as const satisfies readonly AccountType[];
+
+export function accountCanHaveGoal(type: AccountType): boolean {
+  return (GOAL_ELIGIBLE_ACCOUNT_TYPES as readonly AccountType[]).includes(type);
+}
+
 /** Last 4 digits, for display in lists. Derived from the full number when there is one. */
 export const Last4Schema = z
   .string()

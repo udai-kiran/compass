@@ -13,6 +13,7 @@ function toDetails(d: DetailsRow): RetirementDetails {
     annualRateBps: d.annualRateBps,
     maturityDate: d.maturityDate,
     referenceNumber: d.referenceNumber,
+    epsBalancePaise: d.epsBalancePaise,
   };
 }
 
@@ -52,12 +53,14 @@ export async function upsertRetirementDetails(
   if (acc.type === "epf" && parsed.maturityDate !== null) {
     throw new HttpError(400, "EPF accounts do not mature");
   }
+  // EPS is an EPF-only figure; never store one against PPF/SSY.
+  const values = { ...parsed, epsBalancePaise: acc.type === "epf" ? parsed.epsBalancePaise : null };
   const rows = await db
     .insert(retirementDetails)
-    .values({ ...parsed, accountId, userId })
+    .values({ ...values, accountId, userId })
     .onConflictDoUpdate({
       target: retirementDetails.accountId,
-      set: { ...parsed, updatedAt: new Date() },
+      set: { ...values, updatedAt: new Date() },
     })
     .returning();
   return toDetails(rows[0]!);
