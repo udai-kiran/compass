@@ -49,7 +49,15 @@ export function useAccountMutations() {
   const update = useMutation({
     mutationFn: ({ id, ...body }: UpdateAccount & { id: string }) =>
       apiPatch(`/api/accounts/${id}`, AccountSchema, body),
-    onSuccess: invalidate,
+    // A type change normalizes the per-type detail rows server-side (e.g. EPS is
+    // dropped when leaving EPF); refresh those caches so the detail form doesn't
+    // keep — and re-submit — stale values.
+    onSuccess: (_data, { id }) => {
+      void qc.invalidateQueries({ queryKey: ["accounts"] });
+      void qc.invalidateQueries({ queryKey: ["retirement-details", id] });
+      void qc.invalidateQueries({ queryKey: ["overdraft-details", id] });
+      void qc.invalidateQueries({ queryKey: ["bank-details", id] });
+    },
   });
   const remove = useMutation({
     mutationFn: (id: string) => apiDelete(`/api/accounts/${id}`, OkSchema),

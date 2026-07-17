@@ -93,9 +93,11 @@ function AccountDetail({ account }: { account: AccountWithBalance }) {
 
       <IdentitySection account={account} />
       {supportsUpi && <UpiSection account={account} />}
-      {isBankAccount(account.type) && <BankSection account={account} />}
-      {isOverdraftAccount(account.type) && <OverdraftSection account={account} />}
-      {isRetirementAccount(account.type) && <RetirementSection account={account} />}
+      {/* Keyed by type so a change within a family (e.g. PPF→EPF) remounts the
+          section with fresh state rather than keeping the old scheme's values. */}
+      {isBankAccount(account.type) && <BankSection key={account.type} account={account} />}
+      {isOverdraftAccount(account.type) && <OverdraftSection key={account.type} account={account} />}
+      {isRetirementAccount(account.type) && <RetirementSection key={account.type} account={account} />}
     </div>
   );
 }
@@ -539,7 +541,8 @@ function RetirementSection({ account }: { account: AccountWithBalance }) {
     save.mutate(
       {
         annualRateBps: rateBps,
-        maturityDate: maturity || null,
+        // EPF never carries a maturity date; sending a stale one the API rejects.
+        maturityDate: isEpf ? null : maturity || null,
         referenceNumber: reference.trim(),
         epsBalancePaise: isEpf ? epsPaise : null,
       },
