@@ -40,3 +40,33 @@ services:
     depends_on:
       - api
     restart: unless-stopped
+
+  # Email → transaction pipeline. Both share the external Postgres/Redis from
+  # .env. The ingestor reads mail over OAuth2 IMAP and enqueues; the extractor
+  # runs the AI extraction and writes the review inbox. Neither serves HTTP.
+  # Both are optional — omit them (or leave their env unset) to run without the
+  # email pipeline; onboard a mailbox once with:
+  #   docker compose run --rm ingestor npm run connect -w apps/ingestor -- <email>
+  ingestor:
+    build:
+      context: .
+      dockerfile: apps/ingestor/Dockerfile
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    env_file: .env
+    environment:
+      NODE_ENV: production
+    restart: unless-stopped
+
+  extractor:
+    build:
+      context: .
+      dockerfile: apps/extractor/Dockerfile
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    env_file: .env
+    environment:
+      NODE_ENV: production
+    restart: unless-stopped
