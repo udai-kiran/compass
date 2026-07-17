@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { GoalAsset } from "@compass/shared";
-import { groupByGoal, type GoalMeta } from "./goal-networth.ts";
+import { groupByGoal, liabilitiesGroup, type GoalMeta } from "./goal-networth.ts";
 
 function asset(over: Partial<GoalAsset>): GoalAsset {
   return {
@@ -71,4 +71,25 @@ test("an asset tagged to a deleted/unknown goal falls back to Unassigned, not lo
 test("Unassigned is omitted when everything is tagged", () => {
   const groups = groupByGoal([asset({ goalId: EDU.id })], [EDU]);
   assert.ok(groups.every((g) => g.goalId !== null));
+});
+
+test("goal and Unassigned groups are assignable", () => {
+  const groups = groupByGoal([asset({ goalId: EDU.id }), asset({ goalId: null })], [EDU]);
+  assert.ok(groups.every((g) => g.assignable));
+});
+
+test("the liabilities group is non-assignable and nets its debts", () => {
+  const g = liabilitiesGroup([
+    asset({ name: "Card", valuePaise: -45000 }),
+    asset({ name: "Loan", valuePaise: -200000 }),
+  ]);
+  assert.ok(g);
+  assert.equal(g!.goalName, "Liabilities");
+  assert.equal(g!.assignable, false);
+  assert.equal(g!.netPaise, -245000);
+  assert.equal(g!.liabilitiesPaise, 245000);
+});
+
+test("no liabilities group when there are no debts", () => {
+  assert.equal(liabilitiesGroup([]), null);
 });

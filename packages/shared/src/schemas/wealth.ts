@@ -416,7 +416,7 @@ export const GoalAssetSchema = z.object({
 export type GoalAsset = z.infer<typeof GoalAssetSchema>;
 
 export const GoalGroupSchema = z.object({
-  /** null for the Unassigned group */
+  /** null for the Unassigned and Liabilities groups */
   goalId: z.uuid().nullable(),
   goalName: z.string(),
   goalType: z.string().nullable(),
@@ -424,6 +424,8 @@ export const GoalGroupSchema = z.object({
   netPaise: z.number().int(),
   assetsPaise: z.number().int(),
   liabilitiesPaise: z.number().int(),
+  /** whether the rows here can be earmarked to a goal — false for the Liabilities group */
+  assignable: z.boolean(),
   items: z.array(GoalAssetSchema),
 });
 export type GoalGroup = z.infer<typeof GoalGroupSchema>;

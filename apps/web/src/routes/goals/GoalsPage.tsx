@@ -274,7 +274,11 @@ function MappedAssets({ goalId, p }: { goalId: string; p: GoalProgress }) {
   const [pick, setPick] = useState("");
 
   const assets = p.assets.filter(hasValue);
-  const unassigned = (byGoal?.groups.find((g) => g.goalId === null)?.items ?? []).filter(hasValue);
+  // The Unassigned group is the assignable one with no goal — not the (also
+  // goalId-null) Liabilities group, whose rows can't be mapped to a goal.
+  const unassigned = (
+    byGoal?.groups.find((g) => g.goalId === null && g.assignable)?.items ?? []
+  ).filter(hasValue);
 
   function addMapping(value: string) {
     // value = "kind:id"
