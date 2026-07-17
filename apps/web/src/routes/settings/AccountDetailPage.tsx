@@ -13,7 +13,7 @@ import {
   type AccountWithBalance,
   type BankAccountSubtype,
 } from "@compass/shared";
-import { ACCOUNT_TYPE_LABELS, maskAccountNumber } from "../../lib/account-meta.ts";
+import { ACCOUNT_TYPE_LABELS, ACCOUNT_TYPES, maskAccountNumber } from "../../lib/account-meta.ts";
 import {
   useBankDetails,
   useBankDetailsMutation,
@@ -93,9 +93,11 @@ function AccountDetail({ account }: { account: AccountWithBalance }) {
 
       <IdentitySection account={account} />
       {supportsUpi && <UpiSection account={account} />}
-      {isBankAccount(account.type) && <BankSection account={account} />}
-      {isOverdraftAccount(account.type) && <OverdraftSection account={account} />}
-      {isRetirementAccount(account.type) && <RetirementSection account={account} />}
+      {/* Keyed by type so a change within a family (e.g. PPF→EPF) remounts the
+          section with fresh state rather than keeping the old scheme's values. */}
+      {isBankAccount(account.type) && <BankSection key={account.type} account={account} />}
+      {isOverdraftAccount(account.type) && <OverdraftSection key={account.type} account={account} />}
+      {isRetirementAccount(account.type) && <RetirementSection key={account.type} account={account} />}
     </div>
   );
 }
@@ -142,11 +144,13 @@ function IdentitySection({ account }: { account: AccountWithBalance }) {
   const [name, setName] = useState(account.name);
   const [holder, setHolder] = useState(account.holderName ?? "");
   const [institution, setInstitution] = useState(account.institution ?? "");
+  const [type, setType] = useState<AccountWithBalance["type"]>(account.type);
 
   const dirty =
     name !== account.name ||
     holder !== (account.holderName ?? "") ||
-    institution !== (account.institution ?? "");
+    institution !== (account.institution ?? "") ||
+    type !== account.type;
 
   function submit(e: FormEvent) {
     e.preventDefault();
@@ -157,6 +161,7 @@ function IdentitySection({ account }: { account: AccountWithBalance }) {
         name: name.trim(),
         holderName: holder.trim() || null,
         institution: institution.trim() || null,
+        type,
       },
       { onSuccess: () => toast("Account updated", "success") },
     );
@@ -184,6 +189,19 @@ function IdentitySection({ account }: { account: AccountWithBalance }) {
             placeholder="HDFC"
             className={inputClass}
           />
+        </Field>
+        <Field label="Type">
+          <select
+            value={type}
+            onChange={(e) => setType(e.target.value as AccountWithBalance["type"])}
+            className={inputClass}
+          >
+            {ACCOUNT_TYPES.map((t) => (
+              <option key={t} value={t}>
+                {ACCOUNT_TYPE_LABELS[t]}
+              </option>
+            ))}
+          </select>
         </Field>
         <div className="pt-1">
           <SaveButton dirty={dirty} disabled={name.trim() === ""} pending={update.isPending} />
@@ -494,6 +512,7 @@ function RetirementSection({ account }: { account: AccountWithBalance }) {
   const [rate, setRate] = useState("");
   const [maturity, setMaturity] = useState("");
   const [reference, setReference] = useState("");
+  const [eps, setEps] = useState("");
   const isEpf = account.type === "epf";
   const referenceLabel =
     account.type === "epf" ? "UAN" : account.type === "ssy" ? "SSY account number" : "PPF account number";
@@ -503,20 +522,30 @@ function RetirementSection({ account }: { account: AccountWithBalance }) {
     setRate(data.annualRateBps === 0 ? "" : (data.annualRateBps / 100).toFixed(2));
     setMaturity(data.maturityDate ?? "");
     setReference(data.referenceNumber);
+    setEps(data.epsBalancePaise == null ? "" : (data.epsBalancePaise / 100).toFixed(2));
   }, [data]);
 
   const rateBps = rate === "" ? 0 : Math.round(Number(rate) * 100);
   const rateError = rate !== "" && (Number.isNaN(rateBps) || rateBps < 0 || rateBps > 5000) ? "0–50%" : null;
+  const epsPaise = eps === "" ? null : Math.round(Number(eps) * 100);
+  const epsError = eps !== "" && (epsPaise === null || Number.isNaN(epsPaise) || epsPaise < 0) ? "≥ 0" : null;
   const dirty =
     rateBps !== (data?.annualRateBps ?? 0) ||
     maturity !== (data?.maturityDate ?? "") ||
-    reference !== (data?.referenceNumber ?? "");
+    reference !== (data?.referenceNumber ?? "") ||
+    (isEpf && epsPaise !== (data?.epsBalancePaise ?? null));
 
   function submit(e: FormEvent) {
     e.preventDefault();
-    if (rateError) return;
+    if (rateError || epsError) return;
     save.mutate(
-      { annualRateBps: rateBps, maturityDate: maturity || null, referenceNumber: reference.trim() },
+      {
+        annualRateBps: rateBps,
+        // EPF never carries a maturity date; sending a stale one the API rejects.
+        maturityDate: isEpf ? null : maturity || null,
+        referenceNumber: reference.trim(),
+        epsBalancePaise: isEpf ? epsPaise : null,
+      },
       { onSuccess: () => toast("Details saved", "success") },
     );
   }
@@ -550,6 +579,22 @@ function RetirementSection({ account }: { account: AccountWithBalance }) {
             className={`${inputClass} font-mono`}
           />
         </Field>
+        {/* EPS is an EPF-only pension pot EPFO tracks apart from the PF corpus. */}
+        {isEpf && (
+          <Field label="EPS balance" error={epsError}>
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-slate-400">₹</span>
+              <input
+                value={eps}
+                onChange={(e) => setEps(e.target.value)}
+                inputMode="decimal"
+                placeholder="Pension balance"
+                aria-invalid={epsError !== null}
+                className={`${inputClass} ${epsError ? "border-red-400" : ""}`}
+              />
+            </div>
+          </Field>
+        )}
         {/* EPF has no maturity — the API rejects one, so don't offer the field. */}
         {!isEpf && (
           <Field label="Matures on">
@@ -562,7 +607,7 @@ function RetirementSection({ account }: { account: AccountWithBalance }) {
           </Field>
         )}
         <div className="pt-1">
-          <SaveButton dirty={dirty} disabled={rateError !== null} pending={save.isPending} />
+          <SaveButton dirty={dirty} disabled={rateError !== null || epsError !== null} pending={save.isPending} />
         </div>
       </Section>
     </form>

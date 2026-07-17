@@ -13,6 +13,7 @@ function toDetails(d: DetailsRow): RetirementDetails {
     annualRateBps: d.annualRateBps,
     maturityDate: d.maturityDate,
     referenceNumber: d.referenceNumber,
+    epsBalancePaise: d.epsBalancePaise,
   };
 }
 
@@ -30,14 +31,20 @@ export async function getRetirementDetails(
   userId: string,
   accountId: string,
 ): Promise<RetirementDetails | null> {
-  await ownedRetirementAccount(db, userId, accountId);
+  const acc = await ownedRetirementAccount(db, userId, accountId);
   const row = await db.query.retirementDetails.findFirst({
     where: and(
       eq(retirementDetails.accountId, accountId),
       eq(retirementDetails.userId, userId),
     ),
   });
-  return row ? toDetails(row) : null;
+  if (!row) return null;
+  const details = toDetails(row);
+  // Defense in depth: never surface a value the type can't hold, even if a row
+  // went stale. EPS is EPF-only; EPF has no maturity date.
+  if (acc.type !== "epf") details.epsBalancePaise = null;
+  if (acc.type === "epf") details.maturityDate = null;
+  return details;
 }
 
 export async function upsertRetirementDetails(
@@ -52,12 +59,14 @@ export async function upsertRetirementDetails(
   if (acc.type === "epf" && parsed.maturityDate !== null) {
     throw new HttpError(400, "EPF accounts do not mature");
   }
+  // EPS is an EPF-only figure; never store one against PPF/SSY.
+  const values = { ...parsed, epsBalancePaise: acc.type === "epf" ? parsed.epsBalancePaise : null };
   const rows = await db
     .insert(retirementDetails)
-    .values({ ...parsed, accountId, userId })
+    .values({ ...values, accountId, userId })
     .onConflictDoUpdate({
       target: retirementDetails.accountId,
-      set: { ...parsed, updatedAt: new Date() },
+      set: { ...values, updatedAt: new Date() },
     })
     .returning();
   return toDetails(rows[0]!);
