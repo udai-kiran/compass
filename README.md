@@ -27,28 +27,39 @@ npm install && npm run db:migrate
 An opt-in module that reads bank/card alert emails over OAuth2 IMAP and turns
 them into **reviewable** transactions — nothing is written to your ledger
 automatically; extracted items land in an in-app review inbox for accept/reject.
-It's disabled by default and needs a real `AI_PROVIDER` plus a Google OAuth
-client. The workers (`ingestor`, `extractor`) run behind a compose `email`
-profile, so a default `docker compose up` never starts them.
+It's disabled by default and needs a real `AI_PROVIDER`. The workers (`ingestor`,
+`extractor`) run behind a compose `email` profile, so a default `docker compose
+up` never starts them.
 
-1. In `.env` set an AI provider (e.g. `AI_PROVIDER=deepseek` + `DEEPSEEK_API_KEY`),
-   the Google client (`GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`, see below), and
-   `MAILBOX_SECRET` (or reuse `SESSION_SECRET`, ≥32 chars — it encrypts stored
-   refresh tokens).
-2. Onboard a mailbox once (opens a Google consent flow in your browser):
-   ```bash
-   docker compose run --rm ingestor npm run connect -w apps/ingestor -- you@gmail.com
-   ```
-3. Start the workers:
+Mailbox credentials are **per user** — each user brings their own Google OAuth
+client; nothing is baked into the deploy `.env`. Onboarding is decoupled from the
+server so it works even when Compass is headless (e.g. on a Tailscale IP): you run
+a small CLI on your own machine, and paste what it prints into the UI.
+
+1. On the server, set an AI provider (e.g. `AI_PROVIDER=deepseek` +
+   `DEEPSEEK_API_KEY`) and `MAILBOX_SECRET` (or reuse `SESSION_SECRET`, ≥32 chars —
+   it encrypts stored client secrets and refresh tokens), then start the workers:
    ```bash
    docker compose --profile email up -d
    ```
+2. Create your own Google OAuth client (see below).
+3. On **your own machine** (the one with a browser), from a checkout of this repo,
+   capture a refresh token — this runs the loopback OAuth flow and needs no access
+   to the server:
+   ```bash
+   npm install
+   npm run connect -w apps/ingestor -- you@gmail.com \
+     --client-id <CLIENT_ID> --client-secret <CLIENT_SECRET>
+   ```
+   Open the printed Google URL, consent, and copy the base64 **bundle** it prints.
+4. In Compass, go to **Settings → Mailboxes**, paste the bundle, and click **Add
+   mailbox**. The ingestor picks it up on its next pass.
 
-### Creating the Google `CLIENT_ID` and `CLIENT_SECRET`
+### Creating your Google OAuth client
 
-The pipeline authenticates to Gmail over IMAP with XOAUTH2, so you need your own
-OAuth client. There is **no `credentials.json`** — Compass reads the client id
-and secret from `.env` like every other setting.
+Gmail is accessed over IMAP with XOAUTH2, so you need your own OAuth client. There
+is **no `credentials.json`** and nothing goes in `.env` — the client id/secret
+travel inside the bundle and are stored (encrypted) against your user.
 
 1. In the target Gmail account, confirm IMAP is available under **Gmail →
    Settings → See all settings → Forwarding and POP/IMAP**. Personal Gmail no
@@ -62,17 +73,17 @@ and secret from `.env` like every other setting.
    Under **Test users** add the Google account whose mail you'll ingest.
 4. **APIs & Services → Credentials → Create credentials → OAuth client ID**:
    - Application type: **Web application**.
-   - Authorized redirect URI: `http://127.0.0.1:53682` (must match
-     `OAUTH_REDIRECT_PORT` in `.env` — the `connect` flow listens on a loopback
-     redirect).
-5. Copy the generated **Client ID** and **Client secret** into `GOOGLE_CLIENT_ID`
-   and `GOOGLE_CLIENT_SECRET` in `.env`.
+   - Authorized redirect URI: `http://127.0.0.1:53682` (the `connect` CLI listens
+     on this loopback redirect; override the port with `--port` if 53682 is taken,
+     and add the matching URI here).
+5. Copy the **Client ID** and **Client secret** — you pass them to `connect` in
+   step 3 above (not to `.env`).
 
 > **Refresh-token longevity:** while the OAuth app's publishing status is
 > **Testing**, Google expires refresh tokens after ~7 days, which will stall
 > ingestion. For a long-lived self-hosted setup, set the app to **In production**
 > (you can dismiss the "unverified app" warning during consent since you're the
-> only user) and re-run `connect`.
+> only user) and re-run `connect` to capture a fresh bundle.
 
 ## Development
 

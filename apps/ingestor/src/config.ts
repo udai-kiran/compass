@@ -3,22 +3,19 @@ import { z } from "zod";
 /**
  * The ingestor runs as its own container. Variable names match apps/api so one
  * .env drives everything. MAILBOX_SECRET (falling back to SESSION_SECRET)
- * encrypts stored refresh tokens; the Google client credentials mint access
- * tokens for XOAUTH2 and drive the one-time `connect` onboarding flow.
+ * decrypts the per-user OAuth client secret + refresh token stored by the API,
+ * which mint access tokens for XOAUTH2. Client credentials are per user (in the
+ * DB), not env — onboarding is the standalone `connect` CLI + the settings UI.
  */
 const EnvSchema = z
   .object({
     DATABASE_URL: z.url({ error: "must be a postgresql:// connection URL" }),
     REDIS_URL: z.url({ error: "must be a redis:// connection URL" }),
-    /** key for the refresh-token envelope; falls back to SESSION_SECRET */
+    /** key for the mailbox-secret envelope; falls back to SESSION_SECRET */
     MAILBOX_SECRET: z.string().default(""),
     SESSION_SECRET: z.string().default(""),
     /** how often to re-poll each mailbox as an IDLE-safety net, seconds */
     POLL_INTERVAL_SECONDS: z.coerce.number().int().min(15).max(3600).default(120),
-    GOOGLE_CLIENT_ID: z.string().default(""),
-    GOOGLE_CLIENT_SECRET: z.string().default(""),
-    /** loopback redirect port for the `connect` onboarding flow */
-    OAUTH_REDIRECT_PORT: z.coerce.number().int().min(1).max(65535).default(53682),
   })
   .transform((v) => ({ ...v, MAILBOX_SECRET: v.MAILBOX_SECRET || v.SESSION_SECRET }))
   .check((ctx) => {

@@ -16,6 +16,12 @@ const EnvSchema = z
     BACKUP_DIR: z.string().default("./data/backups"),
     /** encryption key for backups; falls back to SESSION_SECRET when unset */
     BACKUP_KEY: z.string().default(""),
+    /**
+     * Encryption key for mailbox secrets (OAuth client secret + refresh token);
+     * falls back to SESSION_SECRET when unset. Must match the ingestor's
+     * MAILBOX_SECRET so it can decrypt what the API stored.
+     */
+    MAILBOX_SECRET: z.string().default(""),
     AI_PROVIDER: z.enum(["none", "anthropic", "ollama", "openrouter", "deepseek"]).default("none"),
     ANTHROPIC_API_KEY: z.string().default(""),
     ANTHROPIC_MODEL: z.string().default(""),

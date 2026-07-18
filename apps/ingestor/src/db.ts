@@ -14,6 +14,9 @@ export interface MailboxRow {
   folder: string;
   uidValidity: number | null;
   lastUid: number | null;
+  /** per-user OAuth client for this provider; null when the user hasn't onboarded creds */
+  clientId: string | null;
+  clientSecretEnc: string | null;
 }
 
 /**
@@ -22,6 +25,10 @@ export interface MailboxRow {
  * it lets ingestion self-heal once the cause clears; a successful pass resets it
  * to `active`. Only `disconnected` (a deliberate, user-initiated stop) is
  * excluded and never auto-retried.
+ *
+ * Client credentials are per user, so we LEFT JOIN them by (user, provider). A
+ * mailbox whose user has no creds comes back with clientId=null; the caller
+ * marks it errored rather than crashing the whole pass.
  */
 export async function loadSyncableMailboxes(pool: pg.Pool): Promise<MailboxRow[]> {
   const res = await pool.query<{
@@ -33,9 +40,15 @@ export async function loadSyncableMailboxes(pool: pg.Pool): Promise<MailboxRow[]
     folder: string;
     uid_validity: string | null;
     last_uid: string | null;
+    client_id: string | null;
+    client_secret_enc: string | null;
   }>(
-    `select id, user_id, provider, email_address, refresh_token_enc, folder, uid_validity, last_uid
-     from mailbox_accounts where status in ('active', 'error')`,
+    `select m.id, m.user_id, m.provider, m.email_address, m.refresh_token_enc, m.folder,
+            m.uid_validity, m.last_uid, c.client_id, c.client_secret_enc
+     from mailbox_accounts m
+     left join mailbox_credentials c
+       on c.user_id = m.user_id and c.provider = m.provider
+     where m.status in ('active', 'error')`,
   );
   return res.rows.map((r) => ({
     id: r.id,
@@ -46,6 +59,8 @@ export async function loadSyncableMailboxes(pool: pg.Pool): Promise<MailboxRow[]
     folder: r.folder,
     uidValidity: r.uid_validity === null ? null : Number(r.uid_validity),
     lastUid: r.last_uid === null ? null : Number(r.last_uid),
+    clientId: r.client_id,
+    clientSecretEnc: r.client_secret_enc,
   }));
 }
 
@@ -102,45 +117,4 @@ export async function markMailboxError(pool: pg.Pool, mailboxId: string, error: 
     `update mailbox_accounts set status = 'error', last_error = $2, updated_at = now() where id = $1`,
     [mailboxId, error],
   );
-}
-
-// --- used by the onboarding CLI (connect.ts) ---
-
-/** Resolve the user to attach a mailbox to: by email if given, else the sole/owner user. */
-export async function resolveUserId(pool: pg.Pool, email?: string): Promise<string | null> {
-  if (email) {
-    const r = await pool.query<{ id: string }>(`select id from users where email = $1`, [email]);
-    return r.rows[0]?.id ?? null;
-  }
-  const r = await pool.query<{ id: string }>(`select id from users order by created_at asc limit 1`);
-  return r.rows[0]?.id ?? null;
-}
-
-/** Upsert a mailbox connection; a fresh token clears any prior error and watermark. */
-export async function upsertMailbox(
-  pool: pg.Pool,
-  args: {
-    userId: string;
-    provider: "google" | "microsoft";
-    emailAddress: string;
-    refreshTokenEnc: string;
-    folder: string;
-  },
-): Promise<string> {
-  const res = await pool.query<{ id: string }>(
-    `insert into mailbox_accounts (user_id, provider, email_address, refresh_token_enc, folder, status)
-     values ($1,$2,$3,$4,$5,'active')
-     on conflict (user_id, email_address) do update
-       set provider = excluded.provider,
-           refresh_token_enc = excluded.refresh_token_enc,
-           folder = excluded.folder,
-           status = 'active',
-           last_error = null,
-           uid_validity = null,
-           last_uid = null,
-           updated_at = now()
-     returning id`,
-    [args.userId, args.provider, args.emailAddress, args.refreshTokenEnc, args.folder],
-  );
-  return res.rows[0]!.id;
 }

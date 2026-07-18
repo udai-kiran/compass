@@ -19,7 +19,6 @@ const pool = createPool(config.DATABASE_URL);
 const queue = new Queue(EXTRACT_QUEUE, {
   connection: { url: config.REDIS_URL, maxRetriesPerRequest: null },
 });
-const googleCreds = { clientId: config.GOOGLE_CLIENT_ID, clientSecret: config.GOOGLE_CLIENT_SECRET };
 
 function log(level: "info" | "warn" | "error", msg: string, extra: Record<string, unknown> = {}): void {
   console[level](JSON.stringify({ t: new Date().toISOString(), level, msg, ...extra }));
@@ -29,7 +28,16 @@ function log(level: "info" | "warn" | "error", msg: string, extra: Record<string
 const tokenCache = new Map<string, AccessToken>();
 
 async function accessTokenFor(mb: MailboxRow): Promise<{ token: string; host: string; port: number }> {
-  const provider = getTokenProvider(mb.provider, googleCreds);
+  // Credentials are per user, joined in by loadSyncableMailboxes. A mailbox with
+  // none can't mint tokens — surface it as an error rather than crash the pass.
+  if (!mb.clientId || !mb.clientSecretEnc) {
+    throw new Error("no OAuth client credentials on file — add them in Settings → Mailboxes");
+  }
+  const creds = {
+    clientId: mb.clientId,
+    clientSecret: decryptSecret(mb.clientSecretEnc, config.MAILBOX_SECRET),
+  };
+  const provider = getTokenProvider(mb.provider, creds);
   const cached = tokenCache.get(mb.id);
   if (cached && cached.expiresAt > Date.now()) {
     return { token: cached.token, host: provider.imapHost, port: provider.imapPort };

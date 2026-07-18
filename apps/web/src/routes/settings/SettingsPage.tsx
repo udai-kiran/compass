@@ -27,6 +27,7 @@ import { useGoals } from "../../lib/goal-queries.ts";
 import { useAssetGoalMutation } from "../../lib/wealth-queries.ts";
 import { RulesPanel } from "./RulesPanel.tsx";
 import { RecurringPanel } from "./RecurringPanel.tsx";
+import { MailboxesPanel } from "./MailboxesPanel.tsx";
 import {
   AboutPanel,
   DataPanel,
@@ -42,6 +43,7 @@ const TABS = [
   "categories",
   "rules",
   "recurring",
+  "mailboxes",
   "notifications",
   "projections",
   "sessions",
@@ -76,6 +78,7 @@ export function SettingsPage() {
       {tab === "categories" && <CategoriesPanel />}
       {tab === "rules" && <RulesPanel />}
       {tab === "recurring" && <RecurringPanel />}
+      {tab === "mailboxes" && <MailboxesPanel />}
       {tab === "notifications" && <NotificationsPanel />}
       {tab === "projections" && <ProjectionsPanel />}
       {tab === "sessions" && <SessionsPanel />}

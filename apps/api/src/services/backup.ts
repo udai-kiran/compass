@@ -22,7 +22,7 @@ export const ALL_TABLES = [
   "card_details", "bank_details", "retirement_details", "overdraft_details",
   "reward_entries", "emi_details", "holdings", "nps_details", "gold_details",
   "holding_valuations", "holding_events", "net_worth_snapshots",
-  "mailbox_accounts", "email_ingestions", "extracted_transactions",
+  "mailbox_accounts", "mailbox_credentials", "email_ingestions", "extracted_transactions",
 ] as const;
 
 /** Tables that carry a user_id directly — scoped by that column in the export. */
@@ -36,7 +36,8 @@ export const USER_TABLES: Record<string, string> = {
   overdraft_details: "user_id", reward_entries: "user_id", emi_details: "user_id",
   holdings: "user_id", nps_details: "user_id", gold_details: "user_id",
   net_worth_snapshots: "user_id",
-  mailbox_accounts: "user_id", email_ingestions: "user_id", extracted_transactions: "user_id",
+  mailbox_accounts: "user_id", mailbox_credentials: "user_id",
+  email_ingestions: "user_id", extracted_transactions: "user_id",
 };
 
 /**
