@@ -3,6 +3,7 @@ import { Link, useSearchParams } from "react-router";
 import {
   accountCanHaveGoal,
   formatINR,
+  isLiabilityAccount,
   OverdraftDetailsSchema,
   type AccountType,
   type Category,
@@ -144,7 +145,11 @@ function AccountsPanel() {
     }
   }
 
-  const visible = accounts?.filter((a) => showArchived || !a.archivedAt) ?? [];
+  // Assets on top, liabilities at the bottom; within each group the manual
+  // sortOrder is preserved (Array.sort is stable).
+  const visible = (accounts?.filter((a) => showArchived || !a.archivedAt) ?? [])
+    .slice()
+    .sort((a, b) => Number(isLiabilityAccount(a.type)) - Number(isLiabilityAccount(b.type)));
 
   return (
     <div className="mt-4 max-w-7xl">
@@ -235,12 +240,13 @@ function AccountsPanel() {
             className={`grid grid-cols-[1.25rem_2rem_minmax(0,1fr)] items-center gap-x-2 gap-y-2 px-4 py-3 text-sm md:grid-cols-[1.25rem_2rem_minmax(7rem,1.2fr)_minmax(6rem,1fr)_4.25rem_4.5rem_minmax(6rem,0.9fr)_7rem_minmax(8.5rem,auto)] ${a.archivedAt ? "opacity-50" : ""}`}
           >
             <div className="flex shrink-0 flex-col">
-              <button disabled={i === 0} className="text-xs text-slate-400 disabled:opacity-30" onClick={() => {
+              {/* Only reorder within the same group so assets stay above liabilities. */}
+              <button disabled={i === 0 || isLiabilityAccount(visible[i - 1]!.type) !== isLiabilityAccount(a.type)} className="text-xs text-slate-400 disabled:opacity-30" onClick={() => {
                 const above = visible[i - 1]!;
                 update.mutate({ id: a.id, sortOrder: above.sortOrder });
                 update.mutate({ id: above.id, sortOrder: a.sortOrder === above.sortOrder ? a.sortOrder + 1 : a.sortOrder });
               }}>▲</button>
-              <button disabled={i === visible.length - 1} className="text-xs text-slate-400 disabled:opacity-30" onClick={() => {
+              <button disabled={i === visible.length - 1 || isLiabilityAccount(visible[i + 1]!.type) !== isLiabilityAccount(a.type)} className="text-xs text-slate-400 disabled:opacity-30" onClick={() => {
                 const below = visible[i + 1]!;
                 update.mutate({ id: a.id, sortOrder: below.sortOrder === a.sortOrder ? below.sortOrder + 1 : below.sortOrder });
                 update.mutate({ id: below.id, sortOrder: a.sortOrder });
