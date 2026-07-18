@@ -179,9 +179,11 @@ export function AppLayout() {
           </div>
         </header>
         <main id="main-content" className="flex-1 overflow-y-auto p-4 sm:p-6">
-          <Suspense fallback={<div className="text-sm text-slate-500">Loading…</div>}>
-            <Outlet />
-          </Suspense>
+          <div className="mx-auto h-full w-full max-w-5xl">
+            <Suspense fallback={<div className="text-sm text-slate-500">Loading…</div>}>
+              <Outlet />
+            </Suspense>
+          </div>
         </main>
       </div>
     </div>
