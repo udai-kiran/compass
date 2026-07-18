@@ -3,9 +3,11 @@ import { z } from "zod";
 import {
   CapabilitiesSchema,
   NotificationPrefSchema,
+  ProjectionSettingsSchema,
   SessionInfoSchema,
   UserSchema,
   type UpsertNotificationPref,
+  type UpdateProjectionSettings,
 } from "@compass/shared";
 import { apiGet, apiPost } from "./api.ts";
 
@@ -48,6 +50,25 @@ export function useSessionRevoke() {
 
 export function useCapabilities() {
   return useQuery({ queryKey: ["capabilities"], queryFn: () => apiGet("/api/capabilities", CapabilitiesSchema) });
+}
+
+export function useProjectionSettings() {
+  return useQuery({
+    queryKey: ["projection-settings"],
+    queryFn: () => apiGet("/api/projection-settings", ProjectionSettingsSchema),
+  });
+}
+
+export function useProjectionSettingsMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: UpdateProjectionSettings) =>
+      send("PUT", "/api/projection-settings", ProjectionSettingsSchema, body),
+    onSuccess: (settings) => {
+      qc.setQueryData(["projection-settings"], settings);
+      void qc.invalidateQueries({ queryKey: ["goal-progress"] });
+    },
+  });
 }
 
 export function useNotificationPrefs() {

@@ -13,12 +13,13 @@ import type { AccountType, AssetClass } from "@compass/shared";
  */
 
 export const STORED = "stored" as const;
+export const DEFAULT_EQUITY_RETURN_BPS = 1200;
 
 export const ACCOUNT_RETURN_BPS: Record<AccountType, number | typeof STORED> = {
   bank: 0,
   cash: 0,
   // A generic investment account (broker cash, etc.) — treated like broad equity.
-  investment: 1200,
+  investment: DEFAULT_EQUITY_RETURN_BPS,
   // Credited-rate schemes: use the exact stored rate, never an assumption.
   ppf: STORED,
   epf: STORED,
@@ -31,9 +32,9 @@ export const ACCOUNT_RETURN_BPS: Record<AccountType, number | typeof STORED> = {
 };
 
 export const ASSET_CLASS_RETURN_BPS: Record<AssetClass, number> = {
-  stock: 1200,
-  mutual_fund: 1200,
-  etf: 1200,
+  stock: DEFAULT_EQUITY_RETURN_BPS,
+  mutual_fund: DEFAULT_EQUITY_RETURN_BPS,
+  etf: DEFAULT_EQUITY_RETURN_BPS,
   nps: 1000,
   gold: 800,
   fd: 700,
@@ -44,13 +45,24 @@ export const ASSET_CLASS_RETURN_BPS: Record<AssetClass, number> = {
  * The assumed annual return for a mapped account. PPF/EPF/SSY resolve to their
  * stored rate (falling back to a sensible default when none was recorded).
  */
-export function accountReturnBps(type: AccountType, storedRateBps: number | null): number {
+export function accountReturnBps(
+  type: AccountType,
+  storedRateBps: number | null,
+  equityReturnBps = DEFAULT_EQUITY_RETURN_BPS,
+): number {
+  if (type === "investment") return equityReturnBps;
   const base = ACCOUNT_RETURN_BPS[type];
   if (base !== STORED) return base;
   // PPF/EPF/SSY with no recorded rate: a modest small-savings default beats 0.
   return storedRateBps && storedRateBps > 0 ? storedRateBps : 700;
 }
 
-export function assetClassReturnBps(assetClass: AssetClass): number {
+export function assetClassReturnBps(
+  assetClass: AssetClass,
+  equityReturnBps = DEFAULT_EQUITY_RETURN_BPS,
+): number {
+  if (assetClass === "stock" || assetClass === "mutual_fund" || assetClass === "etf") {
+    return equityReturnBps;
+  }
   return ASSET_CLASS_RETURN_BPS[assetClass];
 }

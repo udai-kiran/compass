@@ -127,6 +127,13 @@
       "when": 1784378246483,
       "tag": "0017_typical_toad",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1784380838852,
+      "tag": "0018_fast_killer_shrike",
+      "breakpoints": true
     }
   ]
 }

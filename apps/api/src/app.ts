@@ -44,6 +44,7 @@ import { reportRoutes } from "./routes/reports.ts";
 import { searchRoutes } from "./routes/search.ts";
 import { backupRoutes } from "./routes/backup.ts";
 import { aiRoutes } from "./routes/ai.ts";
+import { projectionSettingsRoutes } from "./routes/projection-settings.ts";
 import { invalidateUserCache } from "./services/cache.ts";
 import { enqueueBudgetEvaluation } from "./jobs/index.ts";
 
@@ -154,6 +155,7 @@ export async function buildApp(config: Config): Promise<FastifyInstance> {
   await app.register(searchRoutes);
   await app.register(backupRoutes);
   await app.register(aiRoutes);
+  await app.register(projectionSettingsRoutes);
 
   // write-through invalidation: any successful ledger write refreshes cached
   // aggregates and queues a (debounced) budget evaluation

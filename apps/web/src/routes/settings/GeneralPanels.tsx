@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { formatINR, type NotificationType } from "@compass/shared";
 import { toast } from "../../lib/toast.tsx";
 import { useMe } from "../../lib/auth.ts";
@@ -7,9 +7,66 @@ import {
   useNotificationPrefs,
   usePrefMutation,
   useProfileMutations,
+  useProjectionSettings,
+  useProjectionSettingsMutation,
   useSessionRevoke,
   useSessions,
 } from "../../lib/settings-queries.ts";
+
+export function ProjectionsPanel() {
+  const { data } = useProjectionSettings();
+  const update = useProjectionSettingsMutation();
+  const [equityReturnPct, setEquityReturnPct] = useState("");
+
+  useEffect(() => {
+    if (data) setEquityReturnPct(String(data.equityReturnBps / 100));
+  }, [data]);
+
+  const parsedPct = Number(equityReturnPct);
+  const invalid = !Number.isFinite(parsedPct) || parsedPct < 0 || parsedPct > 100;
+
+  return (
+    <div className="mt-4 max-w-lg">
+      <section className="rounded-lg border border-slate-200 bg-white p-4">
+        <h2 className="text-sm font-semibold text-slate-700">Goal projection assumptions</h2>
+        <p className="mt-1 text-xs text-slate-400">
+          Used for stocks, equity funds, ETFs, and generic investment accounts. EPF, PPF, and SSA
+          continue to use the interest rate recorded on each account.
+        </p>
+        <label className="mt-4 flex max-w-xs flex-col gap-1 text-xs text-slate-500">
+          Expected annual equity return
+          <span className="flex items-center gap-2">
+            <input
+              type="number"
+              min="0"
+              max="100"
+              step="0.01"
+              value={equityReturnPct}
+              onChange={(e) => setEquityReturnPct(e.target.value)}
+              className="input w-28 text-right"
+              aria-invalid={invalid}
+            />
+            <span>% per year</span>
+            <button
+              type="button"
+              disabled={invalid || update.isPending}
+              onClick={() =>
+                update.mutate(
+                  { equityReturnBps: Math.round(parsedPct * 100) },
+                  { onSuccess: () => toast("Projection assumptions updated", "success") },
+                )
+              }
+              className="rounded-md bg-slate-800 px-4 py-1.5 text-sm text-white disabled:opacity-40"
+            >
+              Save
+            </button>
+          </span>
+        </label>
+        {invalid && <p className="mt-2 text-xs text-red-600">Enter a percentage from 0 to 100.</p>}
+      </section>
+    </div>
+  );
+}
 
 export function ProfilePanel() {
   const { data: me } = useMe();
