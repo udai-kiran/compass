@@ -23,6 +23,7 @@ import {
   useRetirementDetailsMutation,
 } from "../../lib/account-detail-queries.ts";
 import { InstitutionDatalist, InstitutionIcon, INSTITUTION_LIST_ID } from "../../lib/institutions.tsx";
+import { UpiQr, upiPayUri } from "../../components/UpiQr.tsx";
 import { useAccountMutations, useAccounts } from "../../lib/queries.ts";
 import { toast } from "../../lib/toast.tsx";
 
@@ -263,6 +264,16 @@ function UpiSection({ account }: { account: AccountWithBalance }) {
             </li>
           ))}
         </ul>
+      )}
+      {account.upiIds[0] && (
+        <div className="flex items-center gap-3">
+          <UpiQr value={upiPayUri(account.upiIds[0], account.name)} size={120} />
+          <p className="text-xs text-slate-500">
+            Scan to pay <span className="font-mono text-slate-700">{account.upiIds[0]}</span>
+            <br />
+            <span className="text-slate-400">Primary UPI ID · works in any UPI app</span>
+          </p>
+        </div>
       )}
       <form onSubmit={add} className="flex items-start gap-2">
         <div className="flex-1">

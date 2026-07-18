@@ -20,6 +20,7 @@ function toDetails(d: DetailsRow): CardDetails {
     accountId: d.accountId,
     network: d.network,
     productName: d.productName,
+    billMobile: d.billMobile,
     cycleDay: d.cycleDay,
     dueDay: d.dueDay,
     creditLimitPaise: d.creditLimitPaise,
@@ -74,14 +75,21 @@ export async function upsertCardDetails(
 ): Promise<CardDetails> {
   await ownedCardAccount(db, userId, accountId);
   const parsed = UpsertCardDetailsSchema.parse(input);
+  // Bank/issuer lives on the account (institution), not card_details — keep it
+  // out of the card_details row and write it through to the account.
+  const { bankName, ...cardCols } = parsed;
   const rows = await db
     .insert(cardDetails)
-    .values({ ...parsed, accountId, userId })
+    .values({ ...cardCols, accountId, userId })
     .onConflictDoUpdate({
       target: cardDetails.accountId,
-      set: { ...parsed, updatedAt: new Date() },
+      set: { ...cardCols, updatedAt: new Date() },
     })
     .returning();
+  await db
+    .update(accounts)
+    .set({ institution: bankName.trim() || null })
+    .where(and(eq(accounts.id, accountId), eq(accounts.userId, userId)));
   return toDetails(rows[0]!);
 }
 
@@ -120,6 +128,8 @@ export async function listCards(db: Db, userId: string, today?: string): Promise
       out.push({
         accountId: acc.id,
         name: acc.name,
+        bankName: acc.institution,
+        last4: acc.accountLast4,
         details: null,
         balancePaise: balance,
         statementStart: null,
@@ -139,6 +149,8 @@ export async function listCards(db: Db, userId: string, today?: string): Promise
     out.push({
       accountId: acc.id,
       name: acc.name,
+      bankName: acc.institution,
+      last4: acc.accountLast4,
       details: toDetails(d),
       balancePaise: balance,
       statementStart: prevClose,

@@ -537,6 +537,12 @@ export const cardDetails = pgTable("card_details", {
   network: cardNetwork("network"),
   /** product name, e.g. "Regalia Gold" */
   productName: text("product_name").notNull().default(""),
+  /**
+   * Registered mobile (10 digits, no country code) for building the card's
+   * bill-payment UPI VPA — e.g. Axis `CC.91<mobile><last4>@axisbank`. Empty when
+   * unknown or the issuer has no VPA scheme.
+   */
+  billMobile: text("bill_mobile").notNull().default(""),
   /** statement close day of month (1–28) */
   cycleDay: integer("cycle_day").notNull().default(1),
   /** payment due day of month (1–28); first occurrence after the close */

@@ -10,6 +10,8 @@ export const CardDetailsSchema = z.object({
   accountId: z.uuid(),
   network: CardNetworkSchema.nullable(),
   productName: z.string(),
+  /** registered mobile (10 digits) for the bill-payment UPI VPA; "" when unset */
+  billMobile: z.string(),
   cycleDay: z.number().int().min(1).max(28),
   dueDay: z.number().int().min(1).max(28),
   creditLimitPaise: z.number().int().min(0),
@@ -22,6 +24,10 @@ export type CardDetails = z.infer<typeof CardDetailsSchema>;
 export const UpsertCardDetailsSchema = z.object({
   network: CardNetworkSchema.nullable().default(null),
   productName: z.string().default(""),
+  /** Issuing bank; stored on the account (accounts.institution), not card_details. */
+  bankName: z.string().default(""),
+  /** registered mobile (10 digits) for the bill-payment UPI VPA */
+  billMobile: z.string().default(""),
   cycleDay: z.number().int().min(1).max(28).default(1),
   dueDay: z.number().int().min(1).max(28).default(15),
   creditLimitPaise: z.number().int().min(0).default(0),
@@ -58,6 +64,10 @@ export type UpsertRetirementDetails = z.input<typeof UpsertRetirementDetailsSche
 export const CardSummarySchema = z.object({
   accountId: z.uuid(),
   name: z.string(),
+  /** issuing bank, from the account's institution field */
+  bankName: z.string().nullable(),
+  /** last 4 digits of the card, from the account; needed to build the bill VPA */
+  last4: z.string().nullable(),
   details: CardDetailsSchema.nullable(),
   /** current signed balance (negative = owed) */
   balancePaise: z.number().int(),
