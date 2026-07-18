@@ -146,3 +146,37 @@ export const MailboxAccountSchema = z.object({
   createdAt: z.string(),
 });
 export type MailboxAccount = z.infer<typeof MailboxAccountSchema>;
+
+/**
+ * The payload the local `connect` CLI captures and prints (base64-encoded) for
+ * the user to paste into Settings → Mailboxes. It carries everything needed to
+ * store a per-user Google client and one mailbox: the client credentials plus
+ * the long-lived refresh token. Consumed only by our own API, so the shape is
+ * fixed and versioned (`v`).
+ */
+export const ConnectBundleSchema = z.object({
+  v: z.literal(1),
+  provider: MailboxProviderSchema.default("google"),
+  email: z.email(),
+  folder: z.string().min(1).default("INBOX"),
+  clientId: z.string().min(1),
+  clientSecret: z.string().min(1),
+  refreshToken: z.string().min(1),
+});
+export type ConnectBundle = z.infer<typeof ConnectBundleSchema>;
+
+/** Add-mailbox request: the opaque base64 bundle string the CLI printed. */
+export const AddMailboxSchema = z.object({
+  bundle: z.string().min(1, "paste the bundle the connect CLI printed"),
+});
+export type AddMailbox = z.infer<typeof AddMailboxSchema>;
+
+/**
+ * Whether the user has Google client credentials on file (drives the settings
+ * UI). The secret is never returned — only the non-sensitive client id.
+ */
+export const MailboxCredentialsStatusSchema = z.object({
+  configured: z.boolean(),
+  clientId: z.string().nullable(),
+});
+export type MailboxCredentialsStatus = z.infer<typeof MailboxCredentialsStatusSchema>;

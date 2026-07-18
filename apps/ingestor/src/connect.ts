@@ -1,24 +1,27 @@
 import { createServer } from "node:http";
 import { createHash, randomBytes } from "node:crypto";
-import { loadConfig } from "./config.ts";
-import { encryptSecret } from "./crypto.ts";
-import { createPool, resolveUserId, upsertMailbox } from "./db.ts";
+import { encodeBundle } from "./bundle.ts";
 
 /**
- * One-time mailbox onboarding. Runs Google's OAuth2 authorization-code flow with
- * a loopback redirect + PKCE to obtain a long-lived refresh token, encrypts it,
- * and stores it in mailbox_accounts. Re-running for the same address rotates the
- * token.
+ * One-time mailbox onboarding, run on YOUR OWN machine (the one with a browser).
+ * It runs Google's OAuth2 authorization-code flow with a loopback redirect +
+ * PKCE to obtain a long-lived refresh token, then prints a base64 "bundle" you
+ * paste into Compass → Settings → Mailboxes. It talks only to Google — no DB,
+ * Redis, or Compass access — so it works even when Compass is headless on a
+ * remote/Tailscale host.
  *
- *   npm run connect -w apps/ingestor -- <mailbox-email> [--folder INBOX] [--as <app-user-email>]
+ *   npm run connect -w apps/ingestor -- <mailbox-email> \
+ *     --client-id <id> --client-secret <secret> [--folder INBOX] [--port 53682]
  *
- * Requires GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET (a "Web application" OAuth
- * client) with http://127.0.0.1:<OAUTH_REDIRECT_PORT> as an authorized redirect.
+ * The Google client must be your own OAuth client whose authorized redirect is
+ * the loopback URI printed below (http://127.0.0.1:<port>). Google only accepts
+ * loopback or an https URL on a registered domain — hence the local flow.
  */
 
 const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const SCOPE = "https://mail.google.com/";
+const PROVIDER = "google" as const;
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -30,19 +33,20 @@ function base64url(buf: Buffer): string {
 }
 
 async function main(): Promise<void> {
-  const config = loadConfig();
   const mailboxEmail = process.argv[2];
-  if (!mailboxEmail || mailboxEmail.startsWith("--")) {
-    console.error("usage: npm run connect -w apps/ingestor -- <mailbox-email> [--folder INBOX] [--as <app-user-email>]");
-    process.exit(1);
-  }
-  if (!config.GOOGLE_CLIENT_ID || !config.GOOGLE_CLIENT_SECRET) {
-    console.error("GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be set to connect a Google mailbox.");
-    process.exit(1);
-  }
+  const clientId = arg("client-id");
+  const clientSecret = arg("client-secret");
   const folder = arg("folder") ?? "INBOX";
-  const asEmail = arg("as");
-  const redirectUri = `http://127.0.0.1:${config.OAUTH_REDIRECT_PORT}`;
+  const port = Number(arg("port") ?? "53682");
+
+  if (!mailboxEmail || mailboxEmail.startsWith("--") || !clientId || !clientSecret) {
+    console.error(
+      "usage: npm run connect -w apps/ingestor -- <mailbox-email> " +
+        "--client-id <id> --client-secret <secret> [--folder INBOX] [--port 53682]",
+    );
+    process.exit(1);
+  }
+  const redirectUri = `http://127.0.0.1:${port}`;
 
   const verifier = base64url(randomBytes(32));
   const challenge = base64url(createHash("sha256").update(verifier).digest());
@@ -51,7 +55,7 @@ async function main(): Promise<void> {
   const authUrl =
     `${AUTH_URL}?` +
     new URLSearchParams({
-      client_id: config.GOOGLE_CLIENT_ID,
+      client_id: clientId,
       redirect_uri: redirectUri,
       response_type: "code",
       scope: SCOPE,
@@ -80,7 +84,7 @@ async function main(): Promise<void> {
       server.close();
       resolve(gotCode);
     });
-    server.listen(config.OAUTH_REDIRECT_PORT, "127.0.0.1", () => {
+    server.listen(port, "127.0.0.1", () => {
       console.log("\nOpen this URL in a browser signed in as", mailboxEmail, ":\n");
       console.log(authUrl, "\n");
       console.log(`Waiting for the redirect to ${redirectUri} ...`);
@@ -92,8 +96,8 @@ async function main(): Promise<void> {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
-      client_id: config.GOOGLE_CLIENT_ID,
-      client_secret: config.GOOGLE_CLIENT_SECRET,
+      client_id: clientId,
+      client_secret: clientSecret,
       code,
       code_verifier: verifier,
       redirect_uri: redirectUri,
@@ -108,22 +112,18 @@ async function main(): Promise<void> {
     throw new Error("No refresh_token returned. Revoke prior access at myaccount.google.com and retry.");
   }
 
-  const pool = createPool(config.DATABASE_URL);
-  try {
-    const userId = await resolveUserId(pool, asEmail);
-    if (!userId) throw new Error(asEmail ? `No app user with email ${asEmail}` : "No users found in the database");
-    const id = await upsertMailbox(pool, {
-      userId,
-      provider: "google",
-      emailAddress: mailboxEmail,
-      refreshTokenEnc: encryptSecret(tokens.refresh_token, config.MAILBOX_SECRET),
-      folder,
-    });
-    console.log(`\n✓ Connected ${mailboxEmail} (folder ${folder}) → mailbox ${id}`);
-    console.log("The ingestor will pick it up on its next pass.");
-  } finally {
-    await pool.end();
-  }
+  const bundle = encodeBundle({
+    v: 1,
+    provider: PROVIDER,
+    email: mailboxEmail,
+    folder,
+    clientId,
+    clientSecret,
+    refreshToken: tokens.refresh_token,
+  });
+
+  console.log(`\n✓ Captured ${mailboxEmail}. Paste this into Compass → Settings → Mailboxes:\n`);
+  console.log(bundle, "\n");
 }
 
 main().catch((err: unknown) => {

@@ -48,8 +48,8 @@ services:
   # (and existing non-AI deployments) never starts them — the extractor requires
   # a real AI_PROVIDER and would otherwise crash-loop. Enable the pipeline with:
   #   docker compose --profile email up -d
-  # Onboard a mailbox once (needs GOOGLE_CLIENT_ID/SECRET + AI_PROVIDER in .env):
-  #   docker compose run --rm ingestor npm run connect -w apps/ingestor -- <email>
+  # Mailboxes are onboarded per-user from Settings → Mailboxes (the `connect` CLI
+  # runs on the user's own machine, not here) — see the README.
   ingestor:
     profiles: ["email"]
     build:

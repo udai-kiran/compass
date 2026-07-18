@@ -1,13 +1,14 @@
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
 
 /**
- * Symmetric encryption for short mailbox secrets (the OAuth2 refresh token and,
- * on the API side, the client secret). AES-256-GCM with a scrypt-derived key,
- * the same primitives the backup envelope uses. Serialized as:
+ * Symmetric encryption for short secrets (OAuth client secrets and refresh
+ * tokens) stored in mailbox_credentials / mailbox_accounts. AES-256-GCM with a
+ * scrypt-derived key. Serialized as:
  *   "v1:" + base64( salt(16) | iv(12) | authTag(16) | ciphertext )
  *
- * IMPORTANT: must stay byte-for-byte identical to apps/api/src/lib/secret-box.ts
- * — the API encrypts what this decrypts (both keyed by MAILBOX_SECRET).
+ * IMPORTANT: this envelope must stay byte-for-byte identical to
+ * apps/ingestor/src/crypto.ts — the ingestor decrypts what the API encrypts
+ * here (both keyed by MAILBOX_SECRET). Change one, change both.
  */
 const PREFIX = "v1:";
 

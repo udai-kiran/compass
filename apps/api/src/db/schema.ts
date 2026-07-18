@@ -900,6 +900,29 @@ export const mailboxAccounts = pgTable(
   (t) => [uniqueIndex("mailbox_accounts_addr_idx").on(t.userId, t.emailAddress)],
 );
 
+/**
+ * Per-user OAuth client credentials for a mailbox provider. Each user brings
+ * their own Google Cloud OAuth client (there is no shared/global client), so
+ * the client id + encrypted secret are stored here and resolved per mailbox by
+ * the ingestor. One row per (user, provider).
+ */
+export const mailboxCredentials = pgTable(
+  "mailbox_credentials",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    provider: mailboxProvider("provider").notNull(),
+    clientId: text("client_id").notNull(),
+    /** OAuth client secret, encrypted with the app secret (same envelope as the refresh token) */
+    clientSecretEnc: text("client_secret_enc").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("mailbox_credentials_user_provider_idx").on(t.userId, t.provider)],
+);
+
 export const emailClass = pgEnum("email_class", [
   "transaction_alert",
   "card_statement",
