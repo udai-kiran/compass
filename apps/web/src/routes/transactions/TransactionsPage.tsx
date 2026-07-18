@@ -291,6 +291,7 @@ export function TransactionsPage() {
                 onOpen={() => setDrawerTx(tx.id)}
                 catName={catName}
                 accName={accName}
+                accounts={accounts ?? []}
                 categories={categories ?? []}
                 onUpdate={(patch) => mutations.update.mutate({ id: tx.id, ...patch })}
               />
@@ -325,6 +326,7 @@ function TxRow({
   onOpen,
   catName,
   accName,
+  accounts,
   categories,
   onUpdate,
 }: {
@@ -335,12 +337,21 @@ function TxRow({
   onOpen: () => void;
   catName: (id: string | null) => string;
   accName: (id: string) => string;
+  accounts: Array<{ id: string; name: string; archivedAt: string | null }>;
   categories: Array<{ id: string; name: string; archivedAt: string | null }>;
   onUpdate: (
-    patch: Partial<{ categoryId: string | null; date: string; amountPaise: number }>,
+    patch: Partial<{
+      categoryId: string | null;
+      date: string;
+      amountPaise: number;
+      merchant: string;
+      accountId: string;
+    }>,
   ) => void;
 }) {
-  const [editing, setEditing] = useState<"category" | "date" | "amount" | null>(null);
+  const [editing, setEditing] = useState<
+    "category" | "date" | "amount" | "merchant" | "account" | null
+  >(null);
   const isTransfer = tx.transferLinkId !== null;
   return (
     <div
@@ -369,31 +380,87 @@ function TxRow({
           {tx.date}
         </button>
       )}
-      <button
-        className="min-w-0 flex-1 truncate text-left font-medium text-slate-800"
-        onClick={onOpen}
-      >
-        {tx.merchant || "(no merchant)"}
-        {isTransfer && (
-          <span className="ml-2 rounded bg-sky-100 px-1.5 py-0.5 text-xs font-normal text-sky-700">
-            transfer
-          </span>
-        )}
-        {tx.splits.length > 0 && (
-          <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-normal text-amber-700">
-            split
-          </span>
-        )}
-        {tx.tags.map((t) => (
-          <span
-            key={t}
-            className="ml-1 rounded bg-slate-100 px-1.5 py-0.5 text-xs font-normal text-slate-500"
-          >
-            #{t}
-          </span>
-        ))}
-      </button>
-      <span className="hidden w-32 truncate text-slate-500 md:block">{accName(tx.accountId)}</span>
+      {editing === "merchant" ? (
+        <input
+          autoFocus
+          defaultValue={tx.merchant}
+          placeholder="Merchant"
+          onBlur={(e) => {
+            const v = e.target.value.trim();
+            if (v !== tx.merchant) onUpdate({ merchant: v });
+            setEditing(null);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") e.currentTarget.blur();
+            if (e.key === "Escape") setEditing(null);
+          }}
+          className="min-w-0 flex-1 rounded border border-slate-300 px-1 py-0.5"
+        />
+      ) : (
+        <button
+          className="min-w-0 flex-1 truncate text-left font-medium text-slate-800"
+          onClick={() => setEditing("merchant")}
+        >
+          {tx.merchant || "(no merchant)"}
+          {isTransfer && (
+            <span className="ml-2 rounded bg-sky-100 px-1.5 py-0.5 text-xs font-normal text-sky-700">
+              transfer
+            </span>
+          )}
+          {tx.splits.length > 0 && (
+            <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-normal text-amber-700">
+              split
+            </span>
+          )}
+          {tx.tags.map((t) => (
+            <span
+              key={t}
+              className="ml-1 rounded bg-slate-100 px-1.5 py-0.5 text-xs font-normal text-slate-500"
+            >
+              #{t}
+            </span>
+          ))}
+        </button>
+      )}
+      {editing === "account" ? (
+        <select
+          autoFocus
+          defaultValue={tx.accountId}
+          onBlur={() => setEditing(null)}
+          onChange={(e) => {
+            if (e.target.value && e.target.value !== tx.accountId) {
+              onUpdate({ accountId: e.target.value });
+            }
+            setEditing(null);
+          }}
+          className="hidden w-32 rounded border border-slate-300 px-1 py-0.5 md:block"
+        >
+          {accounts
+            .filter((a) => !a.archivedAt || a.id === tx.accountId)
+            .map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}
+              </option>
+            ))}
+        </select>
+      ) : isTransfer ? (
+        // A linked transfer's legs must stay in different accounts; moving one
+        // inline could collapse both legs into one account (the update API does
+        // not revalidate transfer invariants). Unlink via the ⋯ drawer first.
+        <span
+          className="hidden w-32 cursor-default truncate text-slate-500 md:block"
+          title="Part of a transfer — unlink it (⋯) before changing the account"
+        >
+          {accName(tx.accountId)}
+        </span>
+      ) : (
+        <button
+          className="hidden w-32 truncate text-left text-slate-500 md:block"
+          onClick={() => setEditing("account")}
+        >
+          {accName(tx.accountId)}
+        </button>
+      )}
       {editing === "category" ? (
         <select
           autoFocus
@@ -443,6 +510,13 @@ function TxRow({
           {formatINR(tx.amountPaise)}
         </button>
       )}
+      <button
+        className="shrink-0 rounded px-1.5 text-slate-400 hover:bg-slate-200 hover:text-slate-600"
+        title="Details — splits, transfers, receipts"
+        onClick={onOpen}
+      >
+        ⋯
+      </button>
     </div>
   );
 }
