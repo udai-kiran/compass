@@ -1,10 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  eventDedupeKey,
   groupByPosition,
   parseMfCsv,
-  partitionEvents,
+  reconcileEvents,
   type ParsedRow,
 } from "./mf-import.ts";
 import { MF_SCHEME_MAP, resolveScheme } from "./mf-scheme-map.ts";
@@ -172,42 +171,110 @@ test("rows of one fund in one folio group into a single position", () => {
   assert.equal(groups[0]!.rows.length, 2);
 });
 
+const prior = (
+  r: ParsedRow,
+  id: string,
+  seq: number | null = null,
+  source: "import" | "manual" = "import",
+) => ({
+  id,
+  date: r.date,
+  type: r.type,
+  units: r.units,
+  amountPaise: r.amountPaise,
+  seq,
+  source,
+});
+
 test("re-importing the same rows inserts nothing (idempotent dedupe)", () => {
   const rows = [row({ date: "2026-06-05" }), row({ date: "2026-07-06", units: 50 })];
-  const first = partitionEvents([], rows);
+  const first = reconcileEvents([], rows);
   assert.equal(first.toInsert.length, 2);
   assert.equal(first.duplicates, 0);
+  assert.deepEqual(first.toInsert.map((t) => t.seq), [0, 0]); // each date has its own order
   // Second run, with the first run's events already present.
-  const existing = first.toInsert.map(eventDedupeKey);
-  const second = partitionEvents(existing, rows);
+  const existing = first.toInsert.map((t, i) => prior(t.row, `e${i}`));
+  const second = reconcileEvents(existing, rows);
   assert.equal(second.toInsert.length, 0);
   assert.equal(second.duplicates, 2);
+  assert.equal(second.reseq.length, 2);
 });
 
 test("two genuinely identical same-day transactions are both kept", () => {
   // Multiset matching: without an existing event to match, an identical repeat
   // is a separate real transaction (e.g. two same-day SIP executions), not a dup.
   const r = row({});
-  const first = partitionEvents([], [r, r]);
+  const first = reconcileEvents([], [r, r]);
   assert.equal(first.toInsert.length, 2);
   assert.equal(first.duplicates, 0);
   // But re-importing that file matches both existing events — nothing new.
-  const existing = [eventDedupeKey(r), eventDedupeKey(r)];
-  const second = partitionEvents(existing, [r, r]);
+  const existing = [prior(r, "a"), prior(r, "b")];
+  const second = reconcileEvents(existing, [r, r]);
   assert.equal(second.toInsert.length, 0);
   assert.equal(second.duplicates, 2);
-  // A third identical row (existing has only two) inserts just the one extra.
-  const third = partitionEvents(existing, [r, r, r]);
+  // A third identical row (existing has only two) inserts just the one extra,
+  // at source-order 2.
+  const third = reconcileEvents(existing, [r, r, r]);
   assert.equal(third.toInsert.length, 1);
   assert.equal(third.duplicates, 2);
+  assert.equal(third.toInsert[0]!.seq, 2);
 });
 
 test("a buy and sell of equal units/amount on one day stay distinct events", () => {
   // The dedupe key includes direction, so these must not collapse.
   const buy = row({ type: "buy", units: 10, amountPaise: 1000 });
   const sell = row({ type: "sell", units: 10, amountPaise: 1000 });
-  const { toInsert } = partitionEvents([], [buy, sell]);
+  const { toInsert } = reconcileEvents([], [buy, sell]);
   assert.equal(toInsert.length, 2);
+});
+
+test("a fuller re-import reconciles same-day order an earlier partial got wrong", () => {
+  // Partial statement 1 had only the later same-day purchase P2.
+  const p1 = row({ date: "2024-01-01", units: 100, amountPaise: 1_000_000 }); // earlier, cheaper
+  const p2 = row({ date: "2024-01-01", units: 100, amountPaise: 1_500_000 }); // later, dearer
+  const firstImport = reconcileEvents([], [p2]);
+  assert.equal(firstImport.toInsert[0]!.seq, 0); // P2 alone → seq 0
+  // Full statement 2 lists both in source order [P1, P2]; P2 already exists.
+  const second = reconcileEvents([prior(p2, "p2", 0)], [p1, p2]);
+  assert.equal(second.toInsert.length, 1);
+  assert.equal(second.toInsert[0]!.row.amountPaise, 1_000_000); // P1 inserted…
+  assert.equal(second.toInsert[0]!.seq, 0); // …at source-order 0 (ahead of P2)
+  assert.deepEqual(second.reseq, [{ id: "p2", seq: 1 }]); // P2 re-stamped after P1
+});
+
+test("a narrower re-import must not disturb an already-correct same-day order", () => {
+  // A complete import established A=seq 0, B=seq 1 on one day.
+  const a = row({ date: "2024-01-01", units: 100, amountPaise: 1_000_000 });
+  const b = row({ date: "2024-01-01", units: 100, amountPaise: 1_500_000 });
+  const existing = [prior(a, "a", 0), prior(b, "b", 1)];
+  // A later statement contains only B (not a superset — A is omitted). B must keep
+  // its ordinal and A must be untouched, so nothing collides.
+  const narrow = reconcileEvents(existing, [b]);
+  assert.deepEqual(narrow.reseq, []); // no re-stamping ⇒ A=0, B=1 preserved
+  assert.equal(narrow.toInsert.length, 0);
+  assert.equal(narrow.duplicates, 1);
+});
+
+test("a non-overlapping date starts its own intra-day sequence", () => {
+  // Existing day-1 events A=0, B=1; a new statement brings only a day-2 event C.
+  // Sequences are per date, so C starts day 2 at zero without touching A/B.
+  const a = row({ date: "2024-01-01", units: 10, amountPaise: 100 });
+  const b = row({ date: "2024-01-01", units: 10, amountPaise: 200 });
+  const c = row({ date: "2024-02-01", units: 10, amountPaise: 300 });
+  const out = reconcileEvents([prior(a, "a", 0), prior(b, "b", 1)], [c]);
+  assert.deepEqual(out.reseq, []);
+  assert.equal(out.toInsert.length, 1);
+  assert.equal(out.toInsert[0]!.seq, 0);
+});
+
+test("an import never rewrites a user's manual same-day order", () => {
+  const imported = row({ date: "2024-01-01", units: 100, amountPaise: 1_000_000 });
+  const manual = row({ date: "2024-01-01", type: "sell", units: 10, amountPaise: 150_000 });
+  const existing = [prior(manual, "manual", 0, "manual"), prior(imported, "imported", 1)];
+  const out = reconcileEvents(existing, [imported]);
+  assert.deepEqual(out.reseq, []);
+  assert.equal(out.toInsert.length, 0);
+  assert.equal(out.duplicates, 1);
 });
 
 test("units held: buys add, sells subtract, dividends carry no units", () => {

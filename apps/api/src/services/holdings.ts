@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import type {
   CreateHolding,
   CreateHoldingEvent,
@@ -15,6 +15,7 @@ import { holdingEvents, holdings, holdingValuations } from "../db/schema.ts";
 import { HttpError } from "../lib/errors.ts";
 import { fetchNavByCode } from "./amfi.ts";
 import { assertOwnedGoal } from "./ownership.ts";
+import { defaultTaxClass } from "./tax-lots.ts";
 
 type HoldingRow = typeof holdings.$inferSelect;
 
@@ -27,6 +28,8 @@ function toHolding(h: HoldingRow): Holding {
     targetPct: h.targetPct,
     amfiSchemeCode: h.amfiSchemeCode,
     folioNumber: h.folioNumber,
+    grandfatherNavPaise: h.grandfatherNavPaise,
+    gainsTaxClass: h.gainsTaxClass,
     goalId: h.goalId,
     archived: h.archivedAt !== null,
   };
@@ -83,7 +86,11 @@ async function ownedHolding(db: Db, userId: string, id: string): Promise<Holding
 }
 
 export async function createHolding(db: Db, userId: string, input: CreateHolding): Promise<Holding> {
-  const rows = await db.insert(holdings).values({ ...input, userId }).returning();
+  const gainsTaxClass = input.gainsTaxClass ?? defaultTaxClass(input.assetClass);
+  const rows = await db
+    .insert(holdings)
+    .values({ ...input, gainsTaxClass, userId })
+    .returning();
   return toHolding(rows[0]!);
 }
 
@@ -138,12 +145,50 @@ export async function addEvent(
   input: CreateHoldingEvent,
 ): Promise<HoldingEvent> {
   await ownedHolding(db, userId, holdingId);
+  // Manual events carry a real intra-day seq too (appended within their date), so
+  // the FIFO engine can place them among imported lots — and the user can reorder.
+  const sameDay = await db.query.holdingEvents.findMany({
+    where: and(eq(holdingEvents.holdingId, holdingId), eq(holdingEvents.date, input.date)),
+  });
+  const nextSeq = sameDay.reduce((max, e) => Math.max(max, e.seq ?? -1), -1) + 1;
   const rows = await db
     .insert(holdingEvents)
-    .values({ ...input, holdingId })
+    .values({ ...input, holdingId, seq: nextSeq, source: "manual" })
     .returning();
   const e = rows[0]!;
   return { id: e.id, type: e.type, date: e.date, amountPaise: e.amountPaise, units: e.units, note: e.note };
+}
+
+/**
+ * Swap an event's intra-day order with its neighbour, letting the user fix
+ * same-day chronology (e.g. a manual sale that actually preceded an imported
+ * buy). "up" moves it earlier in FIFO (lower seq); no-ops at a day's edge.
+ */
+export async function moveEvent(
+  db: Db,
+  userId: string,
+  holdingId: string,
+  eventId: string,
+  direction: "up" | "down",
+): Promise<void> {
+  await ownedHolding(db, userId, holdingId);
+  const ev = await db.query.holdingEvents.findFirst({
+    where: and(eq(holdingEvents.id, eventId), eq(holdingEvents.holdingId, holdingId)),
+  });
+  if (!ev) throw new HttpError(404, "Event not found");
+  const sameDay = await db.query.holdingEvents.findMany({
+    where: and(eq(holdingEvents.holdingId, holdingId), eq(holdingEvents.date, ev.date)),
+    orderBy: [asc(holdingEvents.seq), asc(holdingEvents.createdAt), asc(holdingEvents.id)],
+  });
+  const idx = sameDay.findIndex((e) => e.id === eventId);
+  const swapIdx = direction === "up" ? idx - 1 : idx + 1;
+  if (swapIdx < 0 || swapIdx >= sameDay.length) return; // already at the edge
+  const a = sameDay[idx]!;
+  const b = sameDay[swapIdx]!;
+  await db.transaction(async (tx) => {
+    await tx.update(holdingEvents).set({ seq: b.seq ?? swapIdx }).where(eq(holdingEvents.id, a.id));
+    await tx.update(holdingEvents).set({ seq: a.seq ?? idx }).where(eq(holdingEvents.id, b.id));
+  });
 }
 
 export async function deleteEvent(
@@ -174,7 +219,14 @@ export async function getPortfolio(db: Db, userId: string): Promise<Portfolio> {
     ? await Promise.all([
         db.query.holdingEvents.findMany({
           where: inArray(holdingEvents.holdingId, ids),
-          orderBy: [desc(holdingEvents.date), desc(holdingEvents.createdAt)],
+          // Newest day first; within a day, FIFO order (seq asc) so same-date
+          // events display contiguously in the order the tax engine consumes them.
+          orderBy: [
+            desc(holdingEvents.date),
+            asc(holdingEvents.seq),
+            asc(holdingEvents.createdAt),
+            asc(holdingEvents.id),
+          ],
         }),
         db.query.holdingValuations.findMany({
           where: inArray(holdingValuations.holdingId, ids),

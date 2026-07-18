@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
 import {
+  CapitalGainsStatementSchema,
   CreateHoldingEventSchema,
   CreateHoldingSchema,
   GoldDetailsSchema,
@@ -18,6 +19,7 @@ import {
   UpsertGoldDetailsSchema,
   UpsertNpsDetailsSchema,
 } from "@compass/shared";
+import { getCapitalGains } from "../services/capital-gains.ts";
 import {
   getGoldDetails,
   getNpsDetails,
@@ -30,6 +32,7 @@ import {
   deleteEvent,
   deleteHolding,
   getPortfolio,
+  moveEvent,
   refreshNav,
   setValuation,
   updateHolding,
@@ -46,6 +49,17 @@ export async function holdingRoutes(app: FastifyInstance) {
     "/api/portfolio",
     { schema: { response: { 200: PortfolioSchema } } },
     async (req) => getPortfolio(app.db, req.session!.userId),
+  );
+
+  r.get(
+    "/api/holdings/capital-gains",
+    {
+      schema: {
+        querystring: z.object({ fy: z.string().regex(/^\d{4}-\d{2}$/).optional() }),
+        response: { 200: CapitalGainsStatementSchema },
+      },
+    },
+    async (req) => getCapitalGains(app.db, req.session!.userId, req.query.fy),
   );
 
   r.post(
@@ -109,6 +123,21 @@ export async function holdingRoutes(app: FastifyInstance) {
     { schema: { params: EventParams, response: { 200: z.object({ ok: z.boolean() }) } } },
     async (req) => {
       await deleteEvent(app.db, req.session!.userId, req.params.id, req.params.eventId);
+      return { ok: true };
+    },
+  );
+
+  r.post(
+    "/api/holdings/:id/events/:eventId/move",
+    {
+      schema: {
+        params: EventParams,
+        body: z.object({ direction: z.enum(["up", "down"]) }),
+        response: { 200: z.object({ ok: z.boolean() }) },
+      },
+    },
+    async (req) => {
+      await moveEvent(app.db, req.session!.userId, req.params.id, req.params.eventId, req.body.direction);
       return { ok: true };
     },
   );
