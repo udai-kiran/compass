@@ -76,21 +76,29 @@ export async function upsertCardDetails(
   await ownedCardAccount(db, userId, accountId);
   const parsed = UpsertCardDetailsSchema.parse(input);
   // Bank/issuer lives on the account (institution), not card_details — keep it
-  // out of the card_details row and write it through to the account.
+  // out of the card_details row and write it through to the account. Both writes
+  // run in one transaction so a failed account update can't leave the card_details
+  // change committed on its own.
   const { bankName, ...cardCols } = parsed;
-  const rows = await db
-    .insert(cardDetails)
-    .values({ ...cardCols, accountId, userId })
-    .onConflictDoUpdate({
-      target: cardDetails.accountId,
-      set: { ...cardCols, updatedAt: new Date() },
-    })
-    .returning();
-  await db
-    .update(accounts)
-    .set({ institution: bankName.trim() || null })
-    .where(and(eq(accounts.id, accountId), eq(accounts.userId, userId)));
-  return toDetails(rows[0]!);
+  const row = await db.transaction(async (tx) => {
+    const rows = await tx
+      .insert(cardDetails)
+      .values({ ...cardCols, accountId, userId })
+      .onConflictDoUpdate({
+        target: cardDetails.accountId,
+        set: { ...cardCols, updatedAt: new Date() },
+      })
+      .returning();
+    // Omitted bankName means "leave the issuer as-is"; "" clears it, a name sets it.
+    if (bankName !== undefined) {
+      await tx
+        .update(accounts)
+        .set({ institution: bankName.trim() || null })
+        .where(and(eq(accounts.id, accountId), eq(accounts.userId, userId)));
+    }
+    return rows[0]!;
+  });
+  return toDetails(row);
 }
 
 export async function listCards(db: Db, userId: string, today?: string): Promise<CardSummary[]> {

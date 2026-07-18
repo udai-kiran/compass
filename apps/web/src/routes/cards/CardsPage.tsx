@@ -161,7 +161,10 @@ function PayBill({ card }: { card: CardSummary }) {
       <h3 className="text-sm font-semibold text-slate-700">Pay bill via UPI</h3>
       {vpa ? (
         <div className="mt-2 flex flex-col gap-4 sm:flex-row sm:items-center">
-          <UpiQr value={upiPayUri(vpa, card.name, card.amountDuePaise)} />
+          {/* No prefilled amount: amountDuePaise is the balance at statement close and
+              doesn't subtract later payments, so it could re-request an already-paid
+              bill. The payer enters the amount in their UPI app. */}
+          <UpiQr value={upiPayUri(vpa, card.name)} />
           <div className="min-w-0">
             <p className="text-xs text-slate-500">UPI ID</p>
             <div className="mt-0.5 flex items-center gap-2">
@@ -181,8 +184,8 @@ function PayBill({ card }: { card: CardSummary }) {
               </button>
             </div>
             <p className="mt-2 max-w-xs text-xs text-slate-400">
-              Scan the QR or pay to this UPI ID from any app. Confirm it resolves to {card.bankName}{" "}
-              before paying.
+              Scan the QR or pay to this UPI ID from any app, entering the amount yourself. Confirm it
+              resolves to {card.bankName} before paying.
             </p>
           </div>
         </div>

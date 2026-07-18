@@ -24,8 +24,12 @@ export type CardDetails = z.infer<typeof CardDetailsSchema>;
 export const UpsertCardDetailsSchema = z.object({
   network: CardNetworkSchema.nullable().default(null),
   productName: z.string().default(""),
-  /** Issuing bank; stored on the account (accounts.institution), not card_details. */
-  bankName: z.string().default(""),
+  /**
+   * Issuing bank; stored on the account (accounts.institution), not card_details.
+   * Omit to leave the issuer unchanged (so an older client that doesn't send this
+   * field can't wipe it); pass "" to clear it, or a name to set it.
+   */
+  bankName: z.string().optional(),
   /** registered mobile (10 digits) for the bill-payment UPI VPA */
   billMobile: z.string().default(""),
   cycleDay: z.number().int().min(1).max(28).default(1),
