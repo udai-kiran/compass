@@ -1,0 +1,23 @@
+{
+  "name": "@compass/ingestor",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch --env-file-if-exists=../../.env src/index.ts",
+    "start": "node --env-file-if-exists=../../.env src/index.ts",
+    "connect": "node --env-file-if-exists=../../.env src/connect.ts",
+    "test": "node --test \"src/**/*.test.ts\"",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@compass/shared": "^0.1.0",
+    "bullmq": "^5.80.2",
+    "imapflow": "^1.0.164",
+    "pg": "^8.22.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.20.0"
+  }
+}

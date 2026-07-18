@@ -5,6 +5,7 @@ import { z } from "zod";
 import { apiPost } from "../lib/api.ts";
 import { buildInfo, relativeBuildTime, shortSha } from "../lib/build-info.ts";
 import { useMe } from "../lib/auth.ts";
+import { useInboxCount } from "../lib/inbox-queries.ts";
 import { NotificationBell } from "../components/NotificationBell.tsx";
 import { CommandPalette } from "../components/CommandPalette.tsx";
 import { Assistant } from "../components/Assistant.tsx";
@@ -12,6 +13,7 @@ import { Assistant } from "../components/Assistant.tsx";
 const NAV_SECTIONS = [
   { to: "/", label: "Dashboard" },
   { to: "/transactions", label: "Transactions" },
+  { to: "/inbox", label: "Inbox" },
   { to: "/import", label: "Import" },
   { to: "/budgets", label: "Budgets" },
   { to: "/trends", label: "Trends" },
@@ -52,6 +54,8 @@ function VersionFooter({ onNavigate }: { onNavigate?: () => void }) {
 }
 
 function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
+  const { data: inbox } = useInboxCount();
+  const pending = inbox?.pending ?? 0;
   return (
     <nav aria-label="Primary" className="flex-1 space-y-0.5 overflow-y-auto p-2">
       {NAV_SECTIONS.map((s) => (
@@ -61,12 +65,17 @@ function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
           end={s.to === "/"}
           onClick={onNavigate}
           className={({ isActive }) =>
-            `block rounded-md px-3 py-2 text-sm ${
+            `flex items-center justify-between rounded-md px-3 py-2 text-sm ${
               isActive ? "bg-slate-800 font-medium text-white" : "text-slate-600 hover:bg-slate-100"
             }`
           }
         >
-          {s.label}
+          <span>{s.label}</span>
+          {s.to === "/inbox" && pending > 0 && (
+            <span className="ml-2 shrink-0 rounded-full bg-rose-600 px-1.5 py-0.5 text-xs font-medium text-white">
+              {pending}
+            </span>
+          )}
         </NavLink>
       ))}
     </nav>

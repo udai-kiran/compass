@@ -16,11 +16,15 @@ const EnvSchema = z
     BACKUP_DIR: z.string().default("./data/backups"),
     /** encryption key for backups; falls back to SESSION_SECRET when unset */
     BACKUP_KEY: z.string().default(""),
-    AI_PROVIDER: z.enum(["none", "anthropic", "ollama"]).default("none"),
+    AI_PROVIDER: z.enum(["none", "anthropic", "ollama", "openrouter", "deepseek"]).default("none"),
     ANTHROPIC_API_KEY: z.string().default(""),
     ANTHROPIC_MODEL: z.string().default(""),
     OLLAMA_BASE_URL: z.string().default(""),
     OLLAMA_MODEL: z.string().default(""),
+    OPENROUTER_API_KEY: z.string().default(""),
+    OPENROUTER_MODEL: z.string().default(""),
+    DEEPSEEK_API_KEY: z.string().default(""),
+    DEEPSEEK_MODEL: z.string().default(""),
     /**
      * Extra browser origins allowed to make state-changing (CSRF-relevant)
      * requests, comma-separated (e.g. "https://compass.example.com"). Same-host
@@ -53,6 +57,22 @@ const EnvSchema = z
         path: ["OLLAMA_BASE_URL"],
         message: "required when AI_PROVIDER=ollama",
         input: ctx.value.OLLAMA_BASE_URL,
+      });
+    }
+    if (ctx.value.AI_PROVIDER === "openrouter" && ctx.value.OPENROUTER_API_KEY === "") {
+      ctx.issues.push({
+        code: "custom",
+        path: ["OPENROUTER_API_KEY"],
+        message: "required when AI_PROVIDER=openrouter",
+        input: ctx.value.OPENROUTER_API_KEY,
+      });
+    }
+    if (ctx.value.AI_PROVIDER === "deepseek" && ctx.value.DEEPSEEK_API_KEY === "") {
+      ctx.issues.push({
+        code: "custom",
+        path: ["DEEPSEEK_API_KEY"],
+        message: "required when AI_PROVIDER=deepseek",
+        input: ctx.value.DEEPSEEK_API_KEY,
       });
     }
   });

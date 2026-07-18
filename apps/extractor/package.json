@@ -1,0 +1,24 @@
+{
+  "name": "@compass/extractor",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch --env-file-if-exists=../../.env src/index.ts",
+    "start": "node --env-file-if-exists=../../.env src/index.ts",
+    "test": "node --test \"src/**/*.test.ts\"",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@compass/ai": "^0.1.0",
+    "@compass/shared": "^0.1.0",
+    "bullmq": "^5.80.2",
+    "mailparser": "^3.7.4",
+    "pg": "^8.22.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/mailparser": "^3.4.6",
+    "@types/pg": "^8.20.0"
+  }
+}

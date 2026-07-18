@@ -1,5 +1,5 @@
 import { and, eq, ilike } from "drizzle-orm";
-import type { Db } from "../db/index.ts";
+import type { Db, DbOrTx } from "../db/index.ts";
 import { merchantRules, transactions } from "../db/schema.ts";
 
 const NOISE_TOKENS = new Set([
@@ -39,7 +39,7 @@ export function normalizeMerchant(raw: string, rules: MerchantRule[]): string {
   return heuristicNormalize(raw);
 }
 
-export async function getMerchantRules(db: Db, userId: string): Promise<MerchantRule[]> {
+export async function getMerchantRules(db: DbOrTx, userId: string): Promise<MerchantRule[]> {
   return db.query.merchantRules.findMany({
     where: eq(merchantRules.userId, userId),
     columns: { match: true, replacement: true },

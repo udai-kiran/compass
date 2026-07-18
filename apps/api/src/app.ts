@@ -45,6 +45,7 @@ import { searchRoutes } from "./routes/search.ts";
 import { backupRoutes } from "./routes/backup.ts";
 import { aiRoutes } from "./routes/ai.ts";
 import { projectionSettingsRoutes } from "./routes/projection-settings.ts";
+import { inboxRoutes } from "./routes/inbox.ts";
 import { invalidateUserCache } from "./services/cache.ts";
 import { enqueueBudgetEvaluation } from "./jobs/index.ts";
 
@@ -84,6 +85,10 @@ export async function buildApp(config: Config): Promise<FastifyInstance> {
       anthropicModel: config.ANTHROPIC_MODEL,
       ollamaBaseUrl: config.OLLAMA_BASE_URL,
       ollamaModel: config.OLLAMA_MODEL,
+      openrouterApiKey: config.OPENROUTER_API_KEY,
+      openrouterModel: config.OPENROUTER_MODEL,
+      deepseekApiKey: config.DEEPSEEK_API_KEY,
+      deepseekModel: config.DEEPSEEK_MODEL,
     }),
   );
   await startJobs(app);
@@ -156,12 +161,13 @@ export async function buildApp(config: Config): Promise<FastifyInstance> {
   await app.register(backupRoutes);
   await app.register(aiRoutes);
   await app.register(projectionSettingsRoutes);
+  await app.register(inboxRoutes);
 
   // write-through invalidation: any successful ledger write refreshes cached
   // aggregates and queues a (debounced) budget evaluation
   app.addHook("onResponse", async (req, reply) => {
     if (req.method === "GET" || reply.statusCode >= 400 || !req.session) return;
-    if (/^\/api\/(transactions|transfers|imports|recurring)/.test(req.url)) {
+    if (/^\/api\/(transactions|transfers|imports|recurring|inbox)/.test(req.url)) {
       await invalidateUserCache(app.redis, req.session.userId);
       await enqueueBudgetEvaluation(app, req.session.userId);
     }

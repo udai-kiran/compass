@@ -861,3 +861,140 @@ export const netWorthSnapshots = pgTable(
   },
   (t) => [uniqueIndex("net_worth_snapshots_unique_idx").on(t.userId, t.date)],
 );
+
+// ---------- Phase 7: email → transaction ingestion pipeline ----------
+//
+// Two containers feed this: the `ingestor` (IMAP → raw email row + queue job)
+// and the `extractor` (queue → AI classify/extract → review inbox). See
+// packages/shared/src/schemas/email.ts for the wire contract shared between them.
+
+export const mailboxProvider = pgEnum("mailbox_provider", ["google", "microsoft"]);
+export const mailboxStatus = pgEnum("mailbox_status", ["active", "disconnected", "error"]);
+
+/**
+ * A connected mailbox. Holds the OAuth2 refresh token (encrypted at rest — no
+ * password is ever stored) and the IMAP resume watermark so restarts never
+ * reprocess mail. One row per mailbox the ingestor polls.
+ */
+export const mailboxAccounts = pgTable(
+  "mailbox_accounts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    provider: mailboxProvider("provider").notNull(),
+    emailAddress: text("email_address").notNull(),
+    /** OAuth2 refresh token, encrypted with the app secret; minted into access tokens for XOAUTH2 */
+    refreshTokenEnc: text("refresh_token_enc").notNull(),
+    folder: text("folder").notNull().default("INBOX"),
+    status: mailboxStatus("status").notNull().default("active"),
+    lastError: text("last_error"),
+    /** IMAP resume watermark: reprocess nothing at or below lastUid for this uidValidity */
+    uidValidity: bigint("uid_validity", { mode: "number" }),
+    lastUid: bigint("last_uid", { mode: "number" }),
+    lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("mailbox_accounts_addr_idx").on(t.userId, t.emailAddress)],
+);
+
+export const emailClass = pgEnum("email_class", [
+  "transaction_alert",
+  "card_statement",
+  "bill",
+  "otp",
+  "promo",
+  "other",
+]);
+
+export const emailIngestStatus = pgEnum("email_ingest_status", [
+  "pending",
+  "processing",
+  "extracted",
+  "deferred",
+  "ignored",
+  "failed",
+]);
+
+/**
+ * One ingested email. The raw RFC822 message is retained (`raw`) so extraction
+ * is replayable after a parser/prompt fix. `messageId` dedupes re-fetches.
+ */
+export const emailIngestions = pgTable(
+  "email_ingestions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    mailboxId: uuid("mailbox_id").references(() => mailboxAccounts.id, { onDelete: "set null" }),
+    /** RFC822 Message-ID header; the dedupe key for re-fetched mail */
+    messageId: text("message_id").notNull(),
+    fromAddr: text("from_addr").notNull().default(""),
+    subject: text("subject").notNull().default(""),
+    receivedAt: timestamp("received_at", { withTimezone: true }),
+    /** full RFC822 message (MIME is ascii-safe), retained for replay */
+    raw: text("raw").notNull(),
+    classification: emailClass("classification"),
+    status: emailIngestStatus("status").notNull().default("pending"),
+    error: text("error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("email_ingestions_msgid_idx").on(t.userId, t.messageId),
+    index("email_ingestions_status_idx").on(t.userId, t.status),
+  ],
+);
+
+export const extractedTxnStatus = pgEnum("extracted_txn_status", [
+  "pending",
+  "accepted",
+  "rejected",
+]);
+export const txnDirection = pgEnum("txn_direction", ["debit", "credit"]);
+
+/**
+ * A transaction the model pulled out of an email — a draft in the review inbox.
+ * `amountPaise` is a positive magnitude; `direction` gives the sign applied when
+ * the reviewer accepts it into the ledger. Category is never set here (accept is
+ * a manual step). `dedupeHash` collapses the alert and the later statement line.
+ */
+export const extractedTransactions = pgTable(
+  "extracted_transactions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    ingestionId: uuid("ingestion_id")
+      .notNull()
+      .references(() => emailIngestions.id, { onDelete: "cascade" }),
+    amountPaise: bigint("amount_paise", { mode: "number" }).notNull(),
+    direction: txnDirection("direction").notNull(),
+    occurredAt: date("occurred_at"),
+    counterparty: text("counterparty").notNull().default(""),
+    suggestedAccountId: uuid("suggested_account_id").references(() => accounts.id, {
+      onDelete: "set null",
+    }),
+    bankRef: text("bank_ref"),
+    sourceQuote: text("source_quote").notNull().default(""),
+    confidence: doublePrecision("confidence"),
+    /** bank_ref, or a hash of amount+date+counterparty; unique to collapse duplicates */
+    dedupeHash: text("dedupe_hash"),
+    status: extractedTxnStatus("status").notNull().default("pending"),
+    /** set once accepted into the ledger */
+    transactionId: uuid("transaction_id").references(() => transactions.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("extracted_transactions_status_idx").on(t.userId, t.status),
+    index("extracted_transactions_ingestion_idx").on(t.ingestionId),
+    uniqueIndex("extracted_transactions_dedupe_idx").on(t.userId, t.dedupeHash),
+  ],
+);

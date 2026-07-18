@@ -40,3 +40,38 @@ services:
     depends_on:
       - api
     restart: unless-stopped
+
+  # Email → transaction pipeline (opt-in). Both share the external Postgres/Redis
+  # from .env. The ingestor reads mail over OAuth2 IMAP and enqueues; the
+  # extractor runs the AI extraction and writes the review inbox. Neither serves
+  # HTTP. They sit behind the `email` profile so a default `docker compose up`
+  # (and existing non-AI deployments) never starts them — the extractor requires
+  # a real AI_PROVIDER and would otherwise crash-loop. Enable the pipeline with:
+  #   docker compose --profile email up -d
+  # Onboard a mailbox once (needs GOOGLE_CLIENT_ID/SECRET + AI_PROVIDER in .env):
+  #   docker compose run --rm ingestor npm run connect -w apps/ingestor -- <email>
+  ingestor:
+    profiles: ["email"]
+    build:
+      context: .
+      dockerfile: apps/ingestor/Dockerfile
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    env_file: .env
+    environment:
+      NODE_ENV: production
+    restart: unless-stopped
+
+  extractor:
+    profiles: ["email"]
+    build:
+      context: .
+      dockerfile: apps/extractor/Dockerfile
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    env_file: .env
+    environment:
+      NODE_ENV: production
+    restart: unless-stopped

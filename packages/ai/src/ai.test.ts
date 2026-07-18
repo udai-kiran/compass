@@ -9,6 +9,8 @@ test("factory: none / missing-secret fall back to NullProvider", () => {
   assert.equal(createAiProvider({ provider: "none" }), NullProvider);
   assert.equal(createAiProvider({ provider: "anthropic" }), NullProvider); // no key
   assert.equal(createAiProvider({ provider: "ollama" }), NullProvider); // no url
+  assert.equal(createAiProvider({ provider: "openrouter" }), NullProvider); // no key
+  assert.equal(createAiProvider({ provider: "deepseek" }), NullProvider); // no key
 });
 
 test("factory: configured providers are enabled and named by env", () => {
@@ -18,6 +20,12 @@ test("factory: configured providers are enabled and named by env", () => {
   const o = createAiProvider({ provider: "ollama", ollamaBaseUrl: "http://h:11434" });
   assert.equal(o.name, "ollama");
   assert.equal(o.enabled, true);
+  const r = createAiProvider({ provider: "openrouter", openrouterApiKey: "sk-or-x" });
+  assert.equal(r.name, "openrouter");
+  assert.equal(r.enabled, true);
+  const d = createAiProvider({ provider: "deepseek", deepseekApiKey: "sk-x" });
+  assert.equal(d.name, "deepseek");
+  assert.equal(d.enabled, true);
 });
 
 test("NullProvider: every capability throws AiDisabledError", async () => {
