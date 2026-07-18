@@ -58,6 +58,17 @@ export const UpdateGoalSchema = z.object({
 });
 export type UpdateGoal = z.infer<typeof UpdateGoalSchema>;
 
+// ---------- Projection settings ----------
+
+export const ProjectionSettingsSchema = z.object({
+  /** Broad-equity annual return assumption, in basis points (1200 = 12%). */
+  equityReturnBps: z.number().int().min(0).max(10_000),
+});
+export type ProjectionSettings = z.infer<typeof ProjectionSettingsSchema>;
+
+export const UpdateProjectionSettingsSchema = ProjectionSettingsSchema;
+export type UpdateProjectionSettings = z.infer<typeof UpdateProjectionSettingsSchema>;
+
 /** One account/holding earmarked to a goal, with the growth rate its projection uses. */
 export const GoalAssetProgressSchema = z.object({
   kind: z.enum(["account", "holding"]),

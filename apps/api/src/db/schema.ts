@@ -34,6 +34,17 @@ export const users = pgTable("users", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+/** Per-user assumptions used only for forward-looking goal projections. */
+export const projectionSettings = pgTable("projection_settings", {
+  userId: uuid("user_id")
+    .primaryKey()
+    .references(() => users.id, { onDelete: "cascade" }),
+  /** Broad-equity annual return assumption (1200 = 12%). */
+  equityReturnBps: integer("equity_return_bps").notNull().default(1200),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 /**
  * `ppf`, `epf` and `ssy` are accounts rather than holdings because their balance
  * is known exactly — interest is credited at a fixed rate, not estimated. NPS

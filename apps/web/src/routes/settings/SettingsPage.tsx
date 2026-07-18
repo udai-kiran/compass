@@ -26,7 +26,14 @@ import { useGoals } from "../../lib/goal-queries.ts";
 import { useAssetGoalMutation } from "../../lib/wealth-queries.ts";
 import { RulesPanel } from "./RulesPanel.tsx";
 import { RecurringPanel } from "./RecurringPanel.tsx";
-import { AboutPanel, DataPanel, NotificationsPanel, ProfilePanel, SessionsPanel } from "./GeneralPanels.tsx";
+import {
+  AboutPanel,
+  DataPanel,
+  NotificationsPanel,
+  ProfilePanel,
+  ProjectionsPanel,
+  SessionsPanel,
+} from "./GeneralPanels.tsx";
 
 const TABS = [
   "profile",
@@ -35,6 +42,7 @@ const TABS = [
   "rules",
   "recurring",
   "notifications",
+  "projections",
   "sessions",
   "data",
   "about",
@@ -68,6 +76,7 @@ export function SettingsPage() {
       {tab === "rules" && <RulesPanel />}
       {tab === "recurring" && <RecurringPanel />}
       {tab === "notifications" && <NotificationsPanel />}
+      {tab === "projections" && <ProjectionsPanel />}
       {tab === "sessions" && <SessionsPanel />}
       {tab === "data" && <DataPanel />}
       {tab === "about" && <AboutPanel />}

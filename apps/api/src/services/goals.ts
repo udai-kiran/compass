@@ -17,6 +17,7 @@ import { projectGoal } from "./goal-projection.ts";
 import { createNotification } from "./notifications.ts";
 import { incomeExpense, periodRange, prevPeriodKey, currentPeriodKey } from "./periods.ts";
 import { prefEnabled } from "./prefs.ts";
+import { getProjectionSettings } from "./projection-settings.ts";
 
 type GoalRow = typeof goals.$inferSelect;
 
@@ -191,10 +192,11 @@ function monthsBetween(from: Date, to: Date): number {
 export async function getGoalProgress(db: Db, userId: string, id: string): Promise<GoalProgress> {
   const g = await ownedGoal(db, userId, id);
 
-  const [accountList, portfolio, target] = await Promise.all([
+  const [accountList, portfolio, target, projectionSettings] = await Promise.all([
     listAccounts(db, userId),
     getPortfolio(db, userId),
     effectiveTarget(db, userId, g),
+    getProjectionSettings(db, userId),
   ]);
 
   const mappedAccounts = accountList.filter((a) => a.goalId === g.id && a.archivedAt === null);
@@ -218,7 +220,11 @@ export async function getGoalProgress(db: Db, userId: string, id: string): Promi
         name: a.name,
         subtitle: a.accountLast4 ? `•••• ${a.accountLast4}` : a.type,
         valuePaise: a.balancePaise,
-        annualReturnBps: accountReturnBps(a.type, rateByAccount.get(a.id) ?? null),
+        annualReturnBps: accountReturnBps(
+          a.type,
+          rateByAccount.get(a.id) ?? null,
+          projectionSettings.equityReturnBps,
+        ),
       }),
     ),
     ...mappedHoldings.map(
@@ -228,7 +234,7 @@ export async function getGoalProgress(db: Db, userId: string, id: string): Promi
         name: p.name,
         subtitle: p.folioNumber ? `Folio ${p.folioNumber}` : p.assetClass,
         valuePaise: p.currentValuePaise,
-        annualReturnBps: assetClassReturnBps(p.assetClass),
+        annualReturnBps: assetClassReturnBps(p.assetClass, projectionSettings.equityReturnBps),
       }),
     ),
   ];
