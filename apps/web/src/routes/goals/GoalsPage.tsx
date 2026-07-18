@@ -216,6 +216,22 @@ function GoalProgressBody({ goal, p }: { goal: Goal; p: GoalProgress }) {
         <span>Adding <b className="tabular-nums">{formatINR(p.monthlyInflowPaise)}</b>/mo</span>
       </div>
 
+      {p.fundedPaise > 0 && (
+        <div className="mt-2 flex flex-wrap gap-2 text-xs">
+          <span className="rounded-full bg-emerald-50 px-2 py-1 text-emerald-700">
+            Equity <b className="tabular-nums">{p.equityPct}%</b>
+          </span>
+          <span className="rounded-full bg-blue-50 px-2 py-1 text-blue-700">
+            Debt <b className="tabular-nums">{p.debtPct}%</b>
+          </span>
+          {p.otherPct > 0 && (
+            <span className="rounded-full bg-slate-100 px-2 py-1 text-slate-600">
+              Other <b className="tabular-nums">{p.otherPct}%</b>
+            </span>
+          )}
+        </div>
+      )}
+
       <ProjectionLine p={p} />
       <MappedAssets goalId={goal.id} p={p} />
     </>

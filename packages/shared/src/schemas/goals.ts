@@ -78,6 +78,7 @@ export const GoalAssetProgressSchema = z.object({
   valuePaise: z.number().int(),
   /** assumed annual return, basis points (710 = 7.10%) */
   annualReturnBps: z.number().int(),
+  allocationClass: z.enum(["equity", "debt", "other"]),
 });
 export type GoalAssetProgress = z.infer<typeof GoalAssetProgressSchema>;
 
@@ -91,6 +92,10 @@ export const GoalProgressSchema = GoalSchema.extend({
   percent: z.number(),
   /** value-weighted annual return of the mapped assets, basis points */
   blendedReturnBps: z.number().int(),
+  /** Current mapped-asset allocation by market value; percentages sum to 100. */
+  equityPct: z.number().min(0).max(100),
+  debtPct: z.number().min(0).max(100),
+  otherPct: z.number().min(0).max(100),
   /** trailing 3-month net inflow into the mapped accounts, paise/month */
   monthlyInflowPaise: z.number().int(),
   /** projected value at the target date (corpus growth + ongoing inflow); null without a target date */

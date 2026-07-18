@@ -18,6 +18,11 @@ import { createNotification } from "./notifications.ts";
 import { incomeExpense, periodRange, prevPeriodKey, currentPeriodKey } from "./periods.ts";
 import { prefEnabled } from "./prefs.ts";
 import { getProjectionSettings } from "./projection-settings.ts";
+import {
+  accountAllocationClass,
+  allocationPercentages,
+  holdingAllocationClass,
+} from "./goal-allocation.ts";
 
 type GoalRow = typeof goals.$inferSelect;
 
@@ -225,6 +230,7 @@ export async function getGoalProgress(db: Db, userId: string, id: string): Promi
           rateByAccount.get(a.id) ?? null,
           projectionSettings.equityReturnBps,
         ),
+        allocationClass: accountAllocationClass(a.type),
       }),
     ),
     ...mappedHoldings.map(
@@ -235,6 +241,7 @@ export async function getGoalProgress(db: Db, userId: string, id: string): Promi
         subtitle: p.folioNumber ? `Folio ${p.folioNumber}` : p.assetClass,
         valuePaise: p.currentValuePaise,
         annualReturnBps: assetClassReturnBps(p.assetClass, projectionSettings.equityReturnBps),
+        allocationClass: holdingAllocationClass(p.assetClass, p.gainsTaxClass),
       }),
     ),
   ];
@@ -255,6 +262,7 @@ export async function getGoalProgress(db: Db, userId: string, id: string): Promi
     monthsToTarget,
     monthlyInflowPaise,
   });
+  const allocation = allocationPercentages(assets);
 
   const funded = proj.fundedPaise;
   const remaining = Math.max(0, target - funded);
@@ -276,6 +284,7 @@ export async function getGoalProgress(db: Db, userId: string, id: string): Promi
     remainingPaise: remaining,
     percent: Math.round(percent * 10) / 10,
     blendedReturnBps: proj.blendedReturnBps,
+    ...allocation,
     monthlyInflowPaise,
     projectedValuePaise: proj.projectedValuePaise,
     shortfallPaise: proj.shortfallPaise,
