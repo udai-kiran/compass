@@ -50,8 +50,11 @@ The pipeline authenticates to Gmail over IMAP with XOAUTH2, so you need your own
 OAuth client. There is **no `credentials.json`** — Compass reads the client id
 and secret from `.env` like every other setting.
 
-1. In the target Gmail account, enable IMAP: **Gmail → Settings → See all
-   settings → Forwarding and POP/IMAP → Enable IMAP → Save**.
+1. In the target Gmail account, confirm IMAP is available under **Gmail →
+   Settings → See all settings → Forwarding and POP/IMAP**. Personal Gmail no
+   longer has an "Enable IMAP" toggle — IMAP is always on, so seeing the
+   Auto-Expunge / folder-size options there means you're set. (Google Workspace
+   accounts control IMAP from the admin console instead.)
 2. Open the [Google Cloud Console](https://console.cloud.google.com/), create (or
    pick) a project.
 3. **APIs & Services → OAuth consent screen**: choose **External**, fill in an app
