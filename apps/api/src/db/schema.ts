@@ -693,6 +693,20 @@ export const assetClass = pgEnum("asset_class", [
   "other",
 ]);
 
+/**
+ * How a holding's capital gains are taxed. A per-holding fact that can't be
+ * inferred from asset_class (a mutual_fund may be equity, debt, or a §50AA
+ * specified fund), so it's stored and user-settable. See services/tax-lots.ts.
+ */
+export const gainsTaxClass = pgEnum("gains_tax_class", [
+  "equity",
+  "unlisted_shares",
+  "other",
+  "specified_fund",
+  "market_linked_debenture",
+  "unlisted_bond",
+]);
+
 export const holdings = pgTable(
   "holdings",
   {
@@ -713,6 +727,14 @@ export const holdings = pgTable(
     amfiSchemeCode: integer("amfi_scheme_code"),
     /** MF folio number; free-form, may be non-numeric */
     folioNumber: text("folio_number"),
+    /**
+     * NAV per unit on 31-Jan-2018 in paise, for grandfathering equity units held
+     * before 01-Feb-2018 in the capital-gains statement. Null = not set (no old
+     * units, or the user hasn't supplied the FMV). See services/tax-lots.ts.
+     */
+    grandfatherNavPaise: bigint("grandfather_nav_paise", { mode: "number" }),
+    /** Capital-gains tax treatment; guessed from asset class at create, user-editable. */
+    gainsTaxClass: gainsTaxClass("gains_tax_class").notNull().default("equity"),
     /** Goal this holding (folio) is earmarked for; null = "Unassigned". See accounts.goalId. */
     goalId: uuid("goal_id").references(() => goals.id, { onDelete: "set null" }),
     archivedAt: timestamp("archived_at", { withTimezone: true }),
@@ -777,6 +799,11 @@ export const holdingValuations = pgTable(
 
 export const holdingEventType = pgEnum("holding_event_type", ["buy", "sell", "dividend"]);
 
+/** Where an event came from: a statement import, or hand-entered. Drives per-date
+ * FIFO-order reconciliation on re-import (imports may re-sequence imported events;
+ * manual ones are only ever moved by the user). See services/mf-import.ts. */
+export const holdingEventSource = pgEnum("holding_event_source", ["import", "manual"]);
+
 export const holdingEvents = pgTable(
   "holding_events",
   {
@@ -790,6 +817,16 @@ export const holdingEvents = pgTable(
     amountPaise: bigint("amount_paise", { mode: "number" }).notNull(),
     units: doublePrecision("units"),
     note: text("note").notNull().default(""),
+    /**
+     * Intra-day order key: the 0-based position of this event *within its
+     * (holding, date)*. Both imported and manual events carry one, so a same-day
+     * manual sale can sit before an imported buy. `date` is FIFO's primary key,
+     * so seq only has to separate events sharing a day (see services/tax-lots.ts).
+     * User-editable via the reorder endpoint.
+     */
+    seq: integer("seq"),
+    /** import vs manual; default import (the dominant source). Manual adds set it. */
+    source: holdingEventSource("source").notNull().default("import"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("holding_events_holding_idx").on(t.holdingId, t.date)],

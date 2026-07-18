@@ -223,6 +223,21 @@ export type UpsertGoldDetails = z.input<typeof UpsertGoldDetailsSchema>;
 /** AMFI scheme code: 6 digits. Null = unmapped (no AMFI scheme / not looked up). */
 export const AmfiSchemeCodeSchema = z.number().int().min(100000).max(999999).nullable();
 
+/**
+ * Capital-gains tax treatment of a holding. Can't be inferred from asset class
+ * (a mutual_fund may be equity, debt, or a §50AA specified fund), so it's an
+ * explicit, user-editable field. See services/tax-lots.ts.
+ */
+export const GainsTaxClassSchema = z.enum([
+  "equity",
+  "unlisted_shares",
+  "other",
+  "specified_fund",
+  "market_linked_debenture",
+  "unlisted_bond",
+]);
+export type GainsTaxClass = z.infer<typeof GainsTaxClassSchema>;
+
 export const HoldingSchema = z.object({
   id: z.uuid(),
   name: z.string(),
@@ -231,6 +246,10 @@ export const HoldingSchema = z.object({
   targetPct: z.number().int().nullable(),
   amfiSchemeCode: z.number().int().nullable(),
   folioNumber: z.string().nullable(),
+  /** NAV/unit on 31-Jan-2018 in paise; grandfathering for pre-2018 equity lots. */
+  grandfatherNavPaise: z.number().int().nullable(),
+  /** How this holding's capital gains are taxed. */
+  gainsTaxClass: GainsTaxClassSchema,
   /** Goal this folio is earmarked for; null = Unassigned. */
   goalId: z.uuid().nullable(),
   archived: z.boolean(),
@@ -244,6 +263,9 @@ export const CreateHoldingSchema = z.object({
   targetPct: z.number().int().min(0).max(100).nullable().default(null),
   amfiSchemeCode: AmfiSchemeCodeSchema.default(null),
   folioNumber: z.string().min(1).nullable().default(null),
+  grandfatherNavPaise: z.number().int().min(0).nullable().default(null),
+  /** Omit to let the service guess from asset class; user can correct later. */
+  gainsTaxClass: GainsTaxClassSchema.optional(),
 });
 export type CreateHolding = z.input<typeof CreateHoldingSchema>;
 
@@ -254,6 +276,8 @@ export const UpdateHoldingSchema = z.object({
   targetPct: z.number().int().min(0).max(100).nullable().optional(),
   amfiSchemeCode: AmfiSchemeCodeSchema.optional(),
   folioNumber: z.string().min(1).nullable().optional(),
+  grandfatherNavPaise: z.number().int().min(0).nullable().optional(),
+  gainsTaxClass: GainsTaxClassSchema.optional(),
   goalId: z.uuid().nullable().optional(),
   archived: z.boolean().optional(),
 });
@@ -326,6 +350,56 @@ export const PortfolioSchema = z.object({
   ),
 });
 export type Portfolio = z.infer<typeof PortfolioSchema>;
+
+// ---------- Capital gains (FIFO tax lots) ----------
+
+export const GainTermSchema = z.enum(["short", "long"]);
+export type GainTerm = z.infer<typeof GainTermSchema>;
+
+/** One FIFO buy↔sell match: the atomic row of a capital-gains statement. */
+export const CapitalGainsSliceSchema = z.object({
+  holdingId: z.uuid(),
+  holdingName: z.string(),
+  assetClass: AssetClassSchema,
+  buyDate: z.iso.date(),
+  sellDate: z.iso.date(),
+  units: z.number(),
+  proceedsPaise: z.number().int(),
+  /** Effective (grandfathered) acquisition cost. */
+  costPaise: z.number().int(),
+  gainPaise: z.number().int(),
+  term: GainTermSchema,
+  heldDays: z.number().int(),
+  grandfathered: z.boolean(),
+});
+export type CapitalGainsSlice = z.infer<typeof CapitalGainsSliceSchema>;
+
+/** Per-holding rollup within the selected financial year. */
+export const CapitalGainsHoldingSchema = z.object({
+  holdingId: z.uuid(),
+  holdingName: z.string(),
+  assetClass: AssetClassSchema,
+  shortTermGainPaise: z.number().int(),
+  longTermGainPaise: z.number().int(),
+  proceedsPaise: z.number().int(),
+  costPaise: z.number().int(),
+  slices: z.array(CapitalGainsSliceSchema),
+});
+export type CapitalGainsHolding = z.infer<typeof CapitalGainsHoldingSchema>;
+
+export const CapitalGainsStatementSchema = z.object({
+  /** Indian financial year, e.g. "2025-26" (Apr 1 2025 – Mar 31 2026). */
+  fy: z.string(),
+  /** FYs that have at least one realized slice, newest first. */
+  availableFys: z.array(z.string()),
+  shortTermGainPaise: z.number().int(),
+  longTermGainPaise: z.number().int(),
+  totalGainPaise: z.number().int(),
+  totalProceedsPaise: z.number().int(),
+  totalCostPaise: z.number().int(),
+  holdings: z.array(CapitalGainsHoldingSchema),
+});
+export type CapitalGainsStatement = z.infer<typeof CapitalGainsStatementSchema>;
 
 // ---------- NAV refresh + MF import ----------
 

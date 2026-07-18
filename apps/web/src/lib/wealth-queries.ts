@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 import {
+  CapitalGainsStatementSchema,
   HoldingEventSchema,
   HoldingSchema,
   MfImportPreviewSchema,
@@ -34,11 +35,25 @@ export function usePortfolio() {
   return useQuery({ queryKey: ["portfolio"], queryFn: () => apiGet("/api/portfolio", PortfolioSchema) });
 }
 
+/** FIFO capital-gains statement for one financial year (undefined fy = latest). */
+export function useCapitalGains(fy?: string) {
+  return useQuery({
+    queryKey: ["capital-gains", fy ?? "latest"],
+    queryFn: () =>
+      apiGet(
+        `/api/holdings/capital-gains${fy ? `?fy=${fy}` : ""}`,
+        CapitalGainsStatementSchema,
+      ),
+  });
+}
+
 export function useHoldingMutations() {
   const qc = useQueryClient();
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ["portfolio"] });
     void qc.invalidateQueries({ queryKey: ["net-worth"] });
+    // Sales, tax-class/grandfather-NAV edits, and deletes all move the statement.
+    void qc.invalidateQueries({ queryKey: ["capital-gains"] });
   };
   const create = useMutation({
     mutationFn: (body: CreateHolding) => apiPost("/api/holdings", HoldingSchema, body),
@@ -68,7 +83,12 @@ export function useHoldingMutations() {
       send("DELETE", `/api/holdings/${id}/events/${eventId}`, OkSchema),
     onSuccess: invalidate,
   });
-  return { create, update, remove, setValuation, addEvent, removeEvent };
+  const moveEvent = useMutation({
+    mutationFn: ({ id, eventId, direction }: { id: string; eventId: string; direction: "up" | "down" }) =>
+      apiPost(`/api/holdings/${id}/events/${eventId}/move`, OkSchema, { direction }),
+    onSuccess: invalidate,
+  });
+  return { create, update, remove, setValuation, addEvent, removeEvent, moveEvent };
 }
 
 export function useRefreshNav() {
@@ -97,6 +117,7 @@ export function useMfImportCommit() {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["portfolio"] });
       void qc.invalidateQueries({ queryKey: ["net-worth"] });
+      void qc.invalidateQueries({ queryKey: ["capital-gains"] });
     },
   });
 }

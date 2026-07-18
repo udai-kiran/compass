@@ -51,6 +51,9 @@ const PortfolioPage = lazy(() =>
 const MfImportPage = lazy(() =>
   import("./routes/investments/MfImportPage.tsx").then((m) => ({ default: m.MfImportPage })),
 );
+const CapitalGainsPage = lazy(() =>
+  import("./routes/investments/CapitalGainsPage.tsx").then((m) => ({ default: m.CapitalGainsPage })),
+);
 const NetWorthPage = lazy(() =>
   import("./routes/networth/NetWorthPage.tsx").then((m) => ({ default: m.NetWorthPage })),
 );
@@ -105,6 +108,7 @@ const router = createBrowserRouter([
       { path: "notifications", element: <NotificationsPage /> },
       { path: "investments", element: <PortfolioPage /> },
       { path: "investments/import", element: <MfImportPage /> },
+      { path: "investments/capital-gains", element: <CapitalGainsPage /> },
       { path: "net-worth", element: <NetWorthPage /> },
       { path: "cards", element: <CardsPage /> },
       { path: "emis", element: <EMIsPage /> },
