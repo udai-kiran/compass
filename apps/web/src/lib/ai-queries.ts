@@ -1,12 +1,41 @@
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AiCategorizeResponseSchema,
+  AiSettingsSchema,
   AiSummarySchema,
   type AiCategorizeResponse,
   type AiChatMessage,
   type AiSummary,
+  type UpdateAiSettings,
 } from "@compass/shared";
-import { apiPost } from "./api.ts";
+import { apiGet, apiPost } from "./api.ts";
+
+export function useAiSettings() {
+  return useQuery({
+    queryKey: ["ai-settings"],
+    queryFn: () => apiGet("/api/ai/settings", AiSettingsSchema),
+  });
+}
+
+export function useAiSettingsMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: UpdateAiSettings) => {
+      const res = await fetch("/api/ai/settings", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error(((await res.json()) as { message?: string }).message ?? "Failed");
+      return AiSettingsSchema.parse(await res.json());
+    },
+    onSuccess: (settings) => {
+      qc.setQueryData(["ai-settings"], settings);
+      // AI feature visibility keys off capabilities — refresh so it flips immediately.
+      void qc.invalidateQueries({ queryKey: ["capabilities"] });
+    },
+  });
+}
 
 export function useAiCategorize() {
   return useMutation({

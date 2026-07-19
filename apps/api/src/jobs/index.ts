@@ -1,5 +1,6 @@
 import { Queue, Worker } from "bullmq";
 import type { FastifyInstance } from "fastify";
+import { INGESTOR_QUEUE } from "@compass/shared";
 import { evaluateBudgetAlerts } from "../services/notifications.ts";
 import { evaluateBillReminders } from "../services/bills.ts";
 import { evaluateCardDueReminders, evaluateCardUtilization } from "../services/cards.ts";
@@ -13,6 +14,30 @@ import { invalidateUserCache } from "../services/cache.ts";
 export interface Queues {
   system: Queue;
   alerts: Queue;
+  /** producer for the ingestor "run a sync pass now" signal; consumed by apps/ingestor */
+  ingestor: Queue;
+}
+
+/**
+ * Queue an ingestor sync pass to run after `windowMinutes` (a rolling delay).
+ * The jobId is stable per user, so repeated requests while a run is still
+ * pending coalesce into one — the first request's window stands.
+ */
+export async function enqueueIngestorRun(
+  app: FastifyInstance,
+  userId: string,
+  windowMinutes: number,
+): Promise<void> {
+  await app.queues.ingestor.add(
+    "run",
+    { userId },
+    {
+      jobId: `ingestor-run-${userId}`,
+      delay: windowMinutes * 60_000,
+      removeOnComplete: true,
+      removeOnFail: true,
+    },
+  );
 }
 
 /**
@@ -76,6 +101,10 @@ export async function startJobs(app: FastifyInstance): Promise<void> {
 
   const alerts = new Queue("alerts", { connection });
   alerts.on("error", (err) => app.log.error({ err }, "bullmq alerts queue error"));
+
+  // Producer only — the ingestor container runs the worker for this queue.
+  const ingestor = new Queue(INGESTOR_QUEUE, { connection });
+  ingestor.on("error", (err) => app.log.error({ err }, "bullmq ingestor queue error"));
 
   const systemWorker = new Worker(
     "system",
@@ -144,7 +173,7 @@ export async function startJobs(app: FastifyInstance): Promise<void> {
   alertsWorker.on("failed", (job, err) => app.log.error({ job: job?.name, err }, "alert job failed"));
   alertsWorker.on("error", (err) => app.log.error({ err }, "bullmq alerts worker error"));
 
-  app.decorate("queues", { system, alerts });
+  app.decorate("queues", { system, alerts, ingestor });
 
   // catch up on recurring instances missed while the server was down
   const boot = await materializeDue(app.db).catch((err: unknown) => {

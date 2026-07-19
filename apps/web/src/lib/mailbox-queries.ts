@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   MailboxAccountSchema,
   MailboxCredentialsStatusSchema,
+  QueueSyncResultSchema,
 } from "@compass/shared";
 import { apiDelete, apiGet, apiPost } from "./api.ts";
 
@@ -37,5 +38,17 @@ export function useMailboxMutations() {
     onSuccess: invalidate,
   });
 
-  return { add, remove };
+  // Queue a sync to run after the chosen window. Coalesced server-side, so
+  // repeated clicks don't stack. Refresh the list once the window has elapsed.
+  const sync = useMutation({
+    mutationFn: (windowMinutes: number) =>
+      apiPost("/api/mailboxes/sync", QueueSyncResultSchema, { windowMinutes }),
+    onSuccess: (res) =>
+      setTimeout(
+        () => void qc.invalidateQueries({ queryKey: ["mailboxes"] }),
+        res.runsInMinutes * 60_000 + 5000,
+      ),
+  });
+
+  return { add, remove, sync };
 }

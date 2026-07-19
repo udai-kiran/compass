@@ -30,7 +30,7 @@ export interface MailboxRow {
  * mailbox whose user has no creds comes back with clientId=null; the caller
  * marks it errored rather than crashing the whole pass.
  */
-export async function loadSyncableMailboxes(pool: pg.Pool): Promise<MailboxRow[]> {
+export async function loadSyncableMailboxes(pool: pg.Pool, userId?: string): Promise<MailboxRow[]> {
   const res = await pool.query<{
     id: string;
     user_id: string;
@@ -48,7 +48,9 @@ export async function loadSyncableMailboxes(pool: pg.Pool): Promise<MailboxRow[]
      from mailbox_accounts m
      left join mailbox_credentials c
        on c.user_id = m.user_id and c.provider = m.provider
-     where m.status in ('active', 'error')`,
+     where m.status in ('active', 'error')
+       and ($1::uuid is null or m.user_id = $1)`,
+    [userId ?? null],
   );
   return res.rows.map((r) => ({
     id: r.id,
@@ -112,7 +114,11 @@ export async function saveWatermark(
   );
 }
 
-export async function markMailboxError(pool: pg.Pool, mailboxId: string, error: string): Promise<void> {
+export async function markMailboxError(
+  pool: pg.Pool,
+  mailboxId: string,
+  error: string,
+): Promise<void> {
   await pool.query(
     `update mailbox_accounts set status = 'error', last_error = $2, updated_at = now() where id = $1`,
     [mailboxId, error],

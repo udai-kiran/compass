@@ -6,7 +6,6 @@ import {
 } from "fastify-type-provider-zod";
 import type pg from "pg";
 import type { Redis } from "ioredis";
-import { createAiProvider, type AiProvider } from "@compass/ai";
 import type { Config } from "./config.ts";
 import { createPool } from "./infra/db.ts";
 import { createRedis } from "./infra/redis.ts";
@@ -57,7 +56,6 @@ declare module "fastify" {
     db: Db;
     redis: Redis;
     queues: Queues;
-    ai: AiProvider;
   }
 }
 
@@ -78,20 +76,8 @@ export async function buildApp(config: Config): Promise<FastifyInstance> {
   app.decorate("pg", createPool(config.DATABASE_URL));
   app.decorate("db", createDb(app.pg));
   app.decorate("redis", createRedis(config.REDIS_URL));
-  app.decorate(
-    "ai",
-    createAiProvider({
-      provider: config.AI_PROVIDER,
-      anthropicApiKey: config.ANTHROPIC_API_KEY,
-      anthropicModel: config.ANTHROPIC_MODEL,
-      ollamaBaseUrl: config.OLLAMA_BASE_URL,
-      ollamaModel: config.OLLAMA_MODEL,
-      openrouterApiKey: config.OPENROUTER_API_KEY,
-      openrouterModel: config.OPENROUTER_MODEL,
-      deepseekApiKey: config.DEEPSEEK_API_KEY,
-      deepseekModel: config.DEEPSEEK_MODEL,
-    }),
-  );
+  // AI is per-user now (Settings → AI), resolved per request from ai_settings —
+  // there is no global provider. See services/ai-settings.ts.
   await startJobs(app);
   await setupAuth(app);
   await setupSecurity(app);

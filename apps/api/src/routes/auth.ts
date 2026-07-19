@@ -16,6 +16,8 @@ import { changePassword, registerOwner, updateProfile, verifyLogin } from "../se
 import { createSession, destroySession, listSessions } from "../services/session.ts";
 import { countUsers, findUserById } from "../repositories/users.ts";
 import { clearSessionCookie, setSessionCookie } from "../plugins/auth.ts";
+import { getAiSettings, getUserAiProvider } from "../services/ai-settings.ts";
+import { mailboxSecret } from "../services/mailboxes.ts";
 
 export async function authRoutes(app: FastifyInstance) {
   const r = app.withTypeProvider<ZodTypeProvider>();
@@ -82,7 +84,12 @@ export async function authRoutes(app: FastifyInstance) {
     "/api/auth/password",
     { schema: { body: ChangePasswordSchema, response: { 200: z.object({ ok: z.boolean() }) } } },
     async (req) => {
-      await changePassword(app.db, req.session!.userId, req.body.currentPassword, req.body.newPassword);
+      await changePassword(
+        app.db,
+        req.session!.userId,
+        req.body.currentPassword,
+        req.body.newPassword,
+      );
       return { ok: true };
     },
   );
@@ -98,7 +105,12 @@ export async function authRoutes(app: FastifyInstance) {
 
   r.delete(
     "/api/auth/sessions/:id",
-    { schema: { params: z.object({ id: z.string() }), response: { 200: z.object({ ok: z.boolean() }) } } },
+    {
+      schema: {
+        params: z.object({ id: z.string() }),
+        response: { 200: z.object({ ok: z.boolean() }) },
+      },
+    },
     async (req) => {
       // only revoke sessions that belong to this user
       const own = await listSessions(app.redis, req.session!.userId);
@@ -108,21 +120,23 @@ export async function authRoutes(app: FastifyInstance) {
     },
   );
 
-  r.get(
-    "/api/capabilities",
-    { schema: { response: { 200: CapabilitiesSchema } } },
-    async () => {
-      // app.ai is authoritative: the factory downgrades to the NullProvider when
-      // a provider is selected but its secret/URL is missing.
-      const aiEnabled = app.ai.enabled;
-      const aiProvider = aiEnabled ? app.config.AI_PROVIDER : "none";
-      return {
-        aiProvider,
-        aiEnabled,
-        features: { categorization: aiEnabled, assistant: aiEnabled, summaries: aiEnabled },
-        currency: "INR",
-        locale: "en-IN",
-      };
-    },
-  );
+  r.get("/api/capabilities", { schema: { response: { 200: CapabilitiesSchema } } }, async (req) => {
+    // Resolved from the caller's stored config: the factory downgrades to the
+    // NullProvider when a provider is selected but its key/URL is missing.
+    const settings = await getAiSettings(app.db, req.session!.userId);
+    const provider = await getUserAiProvider(
+      app.db,
+      req.session!.userId,
+      mailboxSecret(app.config),
+      app.config.AI_ALLOWED_BASE_URLS,
+    );
+    const aiEnabled = provider.enabled;
+    return {
+      aiProvider: aiEnabled ? settings.provider : "none",
+      aiEnabled,
+      features: { categorization: aiEnabled, assistant: aiEnabled, summaries: aiEnabled },
+      currency: "INR",
+      locale: "en-IN",
+    };
+  });
 }

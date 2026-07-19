@@ -45,8 +45,9 @@ services:
   # from .env. The ingestor reads mail over OAuth2 IMAP and enqueues; the
   # extractor runs the AI extraction and writes the review inbox. Neither serves
   # HTTP. They sit behind the `email` profile so a default `docker compose up`
-  # (and existing non-AI deployments) never starts them — the extractor requires
-  # a real AI_PROVIDER and would otherwise crash-loop. Enable the pipeline with:
+  # never starts them. The AI provider is configured per user in Settings → AI
+  # (stored in the DB); AI_ALLOWED_BASE_URLS controls permitted server-side
+  # Ollama/custom destinations. Enable the pipeline with:
   #   docker compose --profile email up -d
   # Mailboxes are onboarded per-user from Settings → Mailboxes (the `connect` CLI
   # runs on the user's own machine, not here) — see the README.

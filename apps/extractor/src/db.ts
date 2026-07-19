@@ -32,6 +32,26 @@ export async function loadIngestion(pool: pg.Pool, id: string): Promise<Ingestio
   return { id: r.id, userId: r.user_id, subject: r.subject, fromAddr: r.from_addr, receivedAt: r.received_at, raw: r.raw };
 }
 
+export interface StoredAiSettings {
+  provider: "none" | "anthropic" | "ollama" | "openrouter" | "deepseek" | "custom";
+  apiKeyEnc: string;
+  baseUrl: string;
+  model: string;
+}
+
+/** The email's owner brings their own AI provider (Settings → AI). Null = never configured. */
+export async function loadAiSettings(pool: pg.Pool, userId: string): Promise<StoredAiSettings | null> {
+  const res = await pool.query<{
+    provider: StoredAiSettings["provider"];
+    api_key_enc: string;
+    base_url: string;
+    model: string;
+  }>(`select provider, api_key_enc, base_url, model from ai_settings where user_id = $1`, [userId]);
+  const r = res.rows[0];
+  if (!r) return null;
+  return { provider: r.provider, apiKeyEnc: r.api_key_enc, baseUrl: r.base_url, model: r.model };
+}
+
 export async function loadAccounts(pool: pg.Pool, userId: string): Promise<AccountRef[]> {
   const res = await pool.query<{ id: string; name: string }>(
     `select id, name from accounts where user_id = $1 and archived_at is null`,

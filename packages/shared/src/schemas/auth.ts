@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { AiProviderSchema } from "./ai.ts";
 
 export const RegisterRequestSchema = z.object({
   email: z.email(),
@@ -35,7 +36,7 @@ export const SessionInfoSchema = z.object({
 });
 
 export const CapabilitiesSchema = z.object({
-  aiProvider: z.enum(["none", "anthropic", "ollama", "openrouter", "deepseek"]),
+  aiProvider: AiProviderSchema,
   aiEnabled: z.boolean(),
   features: z.object({
     categorization: z.boolean(),

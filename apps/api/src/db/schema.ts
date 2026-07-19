@@ -46,6 +46,40 @@ export const projectionSettings = pgTable("projection_settings", {
 });
 
 /**
+ * `custom` is a generic OpenAI-compatible endpoint (base URL + key + model);
+ * the others are named providers with fixed base URLs (see packages/ai/factory).
+ */
+export const aiProvider = pgEnum("ai_provider", [
+  "none",
+  "anthropic",
+  "ollama",
+  "openrouter",
+  "deepseek",
+  "custom",
+]);
+
+/**
+ * Per-user AI provider config. Replaces the old global AI_* env vars: the API's
+ * AI features and the email extractor both resolve the provider from here. The
+ * API key is encrypted at rest with the same secret-box envelope as mailbox
+ * secrets (keyed by MAILBOX_SECRET), so the extractor can decrypt it too.
+ */
+export const aiSettings = pgTable("ai_settings", {
+  userId: uuid("user_id")
+    .primaryKey()
+    .references(() => users.id, { onDelete: "cascade" }),
+  provider: aiProvider("provider").notNull().default("none"),
+  /** encrypted API key; "" for ollama/none */
+  apiKeyEnc: text("api_key_enc").notNull().default(""),
+  /** base URL for ollama/custom; "" otherwise */
+  baseUrl: text("base_url").notNull().default(""),
+  /** model name; provider default used when "" */
+  model: text("model").notNull().default(""),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
  * `ppf`, `epf` and `ssy` are accounts rather than holdings because their balance
  * is known exactly — interest is credited at a fixed rate, not estimated. NPS
  * and gold move with a daily NAV/price, so they stay holdings, where a valuation
