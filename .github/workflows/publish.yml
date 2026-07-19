@@ -1,6 +1,6 @@
 name: Publish images
 
-# Build the api and web images and push them to GitHub Container Registry.
+# Build the API, web, and email-worker images and push them to GitHub Container Registry.
 # Runs on pushes to main and on version tags; PRs build-only (no push) so a
 # fork or branch can't publish. Images land at ghcr.io/<owner>/pennypilot-<app>.
 on:
@@ -22,7 +22,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        app: [api, web]
+        app: [api, web, ingestor, extractor]
     steps:
       - uses: actions/checkout@v5
         with:
