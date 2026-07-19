@@ -52,3 +52,64 @@ export const SUGGESTED_PROMPTS = [
   "What are my top merchants?",
   "How am I tracking against my budget?",
 ] as const;
+
+// ---------- Per-user AI provider settings ----------
+
+export const AiProviderSchema = z.enum([
+  "none",
+  "anthropic",
+  "ollama",
+  "openrouter",
+  "deepseek",
+  "custom",
+]);
+export type AiProviderName = z.infer<typeof AiProviderSchema>;
+
+/** Providers that need a base URL. */
+const URL_PROVIDERS = ["ollama", "custom"] as const;
+
+/** Read model: what the settings page shows. The API key itself is never returned. */
+export const AiSettingsSchema = z.object({
+  provider: AiProviderSchema,
+  baseUrl: z.string(),
+  model: z.string(),
+  /** whether a key is stored, so the UI can show "•••• on file" without the value */
+  hasApiKey: z.boolean(),
+});
+export type AiSettings = z.infer<typeof AiSettingsSchema>;
+
+/**
+ * Write model. `apiKey` is optional so the client need not resend a stored key:
+ * omit = leave unchanged, "" = clear, a value = replace. Per-provider required
+ * fields are enforced here so a half-filled config can't be saved.
+ */
+export const UpdateAiSettingsSchema = z
+  .object({
+    provider: AiProviderSchema,
+    baseUrl: z.string().default(""),
+    model: z.string().default(""),
+    apiKey: z.string().optional(),
+  })
+  .superRefine((v, ctx) => {
+    if ((URL_PROVIDERS as readonly string[]).includes(v.provider)) {
+      try {
+        const url = new URL(v.baseUrl);
+        if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error();
+        if (url.username || url.password || url.search || url.hash) throw new Error();
+      } catch {
+        ctx.addIssue({
+          code: "custom",
+          path: ["baseUrl"],
+          message: "Enter a valid HTTP(S) base URL without credentials, query, or fragment",
+        });
+      }
+    }
+    if (v.provider === "custom" && v.model.trim() === "") {
+      ctx.addIssue({
+        code: "custom",
+        path: ["model"],
+        message: "A model name is required for a custom endpoint",
+      });
+    }
+  });
+export type UpdateAiSettings = z.input<typeof UpdateAiSettingsSchema>;

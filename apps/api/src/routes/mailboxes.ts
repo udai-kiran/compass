@@ -5,6 +5,8 @@ import {
   AddMailboxSchema,
   MailboxAccountSchema,
   MailboxCredentialsStatusSchema,
+  QueueSyncResultSchema,
+  QueueSyncSchema,
 } from "@compass/shared";
 import {
   addMailboxFromBundle,
@@ -13,6 +15,7 @@ import {
   mailboxSecret,
   removeMailbox,
 } from "../services/mailboxes.ts";
+import { enqueueIngestorRun } from "../jobs/index.ts";
 
 /**
  * Per-user mailbox management for the email→transaction pipeline. Users onboard
@@ -47,6 +50,18 @@ export async function mailboxRoutes(app: FastifyInstance) {
     async (req) => {
       await removeMailbox(app.db, req.session!.userId, req.params.id);
       return { ok: true as const };
+    },
+  );
+
+  // Queue an ingestor sync pass. It runs after the chosen window (a rolling
+  // delay); repeated requests within the window coalesce into a single run.
+  r.post(
+    "/api/mailboxes/sync",
+    { schema: { body: QueueSyncSchema, response: { 200: QueueSyncResultSchema } } },
+    async (req) => {
+      const windowMinutes = req.body.windowMinutes;
+      await enqueueIngestorRun(app, req.session!.userId, windowMinutes);
+      return { ok: true as const, runsInMinutes: windowMinutes };
     },
   );
 }

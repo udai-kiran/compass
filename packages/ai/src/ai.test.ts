@@ -5,27 +5,33 @@ import { NullProvider } from "./null-provider.ts";
 import { extractJson } from "./http.ts";
 import { AiDisabledError, CategorySuggestionsSchema } from "./types.ts";
 
-test("factory: none / missing-secret fall back to NullProvider", () => {
+test("factory: none / missing-field fall back to NullProvider", () => {
   assert.equal(createAiProvider({ provider: "none" }), NullProvider);
   assert.equal(createAiProvider({ provider: "anthropic" }), NullProvider); // no key
   assert.equal(createAiProvider({ provider: "ollama" }), NullProvider); // no url
   assert.equal(createAiProvider({ provider: "openrouter" }), NullProvider); // no key
   assert.equal(createAiProvider({ provider: "deepseek" }), NullProvider); // no key
+  assert.equal(createAiProvider({ provider: "custom", apiKey: "sk-x", baseUrl: "http://h/v1" }), NullProvider); // no model
+  assert.equal(createAiProvider({ provider: "custom", apiKey: "sk-x", model: "m" }), NullProvider); // no baseUrl
 });
 
-test("factory: configured providers are enabled and named by env", () => {
-  const a = createAiProvider({ provider: "anthropic", anthropicApiKey: "sk-x" });
+test("factory: configured providers are enabled and named", () => {
+  const a = createAiProvider({ provider: "anthropic", apiKey: "sk-x" });
   assert.equal(a.name, "anthropic");
   assert.equal(a.enabled, true);
-  const o = createAiProvider({ provider: "ollama", ollamaBaseUrl: "http://h:11434" });
+  const o = createAiProvider({ provider: "ollama", baseUrl: "http://h:11434" });
   assert.equal(o.name, "ollama");
   assert.equal(o.enabled, true);
-  const r = createAiProvider({ provider: "openrouter", openrouterApiKey: "sk-or-x" });
+  const r = createAiProvider({ provider: "openrouter", apiKey: "sk-or-x" });
   assert.equal(r.name, "openrouter");
   assert.equal(r.enabled, true);
-  const d = createAiProvider({ provider: "deepseek", deepseekApiKey: "sk-x" });
+  const d = createAiProvider({ provider: "deepseek", apiKey: "sk-x" });
   assert.equal(d.name, "deepseek");
   assert.equal(d.enabled, true);
+  // custom = generic OpenAI-compatible endpoint; needs key + baseUrl + model.
+  const c = createAiProvider({ provider: "custom", apiKey: "sk-x", baseUrl: "http://h/v1", model: "m" });
+  assert.equal(c.name, "custom");
+  assert.equal(c.enabled, true);
 });
 
 test("NullProvider: every capability throws AiDisabledError", async () => {

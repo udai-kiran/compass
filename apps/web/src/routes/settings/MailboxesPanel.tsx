@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { MailboxAccount, MailboxStatus } from "@compass/shared";
+import { SYNC_WINDOW_MINUTES, type MailboxAccount, type MailboxStatus } from "@compass/shared";
 import { toast } from "../../lib/toast.tsx";
 import {
   useMailboxCredentials,
@@ -26,8 +26,16 @@ function fmtWhen(iso: string | null): string {
 export function MailboxesPanel() {
   const { data: mailboxes } = useMailboxes();
   const { data: creds } = useMailboxCredentials();
-  const { add, remove } = useMailboxMutations();
+  const { add, remove, sync } = useMailboxMutations();
   const [bundle, setBundle] = useState("");
+  const [windowMinutes, setWindowMinutes] = useState<number>(SYNC_WINDOW_MINUTES[0]);
+
+  function queueSync() {
+    sync.mutate(windowMinutes, {
+      onSuccess: (res) => toast(`Sync queued — runs within ${res.runsInMinutes} min`, "success"),
+      onError: (e) => toast(e instanceof Error ? e.message : "Couldn't queue a sync"),
+    });
+  }
 
   function submit() {
     const value = bundle.trim();
@@ -84,6 +92,33 @@ export function MailboxesPanel() {
           </span>
         </div>
       </div>
+
+      {mailboxes && mailboxes.length > 0 && (
+        <div className="mt-6 flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-sm font-medium text-slate-600">Connected mailboxes</h3>
+          <div className="flex items-center gap-2">
+            <label className="flex items-center gap-1 text-xs text-slate-500">
+              within
+              <select
+                value={windowMinutes}
+                onChange={(e) => setWindowMinutes(Number(e.target.value))}
+                className="rounded-md border border-slate-300 px-1.5 py-1"
+              >
+                {SYNC_WINDOW_MINUTES.map((m) => (
+                  <option key={m} value={m}>{m} min</option>
+                ))}
+              </select>
+            </label>
+            <button
+              onClick={queueSync}
+              disabled={sync.isPending}
+              className="rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            >
+              {sync.isPending ? "Queuing…" : "Queue sync"}
+            </button>
+          </div>
+        </div>
+      )}
 
       {mailboxes && mailboxes.length === 0 && (
         <p className="mt-6 rounded-lg border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-400">

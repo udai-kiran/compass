@@ -4,16 +4,16 @@ import { createOpenAiCompatProvider } from "./openai-compat.ts";
 import { NullProvider } from "./null-provider.ts";
 import type { AiProvider } from "./types.ts";
 
+/**
+ * Unified provider settings. `apiKey`/`baseUrl`/`model` map 1:1 to the stored
+ * per-user config; each provider reads the fields it needs. `custom` is a
+ * generic OpenAI-compatible endpoint (base URL + key + model).
+ */
 export interface AiSettings {
-  provider: "none" | "anthropic" | "ollama" | "openrouter" | "deepseek";
-  anthropicApiKey?: string;
-  anthropicModel?: string;
-  ollamaBaseUrl?: string;
-  ollamaModel?: string;
-  openrouterApiKey?: string;
-  openrouterModel?: string;
-  deepseekApiKey?: string;
-  deepseekModel?: string;
+  provider: "none" | "anthropic" | "ollama" | "openrouter" | "deepseek" | "custom";
+  apiKey?: string;
+  baseUrl?: string;
+  model?: string;
 }
 
 const DEFAULT_ANTHROPIC_MODEL = "claude-haiku-4-5-20251001";
@@ -26,40 +26,39 @@ const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 const DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1";
 
 /**
- * Build the provider purely from settings — swapping providers requires only an
- * env change, never a code change (task 7.2). Falls back to {@link NullProvider}
- * so the app stays fully functional with `AI_PROVIDER=none`.
+ * Build the provider purely from settings — swapping providers is a config
+ * change, never a code change. Falls back to {@link NullProvider} whenever the
+ * provider is `none` or its required fields are missing, so the app stays fully
+ * functional with AI unconfigured.
  */
 export function createAiProvider(settings: AiSettings): AiProvider {
+  const { apiKey, baseUrl, model } = settings;
   switch (settings.provider) {
     case "anthropic":
-      if (!settings.anthropicApiKey) return NullProvider;
-      return createAnthropicProvider({
-        apiKey: settings.anthropicApiKey,
-        model: settings.anthropicModel || DEFAULT_ANTHROPIC_MODEL,
-      });
+      if (!apiKey) return NullProvider;
+      return createAnthropicProvider({ apiKey, model: model || DEFAULT_ANTHROPIC_MODEL });
     case "ollama":
-      if (!settings.ollamaBaseUrl) return NullProvider;
-      return createOllamaProvider({
-        baseUrl: settings.ollamaBaseUrl,
-        model: settings.ollamaModel || DEFAULT_OLLAMA_MODEL,
-      });
+      if (!baseUrl) return NullProvider;
+      return createOllamaProvider({ baseUrl, model: model || DEFAULT_OLLAMA_MODEL });
     case "openrouter":
-      if (!settings.openrouterApiKey) return NullProvider;
+      if (!apiKey) return NullProvider;
       return createOpenAiCompatProvider({
         name: "openrouter",
-        apiKey: settings.openrouterApiKey,
-        model: settings.openrouterModel || DEFAULT_OPENROUTER_MODEL,
+        apiKey,
+        model: model || DEFAULT_OPENROUTER_MODEL,
         baseUrl: OPENROUTER_BASE_URL,
       });
     case "deepseek":
-      if (!settings.deepseekApiKey) return NullProvider;
+      if (!apiKey) return NullProvider;
       return createOpenAiCompatProvider({
         name: "deepseek",
-        apiKey: settings.deepseekApiKey,
-        model: settings.deepseekModel || DEFAULT_DEEPSEEK_MODEL,
+        apiKey,
+        model: model || DEFAULT_DEEPSEEK_MODEL,
         baseUrl: DEEPSEEK_BASE_URL,
       });
+    case "custom":
+      if (!apiKey || !baseUrl || !model) return NullProvider;
+      return createOpenAiCompatProvider({ name: "custom", apiKey, model, baseUrl });
     default:
       return NullProvider;
   }

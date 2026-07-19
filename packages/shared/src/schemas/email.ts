@@ -120,6 +120,9 @@ export type InboxCount = z.infer<typeof InboxCountSchema>;
 /** BullMQ queue the ingestor produces to and the extractor consumes from. */
 export const EXTRACT_QUEUE = "email.extract";
 
+/** BullMQ queue the API produces to and the ingestor consumes, to run a sync pass on demand. */
+export const INGESTOR_QUEUE = "ingestor.run";
+
 /** The BullMQ job the ingestor enqueues and the extractor consumes. */
 export const ExtractJobSchema = z.object({
   ingestionId: z.uuid(),
@@ -180,3 +183,23 @@ export const MailboxCredentialsStatusSchema = z.object({
   clientId: z.string().nullable(),
 });
 export type MailboxCredentialsStatus = z.infer<typeof MailboxCredentialsStatusSchema>;
+
+/**
+ * Queue-sync request. A user asks the ingestor to run a pass; it fires after
+ * `windowMinutes` (a rolling delay), and repeated requests within that window
+ * coalesce into a single run. The window is the user-configurable part.
+ */
+export const SYNC_WINDOW_MINUTES = [5, 10, 15, 30] as const;
+export const QueueSyncSchema = z.object({
+  windowMinutes: z
+    .union([z.literal(5), z.literal(10), z.literal(15), z.literal(30)])
+    .default(5),
+});
+export type QueueSync = z.input<typeof QueueSyncSchema>;
+
+export const QueueSyncResultSchema = z.object({
+  ok: z.literal(true),
+  /** how many minutes until the coalesced pass runs */
+  runsInMinutes: z.number().int(),
+});
+export type QueueSyncResult = z.infer<typeof QueueSyncResultSchema>;

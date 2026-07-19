@@ -28,6 +28,7 @@ import { useAssetGoalMutation } from "../../lib/wealth-queries.ts";
 import { RulesPanel } from "./RulesPanel.tsx";
 import { RecurringPanel } from "./RecurringPanel.tsx";
 import { MailboxesPanel } from "./MailboxesPanel.tsx";
+import { AiPanel } from "./AiPanel.tsx";
 import {
   AboutPanel,
   DataPanel,
@@ -44,6 +45,7 @@ const TABS = [
   "rules",
   "recurring",
   "mailboxes",
+  "ai",
   "notifications",
   "projections",
   "sessions",
@@ -79,6 +81,7 @@ export function SettingsPage() {
       {tab === "rules" && <RulesPanel />}
       {tab === "recurring" && <RecurringPanel />}
       {tab === "mailboxes" && <MailboxesPanel />}
+      {tab === "ai" && <AiPanel />}
       {tab === "notifications" && <NotificationsPanel />}
       {tab === "projections" && <ProjectionsPanel />}
       {tab === "sessions" && <SessionsPanel />}

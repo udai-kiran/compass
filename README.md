@@ -22,14 +22,29 @@ Apply database migrations (first run and after upgrades):
 npm install && npm run db:migrate
 ```
 
+## AI (optional)
+
+AI powers transaction categorization, the chat assistant, monthly summaries, and
+email extraction. It's **configured per user in the app** — go to **Settings →
+AI**, pick a provider, and enter its key/endpoint. Nothing is set in the deploy
+`.env`; the API key is encrypted at rest and never shown again. Server-side
+endpoints (Ollama and Custom) must also be listed in `AI_ALLOWED_BASE_URLS` in
+the deployment environment before users can select them.
+
+Supported providers: **Anthropic** (Claude), **DeepSeek**, **OpenRouter**,
+**Ollama** (local, base URL only), and **Custom** — any OpenAI-compatible endpoint
+(base URL + key + model). Leave the provider on **Disabled** and the app runs with
+no AI. The extractor decrypts each user's key to process their mail, so this must
+be configured for the email pipeline below to extract anything.
+
 ## Email → transaction pipeline (optional)
 
 An opt-in module that reads bank/card alert emails over OAuth2 IMAP and turns
 them into **reviewable** transactions — nothing is written to your ledger
 automatically; extracted items land in an in-app review inbox for accept/reject.
-It's disabled by default and needs a real `AI_PROVIDER`. The workers (`ingestor`,
-`extractor`) run behind a compose `email` profile, so a default `docker compose
-up` never starts them.
+Extraction uses the mailbox owner's AI provider (see **AI** above). The workers
+(`ingestor`, `extractor`) run behind a compose `email` profile, so a default
+`docker compose up` never starts them.
 
 Mailbox credentials are **per user** — each user brings their own Google OAuth
 client; nothing is baked into the deploy `.env`. Onboarding is decoupled from the
