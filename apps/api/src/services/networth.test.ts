@@ -3,13 +3,22 @@ import assert from "node:assert/strict";
 import { AccountTypeSchema } from "@compass/shared";
 import { ACCOUNT_BUCKET } from "./networth.ts";
 
-test("every account type has a net-worth bucket", () => {
-  // A type missing here contributes to neither assets nor liabilities: the
-  // balance silently disappears from the balance sheet with nothing to notice.
-  // This caught ppf/epf dropping ~4.6L from net worth before it shipped.
+test("every account type is classified for net worth", () => {
+  // A type missing here (undefined) contributes to neither assets nor
+  // liabilities: the balance silently disappears from the balance sheet with
+  // nothing to notice. This caught ppf/epf dropping ~4.6L before it shipped.
+  // An explicit null is fine — it means "no balance of its own" (e.g. insurance,
+  // a tracking record whose premiums live on the paying account).
   for (const type of AccountTypeSchema.options) {
-    assert.ok(ACCOUNT_BUCKET[type], `account type "${type}" is not classified for net worth`);
+    assert.ok(
+      ACCOUNT_BUCKET[type] !== undefined,
+      `account type "${type}" is not classified for net worth`,
+    );
   }
+});
+
+test("insurance is a tracking record with no net-worth bucket", () => {
+  assert.equal(ACCOUNT_BUCKET.insurance, null);
 });
 
 test("credited-balance schemes count as investment assets, not cash or debt", () => {
