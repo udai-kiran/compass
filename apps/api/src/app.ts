@@ -36,7 +36,7 @@ import { emiRoutes } from "./routes/emis.ts";
 import { retirementRoutes } from "./routes/retirement.ts";
 import { bankDetailsRoutes } from "./routes/bank-details.ts";
 import { overdraftDetailsRoutes } from "./routes/overdraft-details.ts";
-import { insuranceDetailsRoutes } from "./routes/insurance-details.ts";
+import { insuranceRoutes } from "./routes/insurance.ts";
 import { holdingRoutes } from "./routes/holdings.ts";
 import { netWorthRoutes } from "./routes/networth.ts";
 import { insightRoutes } from "./routes/insights.ts";
@@ -141,7 +141,7 @@ export async function buildApp(config: Config): Promise<FastifyInstance> {
   await app.register(retirementRoutes);
   await app.register(bankDetailsRoutes);
   await app.register(overdraftDetailsRoutes);
-  await app.register(insuranceDetailsRoutes);
+  await app.register(insuranceRoutes);
   await app.register(holdingRoutes);
   await app.register(netWorthRoutes);
   await app.register(insightRoutes);

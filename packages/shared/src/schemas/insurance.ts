@@ -1,12 +1,11 @@
 import { z } from "zod";
 
 /**
- * Insurance is modelled as an account type (see AccountTypeSchema), with the
- * policy specifics kept in a 1:1 details table keyed by account — the same
- * pattern as bank_details / retirement_details. A policy is a tracking record,
- * not a balance-bearing account: premiums are paid *from* a bank/card account
- * and tagged to the policy (transactions.policyAccountId), so the policy's own
- * balance stays zero and it never lands in net worth.
+ * Insurance is its own entity, not an account. A policy is a standalone record
+ * (see the `insurance_policies` table) with its own fields — insurer, policy
+ * number, sum assured, bonus, dates. Premiums are paid from a bank/card account
+ * and tagged to the policy (transactions.policy_id), so a policy shows its
+ * premium history and paid-to-date total without ever holding a balance.
  */
 export const InsuranceKindSchema = z.enum(["life", "health", "vehicle"]);
 export type InsuranceKind = z.infer<typeof InsuranceKindSchema>;
@@ -25,61 +24,84 @@ export const PremiumFrequencySchema = z.enum([
 ]);
 export type PremiumFrequency = z.infer<typeof PremiumFrequencySchema>;
 
-export const InsuranceDetailsSchema = z.object({
-  accountId: z.uuid(),
+export const InsurancePolicySchema = z.object({
+  id: z.uuid(),
+  /** a short label for lists, e.g. "LIC Jeevan Anand" */
+  name: z.string(),
   kind: InsuranceKindSchema,
   /** car/bike/other for a vehicle policy; null for life/health */
   vehicleType: VehicleKindSchema.nullable(),
+  /** insurance company, e.g. "LIC", "Star Health", "ICICI Lombard" */
+  insurer: z.string(),
   policyNumber: z.string(),
   /** sum assured (life) / sum insured (health) / IDV (vehicle), in paise */
-  coverPaise: z.number().int(),
+  sumAssuredPaise: z.number().int(),
+  /** accrued bonus / loyalty additions (endowment life), in paise */
+  bonusPaise: z.number().int(),
   /** premium per payment, in paise */
   premiumPaise: z.number().int(),
   premiumFrequency: PremiumFrequencySchema,
-  /** policy commencement date */
+  /** policy commencement ("started from") */
   startDate: z.iso.date().nullable(),
   /** next renewal / premium due date */
   renewalDate: z.iso.date().nullable(),
-  /** maturity date for an endowment/money-back life policy; null for pure term, health, vehicle */
+  /** maturity date for an endowment/money-back life policy; null for term/health/vehicle */
   maturityDate: z.iso.date().nullable(),
   nominee: z.string(),
+  notes: z.string(),
+  archived: z.boolean(),
 });
-export type InsuranceDetails = z.infer<typeof InsuranceDetailsSchema>;
+export type InsurancePolicy = z.infer<typeof InsurancePolicySchema>;
 
-export const UpsertInsuranceDetailsSchema = z
-  .object({
-    kind: InsuranceKindSchema.default("life"),
-    vehicleType: VehicleKindSchema.nullable().default(null),
-    policyNumber: z.string().max(60).default(""),
-    coverPaise: z.number().int().min(0).default(0),
-    premiumPaise: z.number().int().min(0).default(0),
-    premiumFrequency: PremiumFrequencySchema.default("yearly"),
-    startDate: z.iso.date().nullable().default(null),
-    renewalDate: z.iso.date().nullable().default(null),
-    maturityDate: z.iso.date().nullable().default(null),
-    nominee: z.string().max(120).default(""),
-  })
-  .check((ctx) => {
-    // A vehicle sub-type only belongs on a vehicle policy; a maturity date only
-    // on a life policy (health/vehicle policies renew, they don't mature).
-    if (ctx.value.kind !== "vehicle" && ctx.value.vehicleType !== null) {
-      ctx.issues.push({
-        code: "custom",
-        path: ["vehicleType"],
-        message: "vehicle type only applies to a vehicle policy",
-        input: ctx.value.vehicleType,
-      });
-    }
-    if (ctx.value.kind !== "life" && ctx.value.maturityDate !== null) {
-      ctx.issues.push({
-        code: "custom",
-        path: ["maturityDate"],
-        message: "only a life policy matures",
-        input: ctx.value.maturityDate,
-      });
-    }
-  });
-export type UpsertInsuranceDetails = z.input<typeof UpsertInsuranceDetailsSchema>;
+/** Shared field set for create/update, plus the consistency rules between them. */
+const policyFields = {
+  name: z.string().min(1).max(120),
+  kind: InsuranceKindSchema.default("life"),
+  vehicleType: VehicleKindSchema.nullable().default(null),
+  insurer: z.string().max(120).default(""),
+  policyNumber: z.string().max(60).default(""),
+  sumAssuredPaise: z.number().int().min(0).default(0),
+  bonusPaise: z.number().int().min(0).default(0),
+  premiumPaise: z.number().int().min(0).default(0),
+  premiumFrequency: PremiumFrequencySchema.default("yearly"),
+  startDate: z.iso.date().nullable().default(null),
+  renewalDate: z.iso.date().nullable().default(null),
+  maturityDate: z.iso.date().nullable().default(null),
+  nominee: z.string().max(120).default(""),
+  notes: z.string().max(1000).default(""),
+};
+
+// A vehicle sub-type only belongs on a vehicle policy; a maturity date only on a
+// life policy (health/vehicle renew, they don't mature). Applied to both schemas.
+type PolicyConsistency = { kind: InsuranceKind; vehicleType: VehicleKind | null; maturityDate: string | null };
+function checkPolicyConsistency(value: PolicyConsistency, issues: z.core.$ZodRawIssue[]) {
+  if (value.kind !== "vehicle" && value.vehicleType !== null) {
+    issues.push({
+      code: "custom",
+      path: ["vehicleType"],
+      message: "vehicle type only applies to a vehicle policy",
+      input: value.vehicleType,
+    });
+  }
+  if (value.kind !== "life" && value.maturityDate !== null) {
+    issues.push({
+      code: "custom",
+      path: ["maturityDate"],
+      message: "only a life policy matures",
+      input: value.maturityDate,
+    });
+  }
+}
+
+export const CreateInsurancePolicySchema = z
+  .object(policyFields)
+  .check((ctx) => checkPolicyConsistency(ctx.value, ctx.issues));
+export type CreateInsurancePolicy = z.input<typeof CreateInsurancePolicySchema>;
+
+export const UpdateInsurancePolicySchema = z
+  .object({ ...policyFields, archived: z.boolean().default(false) })
+  .check((ctx) => checkPolicyConsistency(ctx.value, ctx.issues));
+export type UpdateInsurancePolicy = z.input<typeof UpdateInsurancePolicySchema>;
 
 // ---------- Premium payments (the link to expenses) ----------
 

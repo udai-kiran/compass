@@ -105,10 +105,9 @@ export const accountType = pgEnum("account_type", [
   // no notion of. The balance is still what you owe (net of parked surplus), so
   // it lands in the loans bucket like any liability.
   "home_loan_od",
-  // Insurance policy (life/health/vehicle). A tracking record rather than a
-  // balance-bearing account: premiums are paid from a bank/card account and
-  // tagged to the policy (transactions.policy_account_id), so its own balance
-  // stays zero and it never enters net worth. See insurance_details.
+  // DEPRECATED: insurance is now a standalone entity (see insurance_policies),
+  // not an account. This enum value is retained only because Postgres cannot drop
+  // an enum value; no account uses it and the UI no longer offers it.
   "insurance",
 ]);
 
@@ -213,12 +212,12 @@ export const transactions = pgTable(
       .default(sql`'{}'::text[]`),
     source: transactionSource("source").notNull().default("manual"),
     /**
-     * Insurance policy this expense pays a premium for — a link to an `insurance`
-     * account, kept apart from `accountId` (the account the money left). Null for
-     * ordinary transactions. Lets a policy show its premium history without the
-     * policy ever holding a balance. See services/insurance-details.ts.
+     * Insurance policy this expense pays a premium for — a link to an
+     * insurance_policies row, kept apart from `accountId` (the account the money
+     * left). Null for ordinary transactions. Lets a policy show its premium
+     * history without being an account itself. See services/insurance.ts.
      */
-    policyAccountId: uuid("policy_account_id").references(() => accounts.id, {
+    policyId: uuid("policy_id").references((): AnyPgColumn => insurancePolicies.id, {
       onDelete: "set null",
     }),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
@@ -229,7 +228,7 @@ export const transactions = pgTable(
     index("transactions_user_date_idx").on(t.userId, t.date.desc(), t.id.desc()),
     index("transactions_account_idx").on(t.accountId),
     index("transactions_category_idx").on(t.categoryId),
-    index("transactions_policy_idx").on(t.policyAccountId),
+    index("transactions_policy_idx").on(t.policyId),
   ],
 );
 
@@ -713,38 +712,49 @@ export const premiumFrequency = pgEnum("premium_frequency", [
 ]);
 
 /**
- * Policy details for an `insurance` account. 1:1 extension keyed by account,
- * like card_details / retirement_details. The insurer lives on accounts
- * (institution) and the holder on accounts (holder_name); only policy-specific
- * fields belong here. Premiums are tracked as ordinary expense transactions
- * tagged with policy_account_id — nothing about the money flow lives here, only
- * the policy's standing terms.
+ * An insurance policy — a standalone record, not an account. It carries its own
+ * fields (insurer, policy number, sum assured, bonus, dates) rather than the
+ * name/holder/UPI/balance an account has, because a policy isn't money you hold.
+ * Premiums are tracked as ordinary expense transactions tagged with policy_id
+ * (see transactions.policyId); the money flow lives there, only the standing
+ * policy terms live here.
  */
-export const insuranceDetails = pgTable("insurance_details", {
-  accountId: uuid("account_id")
-    .primaryKey()
-    .references(() => accounts.id, { onDelete: "cascade" }),
-  userId: uuid("user_id")
-    .notNull()
-    .references(() => users.id),
-  kind: insuranceKind("kind").notNull().default("life"),
-  /** car/bike/other for a vehicle policy; null for life/health */
-  vehicleType: vehicleKind("vehicle_type"),
-  policyNumber: text("policy_number").notNull().default(""),
-  /** sum assured (life) / sum insured (health) / IDV (vehicle), in paise */
-  coverPaise: bigint("cover_paise", { mode: "number" }).notNull().default(0),
-  /** premium per payment, in paise */
-  premiumPaise: bigint("premium_paise", { mode: "number" }).notNull().default(0),
-  premiumFrequency: premiumFrequency("premium_frequency").notNull().default("yearly"),
-  startDate: date("start_date"),
-  /** next renewal / premium due date */
-  renewalDate: date("renewal_date"),
-  /** endowment/money-back maturity; null for pure term, health, vehicle */
-  maturityDate: date("maturity_date"),
-  nominee: text("nominee").notNull().default(""),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
+export const insurancePolicies = pgTable(
+  "insurance_policies",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    /** short display label for lists, e.g. "LIC Jeevan Anand" */
+    name: text("name").notNull(),
+    kind: insuranceKind("kind").notNull().default("life"),
+    /** car/bike/other for a vehicle policy; null for life/health */
+    vehicleType: vehicleKind("vehicle_type"),
+    /** insurance company, e.g. "LIC", "Star Health" */
+    insurer: text("insurer").notNull().default(""),
+    policyNumber: text("policy_number").notNull().default(""),
+    /** sum assured (life) / sum insured (health) / IDV (vehicle), in paise */
+    sumAssuredPaise: bigint("sum_assured_paise", { mode: "number" }).notNull().default(0),
+    /** accrued bonus / loyalty additions (endowment life), in paise */
+    bonusPaise: bigint("bonus_paise", { mode: "number" }).notNull().default(0),
+    /** premium per payment, in paise */
+    premiumPaise: bigint("premium_paise", { mode: "number" }).notNull().default(0),
+    premiumFrequency: premiumFrequency("premium_frequency").notNull().default("yearly"),
+    /** policy commencement ("started from") */
+    startDate: date("start_date"),
+    /** next renewal / premium due date */
+    renewalDate: date("renewal_date"),
+    /** endowment/money-back maturity; null for pure term, health, vehicle */
+    maturityDate: date("maturity_date"),
+    nominee: text("nominee").notNull().default(""),
+    notes: text("notes").notNull().default(""),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("insurance_policies_user_idx").on(t.userId)],
+);
 
 export const rewardEntries = pgTable(
   "reward_entries",

@@ -24,6 +24,7 @@ const NAV_SECTIONS = [
   { to: "/cards", label: "Credit Cards" },
   { to: "/emis", label: "EMIs & Loans" },
   { to: "/bills", label: "Bills & Subscriptions" },
+  { to: "/insurance", label: "Insurance" },
   { to: "/insights", label: "Insights" },
   { to: "/reports", label: "Reports" },
   { to: "/settings", label: "Settings" },
