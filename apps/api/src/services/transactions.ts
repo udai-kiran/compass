@@ -92,10 +92,30 @@ async function hydrate(db: DbOrTx, rows: TxRow[]): Promise<Transaction[]> {
     splitsByTx.set(s.transactionId, list);
   }
   const linkByTx = new Map<string, string>();
+  const counterpartTxByTx = new Map<string, string>();
   for (const l of linkRows) {
     linkByTx.set(l.outTransactionId, l.id);
     linkByTx.set(l.inTransactionId, l.id);
+    counterpartTxByTx.set(l.outTransactionId, l.inTransactionId);
+    counterpartTxByTx.set(l.inTransactionId, l.outTransactionId);
   }
+  // Resolve each transfer leg's *counterpart account* — the other leg often isn't
+  // in this page, so look up just the account of the counterpart transactions.
+  const counterpartTxIds = [
+    ...new Set(rows.map((r) => counterpartTxByTx.get(r.id)).filter((id): id is string => !!id)),
+  ];
+  const accountByCounterpartTx = new Map<string, string>();
+  if (counterpartTxIds.length > 0) {
+    const cpRows = await db.query.transactions.findMany({
+      where: inArray(transactions.id, counterpartTxIds),
+      columns: { id: true, accountId: true },
+    });
+    for (const t of cpRows) accountByCounterpartTx.set(t.id, t.accountId);
+  }
+  const counterpartAccountByTx = (id: string): string | null => {
+    const cpTx = counterpartTxByTx.get(id);
+    return cpTx ? (accountByCounterpartTx.get(cpTx) ?? null) : null;
+  };
   return rows.map((r) => ({
     id: r.id,
     accountId: r.accountId,
@@ -107,6 +127,7 @@ async function hydrate(db: DbOrTx, rows: TxRow[]): Promise<Transaction[]> {
     tags: r.tags,
     source: r.source,
     transferLinkId: linkByTx.get(r.id) ?? null,
+    transferCounterpartAccountId: counterpartAccountByTx(r.id),
     policyId: r.policyId,
     splits: splitsByTx.get(r.id) ?? [],
   }));
