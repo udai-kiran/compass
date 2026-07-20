@@ -18,6 +18,8 @@ export const CardDetailsSchema = z.object({
   utilizationAlertPct: z.number().int().min(1).max(100).nullable(),
   remindDays: z.number().int().min(0).max(30),
   earnRatePer100: z.number().int().min(0),
+  /** whether a statement-PDF password is stored; the value itself is never sent out */
+  hasStatementPassword: z.boolean(),
 });
 export type CardDetails = z.infer<typeof CardDetailsSchema>;
 
@@ -38,6 +40,11 @@ export const UpsertCardDetailsSchema = z.object({
   utilizationAlertPct: z.number().int().min(1).max(100).nullable().default(30),
   remindDays: z.number().int().min(0).max(30).default(3),
   earnRatePer100: z.number().int().min(0).default(0),
+  /**
+   * Password to open this card's statement PDFs. Omit to leave it unchanged, ""
+   * to clear it, a value to set it. Stored encrypted; never returned.
+   */
+  statementPassword: z.string().max(200).optional(),
 });
 export type UpsertCardDetails = z.input<typeof UpsertCardDetailsSchema>;
 

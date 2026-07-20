@@ -25,6 +25,7 @@ import {
 import { InstitutionDatalist, InstitutionIcon, INSTITUTION_LIST_ID } from "../../lib/institutions.tsx";
 import { UpiQr, upiPayUri } from "../../components/UpiQr.tsx";
 import { useAccountMutations, useAccounts } from "../../lib/queries.ts";
+import { useCards, useStatementPasswordMutation } from "../../lib/card-queries.ts";
 import { toast } from "../../lib/toast.tsx";
 
 const SUBTYPE_LABELS: Record<BankAccountSubtype, string> = {
@@ -99,7 +100,72 @@ function AccountDetail({ account }: { account: AccountWithBalance }) {
       {isBankAccount(account.type) && <BankSection key={account.type} account={account} />}
       {isOverdraftAccount(account.type) && <OverdraftSection key={account.type} account={account} />}
       {isRetirementAccount(account.type) && <RetirementSection key={account.type} account={account} />}
+      {account.type === "credit_card" && <StatementPasswordSection account={account} />}
     </div>
+  );
+}
+
+function StatementPasswordSection({ account }: { account: AccountWithBalance }) {
+  const { data: cards } = useCards();
+  const mutation = useStatementPasswordMutation();
+  const card = cards?.find((c) => c.accountId === account.id);
+  const hasPassword = card?.details?.hasStatementPassword ?? false;
+  const [password, setPassword] = useState("");
+  const dirty = password.trim() !== "";
+
+  function save(value: string, msg: string) {
+    mutation.mutate(
+      { accountId: account.id, password: value },
+      {
+        onSuccess: () => {
+          toast(msg, "success");
+          setPassword("");
+        },
+      },
+    );
+  }
+
+  function submit(e: FormEvent) {
+    e.preventDefault();
+    if (dirty) save(password, "Statement password saved");
+  }
+
+  return (
+    <Section
+      title="Statement password"
+      hint="Opens this card's password-protected e-statement PDFs. Stored encrypted — never shown again."
+    >
+      <form onSubmit={submit} className="space-y-3">
+        <Field label="Password">
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoComplete="off"
+            className={inputClass}
+            placeholder={hasPassword ? "•••••••• saved — type to replace" : "e-statement password"}
+          />
+        </Field>
+        <div className="flex items-center gap-3 pl-[8.75rem]">
+          <button
+            type="submit"
+            disabled={!dirty || mutation.isPending}
+            className="rounded-md bg-slate-800 px-3 py-1.5 text-sm text-white disabled:opacity-40"
+          >
+            {mutation.isPending ? "Saving…" : "Save"}
+          </button>
+          {hasPassword && (
+            <button
+              type="button"
+              onClick={() => save("", "Statement password removed")}
+              className="text-xs text-red-600 hover:underline"
+            >
+              Remove
+            </button>
+          )}
+        </div>
+      </form>
+    </Section>
   );
 }
 

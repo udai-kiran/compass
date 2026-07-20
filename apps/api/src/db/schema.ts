@@ -602,6 +602,12 @@ export const cardDetails = pgTable("card_details", {
    * unknown or the issuer has no VPA scheme.
    */
   billMobile: text("bill_mobile").notNull().default(""),
+  /**
+   * Password to open this card's statement PDFs, encrypted at rest (secret-box).
+   * "" when unset. Never returned to the client — the API exposes only whether
+   * one is stored (see CardDetails.hasStatementPassword).
+   */
+  statementPasswordEnc: text("statement_password_enc").notNull().default(""),
   /** statement close day of month (1–28) */
   cycleDay: integer("cycle_day").notNull().default(1),
   /** payment due day of month (1–28); first occurrence after the close */

@@ -37,6 +37,21 @@ export function useCardDetailsMutation() {
   });
 }
 
+/** Set ("" to clear) just the statement-PDF password, without touching cycle/limit. */
+export function useStatementPasswordMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ accountId, password }: { accountId: string; password: string }) =>
+      send(
+        "PUT",
+        `/api/cards/${accountId}/statement-password`,
+        z.object({ hasStatementPassword: z.boolean() }),
+        { password },
+      ),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["cards"] }),
+  });
+}
+
 export function useRewards(accountId: string | null) {
   return useQuery({
     queryKey: ["rewards", accountId],

@@ -13,8 +13,10 @@ import {
   deleteRewardEntry,
   listCards,
   listRewards,
+  setCardStatementPassword,
   upsertCardDetails,
 } from "../services/cards.ts";
+import { mailboxSecret } from "../services/mailboxes.ts";
 
 const AccountParams = z.object({ accountId: z.uuid() });
 const RewardParams = z.object({ accountId: z.uuid(), id: z.uuid() });
@@ -37,7 +39,33 @@ export async function cardRoutes(app: FastifyInstance) {
         response: { 200: CardDetailsSchema },
       },
     },
-    async (req) => upsertCardDetails(app.db, req.session!.userId, req.params.accountId, req.body),
+    async (req) =>
+      upsertCardDetails(
+        app.db,
+        req.session!.userId,
+        req.params.accountId,
+        req.body,
+        mailboxSecret(app.config),
+      ),
+  );
+
+  r.put(
+    "/api/cards/:accountId/statement-password",
+    {
+      schema: {
+        params: AccountParams,
+        body: z.object({ password: z.string().max(200) }),
+        response: { 200: z.object({ hasStatementPassword: z.boolean() }) },
+      },
+    },
+    async (req) =>
+      setCardStatementPassword(
+        app.db,
+        req.session!.userId,
+        req.params.accountId,
+        req.body.password,
+        mailboxSecret(app.config),
+      ),
   );
 
   r.get(
