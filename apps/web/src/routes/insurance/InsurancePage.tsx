@@ -1,9 +1,12 @@
 import { useState, type FormEvent, type ReactNode } from "react";
 import {
   formatINR,
+  HealthTypeSchema,
   InsuranceKindSchema,
+  isFixedBenefit,
   PremiumFrequencySchema,
   VehicleKindSchema,
+  type HealthType,
   type InsuranceKind,
   type InsurancePolicy,
   type PremiumFrequency,
@@ -25,6 +28,15 @@ const VEHICLE_LABELS: Record<VehicleKind, string> = {
   other: "Other",
 };
 
+const HEALTH_LABELS: Record<HealthType, string> = {
+  indemnity: "Indemnity",
+  top_up: "Top-up / super top-up",
+  critical_illness: "Critical illness",
+  hospital_cash: "Hospital cash",
+  personal_accident: "Personal accident",
+  disease_specific: "Disease-specific",
+};
+
 const FREQ_LABELS: Record<PremiumFrequency, string> = {
   monthly: "Monthly",
   quarterly: "Quarterly",
@@ -33,12 +45,16 @@ const FREQ_LABELS: Record<PremiumFrequency, string> = {
   single: "Single / one-time",
 };
 
-/** What the cover figure is called for each kind. */
-const COVER_LABEL: Record<InsuranceKind, string> = {
-  life: "Sum assured",
-  health: "Sum insured",
-  vehicle: "IDV",
-};
+/**
+ * What the cover figure is called. Indemnity health cover is a reimbursement
+ * ceiling ("Sum insured"); a fixed-benefit health plan pays a guaranteed lump
+ * sum, so it reads like a life "Sum assured".
+ */
+function coverLabel(kind: InsuranceKind, healthType: HealthType | null): string {
+  if (kind === "life") return "Sum assured";
+  if (kind === "vehicle") return "IDV";
+  return healthType && isFixedBenefit(healthType) ? "Sum assured" : "Sum insured";
+}
 
 export function InsurancePage() {
   const { data: policies, isLoading } = usePolicies();
@@ -114,7 +130,9 @@ function PolicyCard({ policy }: { policy: InsurancePolicy }) {
   const kindLabel =
     policy.kind === "vehicle" && policy.vehicleType
       ? `${VEHICLE_LABELS[policy.vehicleType]} insurance`
-      : `${KIND_LABELS[policy.kind]} insurance`;
+      : policy.kind === "health" && policy.healthType
+        ? `Health · ${HEALTH_LABELS[policy.healthType]}`
+        : `${KIND_LABELS[policy.kind]} insurance`;
 
   function del() {
     if (!confirm(`Delete "${policy.name}"? Its logged premiums stay in the ledger.`)) return;
@@ -161,7 +179,7 @@ function PolicyCard({ policy }: { policy: InsurancePolicy }) {
 
       {!editing && (
         <div className="grid grid-cols-2 gap-4 p-4 sm:grid-cols-4">
-          <Stat label={COVER_LABEL[policy.kind]} value={formatINR(policy.sumAssuredPaise)} />
+          <Stat label={coverLabel(policy.kind, policy.healthType)} value={formatINR(policy.sumAssuredPaise)} />
           {policy.bonusPaise > 0 && <Stat label="Bonus" value={formatINR(policy.bonusPaise)} />}
           <Stat
             label="Premium"
@@ -170,8 +188,22 @@ function PolicyCard({ policy }: { policy: InsurancePolicy }) {
           <Stat label="Started" value={policy.startDate ?? "—"} />
           <Stat label="Renews" value={policy.renewalDate ?? "—"} />
           {policy.kind === "life" && <Stat label="Matures" value={policy.maturityDate ?? "—"} />}
+          {policy.vehicleRegNo && <Stat label="Reg. no." value={policy.vehicleRegNo} />}
           {policy.nominee && <Stat label="Nominee" value={policy.nominee} />}
         </div>
+      )}
+
+      {policy.policyWordingUrl && !editing && (
+        <p className="border-t border-slate-100 px-4 py-3 text-sm">
+          <a
+            href={policy.policyWordingUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 text-slate-600 underline hover:text-slate-800"
+          >
+            Policy wordings ↗
+          </a>
+        </p>
       )}
 
       {policy.notes && !editing && (
@@ -211,8 +243,11 @@ function PolicyForm({ policy, onDone }: { policy?: InsurancePolicy; onDone: () =
   const [name, setName] = useState(policy?.name ?? "");
   const [kind, setKind] = useState<InsuranceKind>(policy?.kind ?? "life");
   const [vehicleType, setVehicleType] = useState<VehicleKind | "">(policy?.vehicleType ?? "");
+  const [vehicleRegNo, setVehicleRegNo] = useState(policy?.vehicleRegNo ?? "");
+  const [healthType, setHealthType] = useState<HealthType | "">(policy?.healthType ?? "");
   const [insurer, setInsurer] = useState(policy?.insurer ?? "");
   const [policyNumber, setPolicyNumber] = useState(policy?.policyNumber ?? "");
+  const [wordingUrl, setWordingUrl] = useState(policy?.policyWordingUrl ?? "");
   const [sumAssured, setSumAssured] = useState(fromPaise(policy?.sumAssuredPaise ?? 0));
   const [bonus, setBonus] = useState(fromPaise(policy?.bonusPaise ?? 0));
   const [premium, setPremium] = useState(fromPaise(policy?.premiumPaise ?? 0));
@@ -233,8 +268,11 @@ function PolicyForm({ policy, onDone }: { policy?: InsurancePolicy; onDone: () =
       name: name.trim(),
       kind,
       vehicleType: kind === "vehicle" ? (vehicleType || null) : null,
+      vehicleRegNo: kind === "vehicle" ? vehicleRegNo.trim() : "",
+      healthType: kind === "health" ? (healthType || null) : null,
       insurer: insurer.trim(),
       policyNumber: policyNumber.trim(),
+      policyWordingUrl: wordingUrl.trim(),
       sumAssuredPaise: toPaise(sumAssured),
       bonusPaise: toPaise(bonus),
       premiumPaise: toPaise(premium),
@@ -268,12 +306,34 @@ function PolicyForm({ policy, onDone }: { policy?: InsurancePolicy; onDone: () =
         </select>
       </Field>
       {kind === "vehicle" && (
-        <Field label="Vehicle">
-          <select value={vehicleType} onChange={(e) => setVehicleType(e.target.value as VehicleKind | "")} className="input">
+        <>
+          <Field label="Vehicle">
+            <select value={vehicleType} onChange={(e) => setVehicleType(e.target.value as VehicleKind | "")} className="input">
+              <option value="">Not set</option>
+              {VehicleKindSchema.options.map((v) => (
+                <option key={v} value={v}>
+                  {VEHICLE_LABELS[v]}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Registration number">
+            <input
+              value={vehicleRegNo}
+              onChange={(e) => setVehicleRegNo(e.target.value.toUpperCase())}
+              className="input font-mono"
+              placeholder="KA01AB1234"
+            />
+          </Field>
+        </>
+      )}
+      {kind === "health" && (
+        <Field label="Health plan type">
+          <select value={healthType} onChange={(e) => setHealthType(e.target.value as HealthType | "")} className="input">
             <option value="">Not set</option>
-            {VehicleKindSchema.options.map((v) => (
-              <option key={v} value={v}>
-                {VEHICLE_LABELS[v]}
+            {HealthTypeSchema.options.map((h) => (
+              <option key={h} value={h}>
+                {HEALTH_LABELS[h]}
               </option>
             ))}
           </select>
@@ -285,7 +345,7 @@ function PolicyForm({ policy, onDone }: { policy?: InsurancePolicy; onDone: () =
       <Field label="Policy number">
         <input value={policyNumber} onChange={(e) => setPolicyNumber(e.target.value)} className="input font-mono" />
       </Field>
-      <Field label={`${COVER_LABEL[kind]} (₹)`}>
+      <Field label={`${coverLabel(kind, kind === "health" ? healthType || null : null)} (₹)`}>
         <input inputMode="decimal" value={sumAssured} onChange={(e) => setSumAssured(e.target.value)} className="input" placeholder="1000000" />
       </Field>
       <Field label="Bonus so far (₹)">
@@ -316,6 +376,15 @@ function PolicyForm({ policy, onDone }: { policy?: InsurancePolicy; onDone: () =
       )}
       <Field label="Nominee">
         <input value={nominee} onChange={(e) => setNominee(e.target.value)} className="input" placeholder="Who's covered / benefits" />
+      </Field>
+      <Field label="Policy wordings URL">
+        <input
+          type="url"
+          value={wordingUrl}
+          onChange={(e) => setWordingUrl(e.target.value)}
+          className="input"
+          placeholder="https://insurer.com/…/wordings.pdf"
+        />
       </Field>
       <Field label="Notes">
         <input value={notes} onChange={(e) => setNotes(e.target.value)} className="input" placeholder="Optional" />

@@ -703,6 +703,14 @@ export const overdraftDetails = pgTable("overdraft_details", {
 
 export const insuranceKind = pgEnum("insurance_kind", ["life", "health", "vehicle"]);
 export const vehicleKind = pgEnum("vehicle_kind", ["car", "bike", "other"]);
+export const healthType = pgEnum("health_type", [
+  "indemnity",
+  "top_up",
+  "critical_illness",
+  "hospital_cash",
+  "personal_accident",
+  "disease_specific",
+]);
 export const premiumFrequency = pgEnum("premium_frequency", [
   "monthly",
   "quarterly",
@@ -731,9 +739,15 @@ export const insurancePolicies = pgTable(
     kind: insuranceKind("kind").notNull().default("life"),
     /** car/bike/other for a vehicle policy; null for life/health */
     vehicleType: vehicleKind("vehicle_type"),
+    /** vehicle registration number; "" for non-vehicle policies */
+    vehicleRegNo: text("vehicle_reg_no").notNull().default(""),
+    /** indemnity/critical-illness/etc. for a health policy; null for life/vehicle */
+    healthType: healthType("health_type"),
     /** insurance company, e.g. "LIC", "Star Health" */
     insurer: text("insurer").notNull().default(""),
     policyNumber: text("policy_number").notNull().default(""),
+    /** URL to the policy wordings/terms doc; "" when unset. For agents to read later. */
+    policyWordingUrl: text("policy_wording_url").notNull().default(""),
     /** sum assured (life) / sum insured (health) / IDV (vehicle), in paise */
     sumAssuredPaise: bigint("sum_assured_paise", { mode: "number" }).notNull().default(0),
     /** accrued bonus / loyalty additions (endowment life), in paise */
