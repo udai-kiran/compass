@@ -101,11 +101,36 @@ function UploadCard({ onStaged }: { onStaged: (b: ImportBatch) => void }) {
 
 function BatchWorkbench({ batch, onBack }: { batch: ImportBatch; onBack: () => void }) {
   const staged = batch.status === "staged";
+  const { remove } = useImportMutations();
+  // A committed batch must be rolled back before it can be removed; anything else
+  // (staged — with or without a mapping — or already rolled back) can be deleted.
+  const deletable = batch.status !== "committed";
+
   return (
     <div>
-      <button onClick={onBack} className="mb-3 text-sm text-slate-500 underline">
-        ← All imports
-      </button>
+      <div className="mb-3 flex items-center justify-between">
+        <button onClick={onBack} className="text-sm text-slate-500 underline">
+          ← All imports
+        </button>
+        {deletable && (
+          <button
+            disabled={remove.isPending}
+            onClick={() => {
+              if (confirm("Delete this import? It hasn't touched your ledger, so nothing is lost.")) {
+                remove.mutate(batch.id, {
+                  onSuccess: () => {
+                    toast(staged ? "Import cancelled" : "Import deleted", "success");
+                    onBack();
+                  },
+                });
+              }
+            }}
+            className="rounded-md border border-red-200 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 disabled:opacity-50"
+          >
+            {remove.isPending ? "Deleting…" : staged ? "Cancel import" : "Delete import"}
+          </button>
+        )}
+      </div>
       <div className="mb-3 flex items-baseline justify-between">
         <h2 className="text-lg font-semibold text-slate-800">{batch.fileName}</h2>
         <span className="text-sm text-slate-500">
@@ -114,7 +139,7 @@ function BatchWorkbench({ batch, onBack }: { batch: ImportBatch; onBack: () => v
       </div>
       {staged && <MappingEditor batch={batch} />}
       {batch.mapping && <RowsTable batch={batch} />}
-      {staged && batch.mapping && <CommitBar batch={batch} onDone={onBack} />}
+      {staged && batch.mapping && <CommitBar batch={batch} />}
       {batch.status === "committed" && <RollbackBar batch={batch} onDone={onBack} />}
     </div>
   );
@@ -413,16 +438,10 @@ function RowsTable({ batch }: { batch: ImportBatch }) {
   );
 }
 
-function CommitBar({ batch, onDone }: { batch: ImportBatch; onDone: () => void }) {
-  const { commit, remove } = useImportMutations();
+function CommitBar({ batch }: { batch: ImportBatch }) {
+  const { commit } = useImportMutations();
   return (
-    <div className="mt-3 flex items-center justify-between rounded-lg border border-slate-200 bg-white p-3">
-      <button
-        onClick={() => remove.mutate(batch.id, { onSuccess: onDone })}
-        className="text-sm text-red-600 underline"
-      >
-        Discard batch
-      </button>
+    <div className="mt-3 flex items-center justify-end rounded-lg border border-slate-200 bg-white p-3">
       <button
         disabled={commit.isPending}
         onClick={() =>
