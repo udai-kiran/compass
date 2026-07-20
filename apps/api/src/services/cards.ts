@@ -10,6 +10,7 @@ import { formatINR, UpsertCardDetailsSchema } from "@compass/shared";
 import type { Db } from "../db/index.ts";
 import { accounts, alertLedger, cardDetails, rewardEntries } from "../db/schema.ts";
 import { HttpError } from "../lib/errors.ts";
+import { decryptSecret, encryptSecret } from "../lib/secret-box.ts";
 import { createNotification } from "./notifications.ts";
 import { currentPeriodKey } from "./periods.ts";
 
@@ -27,6 +28,8 @@ function toDetails(d: DetailsRow): CardDetails {
     utilizationAlertPct: d.utilizationAlertPct,
     remindDays: d.remindDays,
     earnRatePer100: d.earnRatePer100,
+    // Expose only that a password exists — never the value itself.
+    hasStatementPassword: d.statementPasswordEnc !== "",
   };
 }
 
@@ -72,6 +75,7 @@ export async function upsertCardDetails(
   userId: string,
   accountId: string,
   input: UpsertCardDetails,
+  secret: string,
 ): Promise<CardDetails> {
   await ownedCardAccount(db, userId, accountId);
   const parsed = UpsertCardDetailsSchema.parse(input);
@@ -79,14 +83,18 @@ export async function upsertCardDetails(
   // out of the card_details row and write it through to the account. Both writes
   // run in one transaction so a failed account update can't leave the card_details
   // change committed on its own.
-  const { bankName, ...cardCols } = parsed;
+  const { bankName, statementPassword, ...cardCols } = parsed;
+  // Statement password: omitted → leave unchanged; "" → clear; a value → encrypt.
+  const encValue = statementPassword ? encryptSecret(statementPassword, secret) : "";
+  const passwordSet =
+    statementPassword === undefined ? {} : { statementPasswordEnc: encValue };
   const row = await db.transaction(async (tx) => {
     const rows = await tx
       .insert(cardDetails)
-      .values({ ...cardCols, accountId, userId })
+      .values({ ...cardCols, accountId, userId, statementPasswordEnc: encValue })
       .onConflictDoUpdate({
         target: cardDetails.accountId,
-        set: { ...cardCols, updatedAt: new Date() },
+        set: { ...cardCols, ...passwordSet, updatedAt: new Date() },
       })
       .returning();
     // Omitted bankName means "leave the issuer as-is"; "" clears it, a name sets it.
@@ -99,6 +107,48 @@ export async function upsertCardDetails(
     return rows[0]!;
   });
   return toDetails(row);
+}
+
+/**
+ * Set (or, with "", clear) just this card's statement-PDF password, without
+ * touching its cycle/limit — so it can be edited from the account page too.
+ * Creates the card_details row (with defaults) if the card has none yet.
+ */
+export async function setCardStatementPassword(
+  db: Db,
+  userId: string,
+  accountId: string,
+  password: string,
+  secret: string,
+): Promise<{ hasStatementPassword: boolean }> {
+  await ownedCardAccount(db, userId, accountId);
+  const enc = password ? encryptSecret(password, secret) : "";
+  await db
+    .insert(cardDetails)
+    .values({ accountId, userId, statementPasswordEnc: enc })
+    .onConflictDoUpdate({
+      target: cardDetails.accountId,
+      set: { statementPasswordEnc: enc, updatedAt: new Date() },
+    });
+  return { hasStatementPassword: enc !== "" };
+}
+
+/**
+ * The decrypted statement-PDF password for a card, or null when none is stored.
+ * Used by the statement importer to open the encrypted PDF.
+ */
+export async function getCardStatementPassword(
+  db: Db,
+  userId: string,
+  accountId: string,
+  secret: string,
+): Promise<string | null> {
+  const row = await db.query.cardDetails.findFirst({
+    where: and(eq(cardDetails.accountId, accountId), eq(cardDetails.userId, userId)),
+    columns: { statementPasswordEnc: true },
+  });
+  if (!row || row.statementPasswordEnc === "") return null;
+  return decryptSecret(row.statementPasswordEnc, secret);
 }
 
 export async function listCards(db: Db, userId: string, today?: string): Promise<CardSummary[]> {

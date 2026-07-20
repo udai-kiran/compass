@@ -4,6 +4,7 @@ import type { AiProvider } from "@compass/ai";
 import {
   decideStatus,
   dedupeHashFor,
+  extractStatementTxns,
   matchAccount,
   matchCategory,
   runExtraction,
@@ -42,7 +43,7 @@ const email = (body: string): ParsedEmail => ({
   subject: "Transaction alert",
   from: "alerts@bank.example",
   body,
-  hasAttachments: false,
+  attachments: [],
 });
 
 const ctx = (accounts: AccountRef[] = [], categories: CategoryRef[] = []) => ({
@@ -208,4 +209,36 @@ test("runExtraction: unparseable model output degrades to 'other'/ignored", asyn
   assert.equal(out.classification, "other");
   assert.equal(out.status, "ignored");
   assert.equal(out.rows.length, 0);
+});
+
+test("extractStatementTxns: statement lines → normalized rows against the matched card", async () => {
+  const ai = fakeAi(
+    JSON.stringify({
+      classification: "card_statement",
+      transactions: [
+        { amount: 450, direction: "debit", date: "2026-05-27", counterparty: "UPI-Cherukupalli", accountHint: "", category: "", bankRef: null, sourceQuote: "27 May 26 UPI 450.00 D", confidence: 0.9 },
+        { amount: 6419.06, direction: "credit", date: "2026-05-30", counterparty: "PAYMENT RECEIVED", accountHint: "", category: "", bankRef: null, sourceQuote: "30 May 26 PAYMENT 6,419.06 C", confidence: 0.9 },
+      ],
+    }),
+  );
+  const rows = await extractStatementTxns("<statement text>", ai, {
+    receivedDate: "2026-06-24",
+    categories: [],
+    accountId: "card-1",
+  });
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0]!.direction, "debit"); // D = spend
+  assert.equal(rows[0]!.amountPaise, 45000);
+  assert.equal(rows[0]!.suggestedAccountId, "card-1"); // every row tied to the matched card
+  assert.equal(rows[1]!.direction, "credit"); // C = payment/refund
+  assert.equal(rows[1]!.amountPaise, 641906);
+});
+
+test("extractStatementTxns: an unparseable model reply yields no rows, not a crash", async () => {
+  const rows = await extractStatementTxns("<text>", fakeAi("nope"), {
+    receivedDate: "2026-06-24",
+    categories: [],
+    accountId: "card-1",
+  });
+  assert.equal(rows.length, 0);
 });

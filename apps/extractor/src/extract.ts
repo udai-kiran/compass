@@ -54,25 +54,27 @@ const EXTRACT_SYSTEM = [
   "Extract every distinct transaction; a statement may list many. Never invent figures — if a field is unknown use null or \"\". Amounts are Indian Rupees.",
 ].join("\n");
 
-function userPrompt(email: ParsedEmail, categories: CategoryRef[]): string {
+/** The user's category names for the model to pick from verbatim; "" when none. */
+function categoryLines(categories: CategoryRef[]): string {
+  if (categories.length === 0) return "";
   const names = (kind: CategoryRef["kind"]) =>
     categories
       .filter((c) => c.kind === kind)
       .map((c) => c.name)
       .join(", ") || "(none)";
-  const catBlock =
-    categories.length > 0
-      ? [
-          "",
-          "Categories (choose a name verbatim for `category`, or \"\" if none fits):",
-          `- expense (for debits): ${names("expense")}`,
-          `- income (for credits): ${names("income")}`,
-        ]
-      : [];
+  return [
+    'Categories (choose a name verbatim for `category`, or "" if none fits):',
+    `- expense (for debits): ${names("expense")}`,
+    `- income (for credits): ${names("income")}`,
+  ].join("\n");
+}
+
+function userPrompt(email: ParsedEmail, categories: CategoryRef[]): string {
+  const cats = categoryLines(categories);
   return [
     `Subject: ${email.subject}`,
     `From: ${email.from}`,
-    ...catBlock,
+    ...(cats ? ["", cats] : []),
     "",
     email.body,
   ].join("\n");
@@ -211,6 +213,38 @@ export function dedupeHashFor(row: {
   return `sig:${createHash("sha256").update(sig).digest("hex").slice(0, 32)}`;
 }
 
+type ModelTxn = z.infer<typeof ModelTxnSchema>;
+
+/**
+ * Normalize one model transaction into a persistable inbox row: rupees → paise,
+ * date fallback to the received date, category match, dedupe hash. Returns null
+ * for a junk (zero/negative) amount. Shared by email and statement extraction.
+ */
+function toInboxRow(
+  t: ModelTxn,
+  ctx: { receivedDate: string | null; categories: CategoryRef[] },
+  suggestedAccountId: string | null,
+): InboxRow | null {
+  const amountPaise = Math.round(Math.abs(t.amount) * 100);
+  if (!Number.isFinite(amountPaise) || amountPaise <= 0) return null;
+  const occurredAt = validIsoDate(t.date) ?? ctx.receivedDate;
+  const base = {
+    amountPaise,
+    direction: t.direction,
+    occurredAt,
+    counterparty: t.counterparty.trim(),
+    bankRef: t.bankRef?.trim() || null,
+  };
+  return {
+    ...base,
+    suggestedAccountId,
+    suggestedCategoryId: matchCategory(t.category, t.direction, ctx.categories),
+    sourceQuote: t.sourceQuote.trim(),
+    confidence: t.confidence,
+    dedupeHash: dedupeHashFor(base),
+  };
+}
+
 /** Ask the model to classify + extract, returning validated model output. */
 export async function classifyAndExtract(
   email: ParsedEmail,
@@ -246,24 +280,59 @@ export async function runExtraction(
 
   const rows: InboxRow[] = [];
   for (const t of model.transactions) {
-    const amountPaise = Math.round(Math.abs(t.amount) * 100);
-    if (!Number.isFinite(amountPaise) || amountPaise <= 0) continue; // discard junk amounts
-    const occurredAt = validIsoDate(t.date) ?? ctx.receivedDate;
-    const base = {
-      amountPaise,
-      direction: t.direction,
-      occurredAt,
-      counterparty: t.counterparty.trim(),
-      bankRef: t.bankRef?.trim() || null,
-    };
-    rows.push({
-      ...base,
-      suggestedAccountId: matchAccount(t.accountHint, ctx.accounts),
-      suggestedCategoryId: matchCategory(t.category, t.direction, ctx.categories),
-      sourceQuote: t.sourceQuote.trim(),
-      confidence: t.confidence,
-      dedupeHash: dedupeHashFor(base),
-    });
+    const row = toInboxRow(t, ctx, matchAccount(t.accountHint, ctx.accounts));
+    if (row) rows.push(row);
   }
   return { classification: model.classification, status, rows };
+}
+
+// ---------------------------------------------------------------------------
+// Credit-card statement extraction (the PDF's text, once decrypted)
+// ---------------------------------------------------------------------------
+
+/** Statements can run long; cap the text so a big one can't blow the prompt. */
+const MAX_STATEMENT_CHARS = 24_000;
+
+const STATEMENT_SYSTEM = [
+  "You extract EVERY transaction from the text of a CREDIT-CARD STATEMENT.",
+  'Return ONLY a JSON object, no prose: {"classification": "card_statement", "transactions": [<txn>, ...]}',
+  "",
+  "Each <txn> is:",
+  '{"amount": number (rupees, positive), "direction": "debit"|"credit",',
+  ' "date": "YYYY-MM-DD" or null, "counterparty": string (the merchant/description),',
+  ' "accountHint": "", "category": string (best-fit category NAME chosen verbatim from the list — expense for a debit, income for a credit — or ""),',
+  ' "bankRef": string or null, "sourceQuote": string (the verbatim statement line), "confidence": number 0..1}',
+  "",
+  "A transaction line looks like: DATE  DESCRIPTION  AMOUNT  <C|D>.",
+  'direction: a "D" (debit) is a purchase/spend on the card → "debit"; a "C" (credit) is a payment received, refund, or cashback → "credit".',
+  "Extract every dated transaction in the statement period. Ignore summary, subtotal, interest-explanation and marketing lines that aren't dated transactions. Never invent figures. Amounts are Indian Rupees; a 2-digit year expands to 20YY.",
+].join("\n");
+
+/**
+ * Extract every transaction from a decrypted statement's text. The card is
+ * already known — its stored password opened the PDF — so every row is suggested
+ * against that account. Reuses the same normalization as email extraction.
+ */
+export async function extractStatementTxns(
+  text: string,
+  ai: AiProvider,
+  ctx: { receivedDate: string | null; categories: CategoryRef[]; accountId: string | null },
+): Promise<InboxRow[]> {
+  const cats = categoryLines(ctx.categories);
+  const turn = await ai.chat({
+    system: STATEMENT_SYSTEM,
+    messages: [
+      { role: "user", content: `${cats ? `${cats}\n\n` : ""}STATEMENT:\n${text.slice(0, MAX_STATEMENT_CHARS)}` },
+    ],
+    tools: [],
+    maxTokens: 4096,
+  });
+  const parsed = ModelResultSchema.safeParse(extractJson(turn.text));
+  if (!parsed.success) return [];
+  const rows: InboxRow[] = [];
+  for (const t of parsed.data.transactions) {
+    const row = toInboxRow(t, ctx, ctx.accountId);
+    if (row) rows.push(row);
+  }
+  return rows;
 }

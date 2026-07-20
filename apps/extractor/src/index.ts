@@ -7,13 +7,18 @@ import {
   loadAccounts,
   loadAiSettings,
   loadCategories,
+  loadCreditCards,
   loadIngestion,
   saveResults,
   setStatus,
 } from "./db.ts";
 import { decryptSecret } from "./crypto.ts";
-import { parseEmail } from "./email.ts";
-import { runExtraction } from "./extract.ts";
+import { parseEmail, type ParsedEmail } from "./email.ts";
+import { extractStatementTxns, runExtraction } from "./extract.ts";
+import { extractPdfText } from "./pdf.ts";
+import type { CategoryRef } from "./extract.ts";
+import type { InboxRow } from "./extract.ts";
+import type { EmailIngestStatus } from "@compass/shared";
 
 const config = loadConfig();
 const pool = createPool(config.DATABASE_URL);
@@ -67,6 +72,51 @@ function baseUrlAllowed(value: string): boolean {
   }
 }
 
+/**
+ * Process a credit-card statement email: find the PDF attachment, open it with
+ * the matching card's stored password (the password that decrypts it identifies
+ * the card), and AI-extract every transaction against that account. Falls back
+ * to an unencrypted statement (no card matched). Leaves it deferred when no
+ * stored password opens the PDF — the user can add the password and replay.
+ */
+async function processStatement(
+  email: ParsedEmail,
+  ai: AiProvider,
+  userId: string,
+  ctx: { receivedDate: string | null; categories: CategoryRef[] },
+): Promise<{ status: EmailIngestStatus; rows: InboxRow[] }> {
+  const pdf = email.attachments.find(
+    (a) => a.contentType.toLowerCase().includes("pdf") || a.filename.toLowerCase().endsWith(".pdf"),
+  );
+  if (!pdf) return { status: "deferred", rows: [] };
+
+  const cards = await loadCreditCards(pool, userId);
+  for (const card of cards) {
+    if (!card.statementPasswordEnc) continue;
+    let password: string;
+    try {
+      password = decryptSecret(card.statementPasswordEnc, secret);
+    } catch {
+      continue; // a bad envelope shouldn't stop us trying the other cards
+    }
+    const opened = await extractPdfText(pdf.content, [password]);
+    if (opened) {
+      const rows = await extractStatementTxns(opened.text, ai, { ...ctx, accountId: card.id });
+      log("info", "statement extracted", { accountId: card.id, found: rows.length });
+      return { status: "extracted", rows };
+    }
+  }
+
+  // Not encrypted (or no stored password matched): open it plainly if we can.
+  const unlocked = await extractPdfText(pdf.content, []);
+  if (unlocked) {
+    const rows = await extractStatementTxns(unlocked.text, ai, { ...ctx, accountId: null });
+    return { status: "extracted", rows };
+  }
+  log("warn", "statement PDF not opened — no matching card password stored");
+  return { status: "deferred", rows: [] };
+}
+
 const worker = new Worker(
   EXTRACT_QUEUE,
   async (job) => {
@@ -94,17 +144,26 @@ const worker = new Worker(
         ? ingestion.receivedAt.toISOString().slice(0, 10)
         : null;
       const outcome = await runExtraction(email, ai, { receivedDate, accounts, categories });
+      // A statement email is recognized here but its transactions live in the PDF;
+      // process that separately, overriding the (deferred) email-body outcome.
+      let status = outcome.status;
+      let rows = outcome.rows;
+      if (outcome.classification === "card_statement") {
+        const stmt = await processStatement(email, ai, ingestion.userId, { receivedDate, categories });
+        status = stmt.status;
+        rows = stmt.rows;
+      }
       const inserted = await saveResults(pool, {
         ingestion,
         classification: outcome.classification,
-        status: outcome.status,
-        rows: outcome.rows,
+        status,
+        rows,
       });
       log("info", "extracted", {
         ingestionId: ingestion.id,
         classification: outcome.classification,
-        status: outcome.status,
-        found: outcome.rows.length,
+        status,
+        found: rows.length,
         inserted,
       });
     } catch (err) {

@@ -1,12 +1,18 @@
 import { simpleParser } from "mailparser";
 
+export interface EmailAttachment {
+  filename: string;
+  contentType: string;
+  content: Uint8Array;
+}
+
 export interface ParsedEmail {
   subject: string;
   from: string;
   /** plain-text body, HTML stripped to text, collapsed and trimmed */
   body: string;
-  /** true when the message carries file attachments (v1 does not read them) */
-  hasAttachments: boolean;
+  /** decoded file attachments — a credit-card statement rides in as a PDF here */
+  attachments: EmailAttachment[];
 }
 
 /** Collapse whitespace and cap length so a runaway body can't blow the prompt. */
@@ -31,9 +37,8 @@ function htmlToText(html: string): string {
 }
 
 /**
- * Parse a raw RFC822 message into the text the model reads. Prefers the
- * text/plain part; falls back to stripping the HTML part. Attachments are
- * flagged but not decoded — v1 handles text/HTML mail only.
+ * Parse a raw RFC822 message into the text the model reads plus any decoded
+ * attachments. Prefers the text/plain part; falls back to stripping the HTML.
  */
 export async function parseEmail(raw: string): Promise<ParsedEmail> {
   const mail = await simpleParser(raw);
@@ -43,6 +48,10 @@ export async function parseEmail(raw: string): Promise<ParsedEmail> {
     subject: mail.subject ?? "",
     from: mail.from?.text ?? "",
     body: normalize(body).slice(0, MAX_BODY_CHARS),
-    hasAttachments: (mail.attachments?.length ?? 0) > 0,
+    attachments: (mail.attachments ?? []).map((a) => ({
+      filename: a.filename ?? "",
+      contentType: a.contentType ?? "",
+      content: new Uint8Array(a.content),
+    })),
   };
 }

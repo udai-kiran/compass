@@ -71,6 +71,29 @@ export async function loadAccounts(pool: pg.Pool, userId: string): Promise<Accou
   }));
 }
 
+export interface CreditCardRef {
+  id: string;
+  name: string;
+  /** encrypted statement-PDF password; "" when the user hasn't stored one */
+  statementPasswordEnc: string;
+}
+
+/** Credit-card accounts + their stored statement password, to open a statement PDF. */
+export async function loadCreditCards(pool: pg.Pool, userId: string): Promise<CreditCardRef[]> {
+  const res = await pool.query<{ id: string; name: string; statement_password_enc: string }>(
+    `select a.id, a.name, coalesce(cd.statement_password_enc, '') as statement_password_enc
+       from accounts a
+       left join card_details cd on cd.account_id = a.id
+      where a.user_id = $1 and a.type = 'credit_card' and a.archived_at is null`,
+    [userId],
+  );
+  return res.rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    statementPasswordEnc: r.statement_password_enc,
+  }));
+}
+
 /** The user's own categories — the model may only tag a draft with one of these. */
 export async function loadCategories(pool: pg.Pool, userId: string): Promise<CategoryRef[]> {
   const res = await pool.query<{ id: string; name: string; kind: "income" | "expense" }>(

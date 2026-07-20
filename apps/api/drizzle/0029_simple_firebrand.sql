@@ -1,0 +1,1 @@
+ALTER TABLE "card_details" ADD COLUMN "statement_password_enc" text DEFAULT '' NOT NULL;

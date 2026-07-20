@@ -1,5 +1,11 @@
 import { useState, type FormEvent } from "react";
-import { CardNetworkSchema, formatINR, type CardNetwork, type CardSummary } from "@compass/shared";
+import {
+  CardNetworkSchema,
+  formatINR,
+  type CardNetwork,
+  type CardSummary,
+  type UpsertCardDetails,
+} from "@compass/shared";
 import { Meter } from "../../lib/viz.tsx";
 import { toast } from "../../lib/toast.tsx";
 import { UpiQr, upiPayUri } from "../../components/UpiQr.tsx";
@@ -113,7 +119,7 @@ function CardRow({ card }: { card: CardSummary }) {
             onClick={() => setEditing((v) => !v)}
             className="rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-50"
           >
-            {editing ? "Close" : card.details ? "Edit cycle" : "Set up"}
+            {editing ? "Close" : card.details ? "Edit" : "Set up"}
           </button>
         </div>
       </div>
@@ -238,27 +244,43 @@ function DetailsForm({ card, onDone }: { card: CardSummary; onDone: () => void }
   const [alertPct, setAlertPct] = useState(d?.utilizationAlertPct === null ? "" : String(d?.utilizationAlertPct ?? 30));
   const [remindDays, setRemindDays] = useState(String(d?.remindDays ?? 3));
   const [earnRate, setEarnRate] = useState(String(d?.earnRatePer100 ?? 0));
+  const [statementPassword, setStatementPassword] = useState("");
+  const hasPassword = d?.hasStatementPassword ?? false;
+
+  const base = (): UpsertCardDetails & { accountId: string } => ({
+    accountId: card.accountId,
+    network: network === "" ? null : (network as CardNetwork),
+    productName: productName.trim(),
+    bankName: bankName.trim(),
+    billMobile: billMobile.replace(/\D/g, ""),
+    cycleDay: parseInt(cycleDay, 10),
+    dueDay: parseInt(dueDay, 10),
+    creditLimitPaise: Math.round((parseFloat(limit) || 0) * 100),
+    utilizationAlertPct: alertPct === "" ? null : parseInt(alertPct, 10),
+    remindDays: parseInt(remindDays, 10),
+    earnRatePer100: parseInt(earnRate, 10) || 0,
+  });
 
   function submit(e: FormEvent) {
     e.preventDefault();
-    mutation.mutate(
-      {
-        accountId: card.accountId,
-        network: network === "" ? null : (network as CardNetwork),
-        productName: productName.trim(),
-        bankName: bankName.trim(),
-        billMobile: billMobile.replace(/\D/g, ""),
-        cycleDay: parseInt(cycleDay, 10),
-        dueDay: parseInt(dueDay, 10),
-        creditLimitPaise: Math.round((parseFloat(limit) || 0) * 100),
-        utilizationAlertPct: alertPct === "" ? null : parseInt(alertPct, 10),
-        remindDays: parseInt(remindDays, 10),
-        earnRatePer100: parseInt(earnRate, 10) || 0,
+    const body = base();
+    // A typed password replaces the stored one; blank leaves it untouched.
+    if (statementPassword.trim()) body.statementPassword = statementPassword;
+    mutation.mutate(body, {
+      onSuccess: () => {
+        toast("Card cycle saved", "success");
+        onDone();
       },
+    });
+  }
+
+  function removePassword() {
+    mutation.mutate(
+      { ...base(), statementPassword: "" },
       {
         onSuccess: () => {
-          toast("Card cycle saved", "success");
-          onDone();
+          toast("Statement password removed");
+          setStatementPassword("");
         },
       },
     );
@@ -327,6 +349,32 @@ function DetailsForm({ card, onDone }: { card: CardSummary; onDone: () => void }
       </Field>
       <Field label="Reward pts per ₹100">
         <input type="number" min={0} value={earnRate} onChange={(e) => setEarnRate(e.target.value)} className="input" />
+      </Field>
+      <Field
+        label={
+          hasPassword ? "Statement PDF password (saved — type to replace)" : "Statement PDF password"
+        }
+      >
+        <div className="flex items-center gap-2">
+          <input
+            type="password"
+            value={statementPassword}
+            onChange={(e) => setStatementPassword(e.target.value)}
+            autoComplete="off"
+            className="input"
+            placeholder={hasPassword ? "••••••••" : "opens the e-statement PDF"}
+          />
+          {hasPassword && (
+            <button
+              type="button"
+              onClick={removePassword}
+              disabled={mutation.isPending}
+              className="shrink-0 text-xs text-red-600 hover:underline disabled:opacity-40"
+            >
+              Remove
+            </button>
+          )}
+        </div>
       </Field>
       <div className="col-span-2 flex gap-2 sm:col-span-3">
         <button type="submit" disabled={mutation.isPending} className="rounded-md bg-slate-800 px-4 py-1.5 text-sm text-white disabled:opacity-40">
