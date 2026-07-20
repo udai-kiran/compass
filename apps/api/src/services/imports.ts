@@ -24,13 +24,16 @@ const YIELD_EVERY = 2000;
 
 export const BANK_PRESETS: BankPreset[] = [
   {
+    // HDFC's delimited statement columns are: Date, Narration, Chq./Ref.No.,
+    // Value Dt, Withdrawal Amt., Deposit Amt., Closing Balance. Dates are
+    // DD/MM/YY — parseDateCell's DD/MM/YYYY branch expands the 2-digit year.
     name: "HDFC Bank",
     mapping: {
       dateColumn: "Date",
       dateFormat: "DD/MM/YYYY",
       amountMode: "debit_credit",
-      debitColumn: "Debit Amount",
-      creditColumn: "Credit Amount",
+      debitColumn: "Withdrawal Amt.",
+      creditColumn: "Deposit Amt.",
       invertSign: false,
       merchantColumn: "Narration",
     },
