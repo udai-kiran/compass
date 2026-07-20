@@ -48,6 +48,9 @@ const CardsPage = lazy(() =>
 const EMIsPage = lazy(() =>
   import("./routes/emis/EMIsPage.tsx").then((m) => ({ default: m.EMIsPage })),
 );
+const InsurancePage = lazy(() =>
+  import("./routes/insurance/InsurancePage.tsx").then((m) => ({ default: m.InsurancePage })),
+);
 const PortfolioPage = lazy(() =>
   import("./routes/investments/PortfolioPage.tsx").then((m) => ({ default: m.PortfolioPage })),
 );
@@ -117,6 +120,7 @@ const router = createBrowserRouter([
       { path: "cards", element: <CardsPage /> },
       { path: "emis", element: <EMIsPage /> },
       { path: "bills", element: <BillsPage /> },
+      { path: "insurance", element: <InsurancePage /> },
       { path: "insights", element: <InsightsPage /> },
       { path: "reports", element: <ReportsPage /> },
       { path: "settings", element: <SettingsPage /> },

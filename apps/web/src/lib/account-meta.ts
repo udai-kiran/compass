@@ -12,9 +12,11 @@ export const ACCOUNT_TYPES: AccountType[] = [
   "ppf",
   "epf",
   "ssy",
-  "insurance",
 ];
 
+// `insurance` is intentionally absent above — it's a deprecated account type
+// (insurance is now its own feature), so the dropdown never offers it. The label
+// stays below because AccountType still includes the value.
 export const ACCOUNT_TYPE_LABELS: Record<AccountType, string> = {
   bank: "Bank",
   cash: "Cash",

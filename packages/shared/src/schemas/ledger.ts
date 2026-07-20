@@ -13,9 +13,9 @@ export const AccountTypeSchema = z.enum([
   "epf",
   "ssy",
   "home_loan_od",
-  // Insurance policy (life/health/vehicle). A tracking record, not a balance:
-  // premiums are paid from a bank account and tagged to the policy. See
-  // schemas/insurance.ts and isInsuranceAccount.
+  // DEPRECATED account type. Insurance is now a standalone entity (see
+  // schemas/insurance.ts), not an account. Kept only because the Postgres enum
+  // can't drop a value; no account uses it and the UI never offers it.
   "insurance",
 ]);
 export type AccountType = z.infer<typeof AccountTypeSchema>;
@@ -53,13 +53,6 @@ export const BANK_ACCOUNT_TYPES = ["bank"] as const satisfies readonly AccountTy
 
 export function isBankAccount(type: AccountType): boolean {
   return (BANK_ACCOUNT_TYPES as readonly AccountType[]).includes(type);
-}
-
-/** Account types that carry insurance policy details (cover, premium, renewal). */
-export const INSURANCE_ACCOUNT_TYPES = ["insurance"] as const satisfies readonly AccountType[];
-
-export function isInsuranceAccount(type: AccountType): boolean {
-  return (INSURANCE_ACCOUNT_TYPES as readonly AccountType[]).includes(type);
 }
 
 /**
@@ -287,7 +280,7 @@ export const TransactionSchema = z.object({
   source: TransactionSourceSchema,
   transferLinkId: z.uuid().nullable(),
   /** insurance policy this expense is a premium for; null for ordinary transactions */
-  policyAccountId: z.uuid().nullable(),
+  policyId: z.uuid().nullable(),
   splits: z.array(SplitSchema),
 });
 export type Transaction = z.infer<typeof TransactionSchema>;
