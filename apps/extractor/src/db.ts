@@ -1,6 +1,6 @@
 import pg from "pg";
 import type { EmailIngestStatus } from "@compass/shared";
-import type { AccountRef, InboxRow } from "./extract.ts";
+import type { AccountRef, CategoryRef, InboxRow } from "./extract.ts";
 
 export function createPool(connectionString: string): pg.Pool {
   return new pg.Pool({ connectionString });
@@ -53,8 +53,28 @@ export async function loadAiSettings(pool: pg.Pool, userId: string): Promise<Sto
 }
 
 export async function loadAccounts(pool: pg.Pool, userId: string): Promise<AccountRef[]> {
-  const res = await pool.query<{ id: string; name: string }>(
-    `select id, name from accounts where user_id = $1 and archived_at is null`,
+  const res = await pool.query<{
+    id: string;
+    name: string;
+    account_last4: string | null;
+    institution: string | null;
+  }>(
+    `select id, name, account_last4, institution
+       from accounts where user_id = $1 and archived_at is null`,
+    [userId],
+  );
+  return res.rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    accountLast4: r.account_last4,
+    institution: r.institution,
+  }));
+}
+
+/** The user's own categories — the model may only tag a draft with one of these. */
+export async function loadCategories(pool: pg.Pool, userId: string): Promise<CategoryRef[]> {
+  const res = await pool.query<{ id: string; name: string; kind: "income" | "expense" }>(
+    `select id, name, kind from categories where user_id = $1 and archived_at is null`,
     [userId],
   );
   return res.rows;
@@ -99,8 +119,8 @@ export async function saveResults(
       const res = await client.query(
         `insert into extracted_transactions
            (user_id, ingestion_id, amount_paise, direction, occurred_at, counterparty,
-            suggested_account_id, bank_ref, source_quote, confidence, dedupe_hash)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+            suggested_account_id, suggested_category_id, bank_ref, source_quote, confidence, dedupe_hash)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
          on conflict (user_id, dedupe_hash) do nothing`,
         [
           args.ingestion.userId,
@@ -110,6 +130,7 @@ export async function saveResults(
           row.occurredAt,
           row.counterparty,
           row.suggestedAccountId,
+          row.suggestedCategoryId,
           row.bankRef,
           row.sourceQuote,
           row.confidence,

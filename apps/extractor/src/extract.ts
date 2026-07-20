@@ -21,6 +21,8 @@ const ModelTxnSchema = z.object({
   date: z.string().nullable().default(null),
   counterparty: z.string().default(""),
   accountHint: z.string().default(""),
+  /** best-fit category NAME, chosen verbatim from the list we pass in, or "" */
+  category: z.string().default(""),
   bankRef: z.string().nullable().default(null),
   sourceQuote: z.string().default(""),
   confidence: z.number().min(0).max(1).default(0.5),
@@ -43,17 +45,34 @@ const EXTRACT_SYSTEM = [
   '{"amount": number (rupees, positive), "direction": "debit"|"credit",',
   ' "date": "YYYY-MM-DD" or null, "counterparty": string (merchant/payer/payee),',
   ' "accountHint": string (last 4 digits or account/card name the mail names, else ""),',
+  ' "category": string (best-fit category NAME for the merchant, chosen VERBATIM from the Categories list in the user message — expense names for a debit, income names for a credit — or "" if none fits),',
   ' "bankRef": string or null (UTR / reference / transaction id), "sourceQuote": string (verbatim snippet the amount came from),',
   ' "confidence": number 0..1}',
   "",
   "direction: debit = money LEAVING the user (spend, payment, withdrawal, purchase); credit = money ENTERING (refund, salary, received, cashback).",
+  "category: infer it from the merchant/counterparty (e.g. a food-delivery brand → Food). Only ever return a name that appears in the provided list; if unsure or the list is empty, return \"\".",
   "Extract every distinct transaction; a statement may list many. Never invent figures — if a field is unknown use null or \"\". Amounts are Indian Rupees.",
 ].join("\n");
 
-function userPrompt(email: ParsedEmail): string {
+function userPrompt(email: ParsedEmail, categories: CategoryRef[]): string {
+  const names = (kind: CategoryRef["kind"]) =>
+    categories
+      .filter((c) => c.kind === kind)
+      .map((c) => c.name)
+      .join(", ") || "(none)";
+  const catBlock =
+    categories.length > 0
+      ? [
+          "",
+          "Categories (choose a name verbatim for `category`, or \"\" if none fits):",
+          `- expense (for debits): ${names("expense")}`,
+          `- income (for credits): ${names("income")}`,
+        ]
+      : [];
   return [
     `Subject: ${email.subject}`,
     `From: ${email.from}`,
+    ...catBlock,
     "",
     email.body,
   ].join("\n");
@@ -67,6 +86,7 @@ export interface InboxRow {
   occurredAt: string | null;
   counterparty: string;
   suggestedAccountId: string | null;
+  suggestedCategoryId: string | null;
   bankRef: string | null;
   sourceQuote: string;
   confidence: number;
@@ -82,6 +102,16 @@ export interface ExtractionOutcome {
 export interface AccountRef {
   id: string;
   name: string;
+  /** the account's stored last-4 (e.g. "5739"); the strongest match signal */
+  accountLast4: string | null;
+  /** issuing bank, used only to break a last-4 tie between two institutions */
+  institution: string | null;
+}
+
+export interface CategoryRef {
+  id: string;
+  name: string;
+  kind: "income" | "expense";
 }
 
 /** How an ingested email settles once classified. v1 defers PDF statements. */
@@ -102,19 +132,55 @@ export function decideStatus(classification: EmailClass): {
 }
 
 /**
- * Best-effort account match from the mail's hint. Only matches on a 3–4 digit
- * run (a card/account last-4) that appears in exactly one account name — high
- * precision, so a wrong guess never silently mis-assigns. Null otherwise; the
- * reviewer picks the account on accept.
+ * Best-effort account match from the mail's hint. A bank alert names the last 4
+ * digits ("A/C XXXXXXX5739"), so we pull the 3–4 digit runs out of the hint and:
+ *   1. match a run exactly against an account's stored last-4 (the strong signal);
+ *      if two accounts share a last-4, the bank named in the hint breaks the tie;
+ *   2. failing that, fall back to a run appearing in exactly one account name
+ *      (covers accounts whose last-4 was typed into the label, not the field).
+ * Only a unique hit wins — a wrong guess never silently mis-assigns. Null
+ * otherwise; the reviewer picks the account on accept.
  */
 export function matchAccount(hint: string, accounts: AccountRef[]): string | null {
   const digits = hint.match(/\d{3,4}/g);
   if (!digits || digits.length === 0) return null;
+  const lower = hint.toLowerCase();
+  for (const run of digits) {
+    const hits = accounts.filter((a) => a.accountLast4 === run);
+    if (hits.length === 1) return hits[0]!.id;
+    if (hits.length > 1) {
+      const byBank = hits.filter(
+        (a) => a.institution && lower.includes(a.institution.toLowerCase()),
+      );
+      if (byBank.length === 1) return byBank[0]!.id;
+    }
+  }
   for (const run of digits) {
     const hits = accounts.filter((a) => a.name.includes(run));
     if (hits.length === 1) return hits[0]!.id;
   }
   return null;
+}
+
+/**
+ * Resolve the model's category guess to one of the user's own categories.
+ * The guess must match a category NAME (case-insensitive) of the right kind —
+ * expense for a debit, income for a credit — so a spend can't be tagged with an
+ * income category. No match → null, and the reviewer picks it. Never creates a
+ * category; it only points at an existing one.
+ */
+export function matchCategory(
+  label: string,
+  direction: TxnDirection,
+  categories: CategoryRef[],
+): string | null {
+  const want = label.trim().toLowerCase();
+  if (!want) return null;
+  const kind = direction === "credit" ? "income" : "expense";
+  const hit = categories.find(
+    (c) => c.kind === kind && c.name.trim().toLowerCase() === want,
+  );
+  return hit ? hit.id : null;
 }
 
 /**
@@ -149,10 +215,11 @@ export function dedupeHashFor(row: {
 export async function classifyAndExtract(
   email: ParsedEmail,
   ai: AiProvider,
+  categories: CategoryRef[],
 ): Promise<z.infer<typeof ModelResultSchema>> {
   const turn = await ai.chat({
     system: EXTRACT_SYSTEM,
-    messages: [{ role: "user", content: userPrompt(email) }],
+    messages: [{ role: "user", content: userPrompt(email, categories) }],
     tools: [],
     maxTokens: 2048,
   });
@@ -171,9 +238,9 @@ export async function classifyAndExtract(
 export async function runExtraction(
   email: ParsedEmail,
   ai: AiProvider,
-  ctx: { receivedDate: string | null; accounts: AccountRef[] },
+  ctx: { receivedDate: string | null; accounts: AccountRef[]; categories: CategoryRef[] },
 ): Promise<ExtractionOutcome> {
-  const model = await classifyAndExtract(email, ai);
+  const model = await classifyAndExtract(email, ai, ctx.categories);
   const { status, extract } = decideStatus(model.classification);
   if (!extract) return { classification: model.classification, status, rows: [] };
 
@@ -192,6 +259,7 @@ export async function runExtraction(
     rows.push({
       ...base,
       suggestedAccountId: matchAccount(t.accountHint, ctx.accounts),
+      suggestedCategoryId: matchCategory(t.category, t.direction, ctx.categories),
       sourceQuote: t.sourceQuote.trim(),
       confidence: t.confidence,
       dedupeHash: dedupeHashFor(base),

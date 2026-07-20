@@ -5,11 +5,21 @@ import {
   decideStatus,
   dedupeHashFor,
   matchAccount,
+  matchCategory,
   runExtraction,
   validIsoDate,
   type AccountRef,
+  type CategoryRef,
 } from "./extract.ts";
 import type { ParsedEmail } from "./email.ts";
+
+/** Build an AccountRef terse-ly; last-4 and institution default to unset. */
+const acct = (id: string, name: string, last4: string | null = null, institution: string | null = null): AccountRef => ({
+  id,
+  name,
+  accountLast4: last4,
+  institution,
+});
 
 /** An AiProvider whose chat() replays a canned response, ignoring the prompt. */
 function fakeAi(reply: string): AiProvider {
@@ -35,7 +45,11 @@ const email = (body: string): ParsedEmail => ({
   hasAttachments: false,
 });
 
-const ctx = (accounts: AccountRef[] = []) => ({ receivedDate: "2026-07-10", accounts });
+const ctx = (accounts: AccountRef[] = [], categories: CategoryRef[] = []) => ({
+  receivedDate: "2026-07-10",
+  accounts,
+  categories,
+});
 
 test("decideStatus routes each class", () => {
   assert.deepEqual(decideStatus("transaction_alert"), { status: "extracted", extract: true });
@@ -46,21 +60,48 @@ test("decideStatus routes each class", () => {
   assert.deepEqual(decideStatus("other"), { status: "ignored", extract: false });
 });
 
-test("matchAccount: last-4 hit is precise, ambiguity and no-digits yield null", () => {
-  const accounts: AccountRef[] = [
-    { id: "a1", name: "HDFC Card ••1234" },
-    { id: "a2", name: "ICICI Savings ••9999" },
+test("matchAccount: exact last-4 field beats the name, ambiguity/no-digits yield null", () => {
+  const accounts = [
+    acct("a1", "HDFC Card", "1234"),
+    acct("a2", "ICICI Savings", "9999"),
   ];
-  assert.equal(matchAccount("ending 1234", accounts), "a1");
+  // the bank alert names the last 4 — matches the stored last-4, not the label
+  assert.equal(matchAccount("A/C XXXXXXX1234 debited", accounts), "a1");
   assert.equal(matchAccount("no digits here", accounts), null);
-  // two accounts both containing 12 → ambiguous
-  assert.equal(
-    matchAccount("012", [
-      { id: "x", name: "Acct 012" },
-      { id: "y", name: "Card 012" },
-    ]),
-    null,
-  );
+  // no account carries this last-4 → no guess
+  assert.equal(matchAccount("ending 5555", accounts), null);
+});
+
+test("matchAccount: a shared last-4 is broken by the bank named in the hint", () => {
+  const accounts = [
+    acct("hdfc", "HDFC Card", "5739", "HDFC"),
+    acct("idfc", "IDFC Card", "5739", "IDFC FIRST"),
+  ];
+  assert.equal(matchAccount("IDFC FIRST Bank A/C XXXXXXX5739", accounts), "idfc");
+  assert.equal(matchAccount("HDFC Bank card ending 5739", accounts), "hdfc");
+  // same last-4, no bank named → still ambiguous
+  assert.equal(matchAccount("your account ending 5739", accounts), null);
+});
+
+test("matchAccount: falls back to a unique digit run in the name when no last-4 is set", () => {
+  const accounts = [acct("a1", "HDFC ••1234"), acct("a2", "ICICI ••9999")];
+  assert.equal(matchAccount("ending 1234", accounts), "a1");
+  // two accounts both containing 012 in the name → ambiguous
+  assert.equal(matchAccount("012", [acct("x", "Acct 012"), acct("y", "Card 012")]), null);
+});
+
+test("matchCategory: verbatim name of the right kind, else null", () => {
+  const cats: CategoryRef[] = [
+    { id: "food", name: "Food & Dining", kind: "expense" },
+    { id: "salary", name: "Salary", kind: "income" },
+  ];
+  assert.equal(matchCategory("Food & Dining", "debit", cats), "food"); // case-exact
+  assert.equal(matchCategory("food & dining", "debit", cats), "food"); // case-insensitive
+  assert.equal(matchCategory("Salary", "credit", cats), "salary");
+  // right name, wrong kind for the direction → a debit can't take an income category
+  assert.equal(matchCategory("Salary", "debit", cats), null);
+  assert.equal(matchCategory("Groceries", "debit", cats), null); // off-list
+  assert.equal(matchCategory("", "debit", cats), null); // no guess
 });
 
 test("dedupeHashFor prefers bankRef, else a stable signature", () => {
@@ -85,6 +126,7 @@ test("runExtraction: alert → one normalized row (rupees→paise, ref dedupe)",
           date: "2026-07-08",
           counterparty: "Amazon",
           accountHint: "card ending 1234",
+          category: "Shopping",
           bankRef: "TXN-7788",
           sourceQuote: "Rs 1,234.56 spent at Amazon",
           confidence: 0.9,
@@ -92,7 +134,11 @@ test("runExtraction: alert → one normalized row (rupees→paise, ref dedupe)",
       ],
     }),
   );
-  const out = await runExtraction(email("..."), ai, ctx([{ id: "a1", name: "HDFC ••1234" }]));
+  const out = await runExtraction(
+    email("..."),
+    ai,
+    ctx([acct("a1", "HDFC Card", "1234")], [{ id: "shop", name: "Shopping", kind: "expense" }]),
+  );
   assert.equal(out.status, "extracted");
   assert.equal(out.rows.length, 1);
   const row = out.rows[0]!;
@@ -100,6 +146,7 @@ test("runExtraction: alert → one normalized row (rupees→paise, ref dedupe)",
   assert.equal(row.direction, "debit");
   assert.equal(row.occurredAt, "2026-07-08");
   assert.equal(row.suggestedAccountId, "a1");
+  assert.equal(row.suggestedCategoryId, "shop"); // AI's category guess resolved to the user's category
   assert.equal(row.dedupeHash, "ref:txn-7788");
 });
 
