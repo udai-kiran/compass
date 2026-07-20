@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { formatINR, type Account, type ExtractedTransaction } from "@compass/shared";
-import { useAccounts } from "../../lib/queries.ts";
+import { formatINR, type Account, type Category, type ExtractedTransaction } from "@compass/shared";
+import { useAccounts, useCategories } from "../../lib/queries.ts";
 import { useInbox, useInboxMutations } from "../../lib/inbox-queries.ts";
 import { toast } from "../../lib/toast.tsx";
 
@@ -9,15 +9,19 @@ const today = () => new Date().toISOString().slice(0, 10);
 export function InboxPage() {
   const { data: drafts, isLoading } = useInbox("pending");
   const { data: accounts } = useAccounts();
+  const { data: categories } = useCategories();
   const openAccounts = (accounts ?? []).filter((a) => a.archivedAt === null);
+  const openCategories = (categories ?? []).filter((c) => c.archivedAt === null);
 
   return (
     <div className="mx-auto max-w-3xl">
       <header className="mb-4">
         <h1 className="text-xl font-semibold text-slate-800">Inbox</h1>
         <p className="mt-0.5 text-sm text-slate-500">
-          Transactions our reader pulled from your email. Pick an account and accept to add each one
-          to the ledger — nothing is added automatically, and the category stays yours to set.
+          Transactions our reader pulled from your email. We pre-fill the account and a category —
+          reusing what you filed this merchant under before, or a best guess for a new one — so
+          check them, tweak anything that's off, and accept to add each to the ledger. Nothing is
+          added automatically.
         </p>
       </header>
 
@@ -30,20 +34,33 @@ export function InboxPage() {
       )}
 
       <div className="space-y-3">
-        {drafts?.map((d) => <DraftCard key={d.id} draft={d} accounts={openAccounts} />)}
+        {drafts?.map((d) => (
+          <DraftCard key={d.id} draft={d} accounts={openAccounts} categories={openCategories} />
+        ))}
       </div>
     </div>
   );
 }
 
-function DraftCard({ draft, accounts }: { draft: ExtractedTransaction; accounts: Account[] }) {
+function DraftCard({
+  draft,
+  accounts,
+  categories,
+}: {
+  draft: ExtractedTransaction;
+  accounts: Account[];
+  categories: Category[];
+}) {
   const { accept, reject } = useInboxMutations();
   const [accountId, setAccountId] = useState(draft.suggestedAccountId ?? "");
+  const [categoryId, setCategoryId] = useState(draft.suggestedCategoryId ?? "");
   const [date, setDate] = useState(draft.occurredAt ?? today());
   const [merchant, setMerchant] = useState(draft.counterparty);
 
   const isDebit = draft.direction === "debit";
   const busy = accept.isPending || reject.isPending;
+  // A debit is an expense, a credit is income — only offer categories of that kind.
+  const relevantCategories = categories.filter((c) => c.kind === (isDebit ? "expense" : "income"));
 
   function onAccept() {
     if (!accountId) {
@@ -51,7 +68,15 @@ function DraftCard({ draft, accounts }: { draft: ExtractedTransaction; accounts:
       return;
     }
     accept.mutate(
-      { id: draft.id, accountId, occurredAt: date, amountPaise: draft.amountPaise, direction: draft.direction, merchant: merchant.trim() || draft.counterparty || "—" },
+      {
+        id: draft.id,
+        accountId,
+        categoryId: categoryId || null,
+        occurredAt: date,
+        amountPaise: draft.amountPaise,
+        direction: draft.direction,
+        merchant: merchant.trim() || draft.counterparty || "—",
+      },
       { onSuccess: () => toast("Added to the ledger", "success") },
     );
   }
@@ -94,7 +119,7 @@ function DraftCard({ draft, accounts }: { draft: ExtractedTransaction; accounts:
         </p>
       )}
 
-      <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2">
         <Field label="Account">
           <select
             value={accountId}
@@ -105,6 +130,19 @@ function DraftCard({ draft, accounts }: { draft: ExtractedTransaction; accounts:
             <option value="">Select…</option>
             {accounts.map((a) => (
               <option key={a.id} value={a.id}>{a.name}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Category">
+          <select
+            value={categoryId}
+            onChange={(e) => setCategoryId(e.target.value)}
+            className="input"
+            aria-label="Category"
+          >
+            <option value="">No category</option>
+            {relevantCategories.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
             ))}
           </select>
         </Field>

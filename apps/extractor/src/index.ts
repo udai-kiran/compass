@@ -6,6 +6,7 @@ import {
   createPool,
   loadAccounts,
   loadAiSettings,
+  loadCategories,
   loadIngestion,
   saveResults,
   setStatus,
@@ -85,11 +86,14 @@ const worker = new Worker(
     await setStatus(pool, ingestion.id, "processing");
     try {
       const email = await parseEmail(ingestion.raw);
-      const accounts = await loadAccounts(pool, ingestion.userId);
+      const [accounts, categories] = await Promise.all([
+        loadAccounts(pool, ingestion.userId),
+        loadCategories(pool, ingestion.userId),
+      ]);
       const receivedDate = ingestion.receivedAt
         ? ingestion.receivedAt.toISOString().slice(0, 10)
         : null;
-      const outcome = await runExtraction(email, ai, { receivedDate, accounts });
+      const outcome = await runExtraction(email, ai, { receivedDate, accounts, categories });
       const inserted = await saveResults(pool, {
         ingestion,
         classification: outcome.classification,

@@ -82,6 +82,8 @@ export const ExtractedTransactionSchema = z.object({
   counterparty: z.string(),
   /** an account we matched from the mail's hint; the reviewer can override */
   suggestedAccountId: z.uuid().nullable(),
+  /** a category the AI guessed from the merchant; the reviewer confirms or changes it */
+  suggestedCategoryId: z.uuid().nullable(),
   bankRef: z.string().nullable(),
   sourceQuote: z.string(),
   confidence: z.number(),
@@ -96,13 +98,18 @@ export const ExtractedTransactionSchema = z.object({
 });
 export type ExtractedTransaction = z.infer<typeof ExtractedTransactionSchema>;
 
-/** Accept a pending draft into the ledger. Category stays manual — never set here. */
+/**
+ * Accept a pending draft into the ledger. The AI's category guess is offered in
+ * the review card and travels back here as `categoryId` — null when the reviewer
+ * clears it or none was guessed, so categorization is still the reviewer's call.
+ */
 export const AcceptExtractedTxnSchema = z.object({
   accountId: z.uuid(),
   occurredAt: z.iso.date(),
   amountPaise: z.number().int().positive(),
   direction: TxnDirectionSchema,
   merchant: z.string().min(1),
+  categoryId: z.uuid().nullable().default(null),
 });
 export type AcceptExtractedTxn = z.input<typeof AcceptExtractedTxnSchema>;
 

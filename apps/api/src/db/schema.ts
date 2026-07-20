@@ -1119,6 +1119,10 @@ export const extractedTransactions = pgTable(
     suggestedAccountId: uuid("suggested_account_id").references(() => accounts.id, {
       onDelete: "set null",
     }),
+    /** AI's category guess from the merchant; the reviewer confirms/overrides on accept */
+    suggestedCategoryId: uuid("suggested_category_id").references(() => categories.id, {
+      onDelete: "set null",
+    }),
     bankRef: text("bank_ref"),
     sourceQuote: text("source_quote").notNull().default(""),
     confidence: doublePrecision("confidence"),
