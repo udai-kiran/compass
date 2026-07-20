@@ -13,6 +13,7 @@ import type { Db } from "../db/index.ts";
 import { accounts, categories, importPresets, importRows, imports, transactions } from "../db/schema.ts";
 import { parseAmountCell, parseCsv, parseDateCell } from "../lib/csv.ts";
 import { HttpError } from "../lib/errors.ts";
+import { parseHdfcStatement } from "../lib/hdfc-statement.ts";
 import { getMerchantRules, normalizeMerchant } from "./merchants.ts";
 import { autoLinkTransfers } from "./transfers.ts";
 
@@ -256,7 +257,10 @@ export async function createImport(
   });
   if (!account) throw new HttpError(404, "Account not found");
 
-  const rows = parseCsv(input.csv);
+  // HDFC's printed statement is fixed-width text, not a delimited file — detect
+  // that layout and normalize it to CSV so the rest of the pipeline is unchanged.
+  const csv = parseHdfcStatement(input.csv) ?? input.csv;
+  const rows = parseCsv(csv);
   const first = rows.next();
   if (first.done) throw new HttpError(400, "CSV file is empty");
   const headers = first.value.map((h) => h.trim());
