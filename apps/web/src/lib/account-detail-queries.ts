@@ -1,13 +1,17 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   BankDetailsSchema,
+  InsuranceDetailsSchema,
   OverdraftDetailsSchema,
+  PolicyPremiumsSchema,
   RetirementDetailsSchema,
+  type LogPremium,
   type UpsertBankDetails,
+  type UpsertInsuranceDetails,
   type UpsertOverdraftDetails,
   type UpsertRetirementDetails,
 } from "@compass/shared";
-import { apiGet, apiPut } from "./api.ts";
+import { apiGet, apiPost, apiPut } from "./api.ts";
 
 /**
  * Detail sections are per-type, so a query is only enabled for the types that
@@ -67,5 +71,47 @@ export function useOverdraftDetailsMutation(accountId: string) {
     mutationFn: (body: UpsertOverdraftDetails) =>
       apiPut(`/api/accounts/${accountId}/overdraft-details`, OverdraftDetailsSchema, body),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["overdraft-details", accountId] }),
+  });
+}
+
+export function useInsuranceDetails(accountId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ["insurance-details", accountId],
+    queryFn: () =>
+      apiGet(`/api/accounts/${accountId}/insurance-details`, InsuranceDetailsSchema.nullable()),
+    enabled,
+  });
+}
+
+export function useInsuranceDetailsMutation(accountId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: UpsertInsuranceDetails) =>
+      apiPut(`/api/accounts/${accountId}/insurance-details`, InsuranceDetailsSchema, body),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["insurance-details", accountId] }),
+  });
+}
+
+export function usePolicyPremiums(accountId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ["insurance-premiums", accountId],
+    queryFn: () =>
+      apiGet(`/api/accounts/${accountId}/insurance-premiums`, PolicyPremiumsSchema),
+    enabled,
+  });
+}
+
+export function useLogPremiumMutation(accountId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: LogPremium) =>
+      apiPost(`/api/accounts/${accountId}/insurance-premiums`, PolicyPremiumsSchema, body),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["insurance-premiums", accountId] });
+      // The premium became a real expense on the paying account — its balance and
+      // the ledger are now stale.
+      void qc.invalidateQueries({ queryKey: ["accounts"] });
+      void qc.invalidateQueries({ queryKey: ["transactions"] });
+    },
   });
 }

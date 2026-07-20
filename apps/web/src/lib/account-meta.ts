@@ -12,6 +12,7 @@ export const ACCOUNT_TYPES: AccountType[] = [
   "ppf",
   "epf",
   "ssy",
+  "insurance",
 ];
 
 export const ACCOUNT_TYPE_LABELS: Record<AccountType, string> = {
@@ -25,6 +26,7 @@ export const ACCOUNT_TYPE_LABELS: Record<AccountType, string> = {
   ppf: "PPF",
   epf: "EPF",
   ssy: "Sukanya Samriddhi",
+  insurance: "Insurance",
 };
 
 /** Masks all but the last 4 — the account number is shown only on request. */

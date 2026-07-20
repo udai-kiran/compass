@@ -29,6 +29,10 @@ export const ACCOUNT_RETURN_BPS: Record<AccountType, number | typeof STORED> = {
   loan: 0,
   overdraft: 0,
   home_loan_od: 0,
+  // An insurance policy isn't a goal-eligible asset (accountCanHaveGoal excludes
+  // it), so this is never actually read — but the map is exhaustive, and a
+  // tracking record with no balance doesn't grow anything.
+  insurance: 0,
 };
 
 export const ASSET_CLASS_RETURN_BPS: Record<AssetClass, number> = {

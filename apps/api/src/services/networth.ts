@@ -22,7 +22,7 @@ type AccountBucket = Exclude<keyof Breakdown, "holdingsPaise">;
  * a compile error. An unclassified type would otherwise be dropped from the
  * balance sheet entirely — the balance simply vanishes, with no error to notice.
  */
-export const ACCOUNT_BUCKET: Record<AccountType, AccountBucket> = {
+export const ACCOUNT_BUCKET: Record<AccountType, AccountBucket | null> = {
   bank: "cashPaise",
   cash: "cashPaise",
   investment: "investmentAccountsPaise",
@@ -37,6 +37,10 @@ export const ACCOUNT_BUCKET: Record<AccountType, AccountBucket> = {
   // so it's a liability like any other loan. The drawing power is liquidity, not
   // a separate asset — counting it would double what the surplus already offset.
   home_loan_od: "loansPaise",
+  // An insurance policy is a tracking record with no balance of its own —
+  // premiums are expenses on the paying account, not money held here. It
+  // contributes to no bucket (null), distinct from an unclassified type.
+  insurance: null,
 };
 
 /** Balance-sheet math as of a date: account balances by type + holding values. */
@@ -70,7 +74,9 @@ export async function computeNetWorth(
   for (const r of res.rows as Array<{ type: string; balance: string }>) {
     const bucket = ACCOUNT_BUCKET[r.type as AccountType];
     // A type Postgres knows but this code doesn't: skipping it would hide money.
-    if (!bucket) throw new Error(`Unclassified account type in net worth: ${r.type}`);
+    // (null is an explicit "no bucket", e.g. insurance — that's fine to skip.)
+    if (bucket === undefined) throw new Error(`Unclassified account type in net worth: ${r.type}`);
+    if (bucket === null) continue;
     const balance = Number(r.balance);
     buckets[bucket] += balance;
     accountAssets += Math.max(0, balance);

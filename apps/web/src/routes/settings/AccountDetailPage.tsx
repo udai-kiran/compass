@@ -6,19 +6,30 @@ import {
   BankAccountSubtypeSchema,
   formatINR,
   IfscSchema,
+  InsuranceKindSchema,
   isBankAccount,
+  isInsuranceAccount,
   isOverdraftAccount,
   isRetirementAccount,
+  PremiumFrequencySchema,
   UpiIdSchema,
+  VehicleKindSchema,
   type AccountWithBalance,
   type BankAccountSubtype,
+  type InsuranceKind,
+  type PremiumFrequency,
+  type VehicleKind,
 } from "@compass/shared";
 import { ACCOUNT_TYPE_LABELS, ACCOUNT_TYPES, maskAccountNumber } from "../../lib/account-meta.ts";
 import {
   useBankDetails,
   useBankDetailsMutation,
+  useInsuranceDetails,
+  useInsuranceDetailsMutation,
+  useLogPremiumMutation,
   useOverdraftDetails,
   useOverdraftDetailsMutation,
+  usePolicyPremiums,
   useRetirementDetails,
   useRetirementDetailsMutation,
 } from "../../lib/account-detail-queries.ts";
@@ -41,7 +52,35 @@ const NON_UPI_ACCOUNT_TYPES: readonly AccountWithBalance["type"][] = [
   "home_loan_od",
   "epf",
   "ppf",
+  "insurance",
 ];
+
+const INSURANCE_KIND_LABELS: Record<InsuranceKind, string> = {
+  life: "Life",
+  health: "Health",
+  vehicle: "Vehicle",
+};
+
+const VEHICLE_KIND_LABELS: Record<VehicleKind, string> = {
+  car: "Car",
+  bike: "Bike",
+  other: "Other",
+};
+
+const PREMIUM_FREQUENCY_LABELS: Record<PremiumFrequency, string> = {
+  monthly: "Monthly",
+  quarterly: "Quarterly",
+  half_yearly: "Half-yearly",
+  yearly: "Yearly",
+  single: "Single / one-time",
+};
+
+/** What the "cover" figure means for each kind — sum assured, sum insured, or IDV. */
+const COVER_LABEL: Record<InsuranceKind, string> = {
+  life: "Sum assured",
+  health: "Sum insured",
+  vehicle: "IDV",
+};
 
 /** Validates with the same schema the API enforces, so the two can't disagree. */
 function errorOf(schema: { safeParse: (v: unknown) => { success: boolean; error?: unknown } }, value: string) {
@@ -99,6 +138,12 @@ function AccountDetail({ account }: { account: AccountWithBalance }) {
       {isBankAccount(account.type) && <BankSection key={account.type} account={account} />}
       {isOverdraftAccount(account.type) && <OverdraftSection key={account.type} account={account} />}
       {isRetirementAccount(account.type) && <RetirementSection key={account.type} account={account} />}
+      {isInsuranceAccount(account.type) && (
+        <>
+          <InsuranceSection account={account} />
+          <PremiumsSection account={account} />
+        </>
+      )}
     </div>
   );
 }
@@ -182,12 +227,12 @@ function IdentitySection({ account }: { account: AccountWithBalance }) {
             className={inputClass}
           />
         </Field>
-        <Field label="Bank">
+        <Field label={isInsuranceAccount(account.type) ? "Insurer" : "Bank"}>
           <input
             value={institution}
             onChange={(e) => setInstitution(e.target.value)}
             list={INSTITUTION_LIST_ID}
-            placeholder="HDFC"
+            placeholder={isInsuranceAccount(account.type) ? "LIC / Star Health" : "HDFC"}
             className={inputClass}
           />
         </Field>
@@ -622,5 +667,331 @@ function RetirementSection({ account }: { account: AccountWithBalance }) {
         </div>
       </Section>
     </form>
+  );
+}
+
+function InsuranceSection({ account }: { account: AccountWithBalance }) {
+  const { data, isPending } = useInsuranceDetails(account.id, true);
+  const save = useInsuranceDetailsMutation(account.id);
+  const [kind, setKind] = useState<InsuranceKind>("life");
+  const [vehicleType, setVehicleType] = useState<VehicleKind | "">("");
+  const [policyNumber, setPolicyNumber] = useState("");
+  const [cover, setCover] = useState("");
+  const [premium, setPremium] = useState("");
+  const [frequency, setFrequency] = useState<PremiumFrequency>("yearly");
+  const [startDate, setStartDate] = useState("");
+  const [renewalDate, setRenewalDate] = useState("");
+  const [maturityDate, setMaturityDate] = useState("");
+  const [nominee, setNominee] = useState("");
+
+  useEffect(() => {
+    if (!data) return;
+    setKind(data.kind);
+    setVehicleType(data.vehicleType ?? "");
+    setPolicyNumber(data.policyNumber);
+    setCover(data.coverPaise === 0 ? "" : (data.coverPaise / 100).toString());
+    setPremium(data.premiumPaise === 0 ? "" : (data.premiumPaise / 100).toString());
+    setFrequency(data.premiumFrequency);
+    setStartDate(data.startDate ?? "");
+    setRenewalDate(data.renewalDate ?? "");
+    setMaturityDate(data.maturityDate ?? "");
+    setNominee(data.nominee);
+  }, [data]);
+
+  const coverPaise = cover === "" ? 0 : Math.round(Number(cover) * 100);
+  const premiumPaise = premium === "" ? 0 : Math.round(Number(premium) * 100);
+  const coverError =
+    cover !== "" && (Number.isNaN(coverPaise) || coverPaise < 0) ? "must be a positive amount" : null;
+  const premiumError =
+    premium !== "" && (Number.isNaN(premiumPaise) || premiumPaise < 0) ? "must be a positive amount" : null;
+
+  // Vehicle sub-type only applies to a vehicle policy; maturity only to a life
+  // policy — mirror the server's rule so we never send a field it rejects.
+  const effVehicleType: VehicleKind | null = kind === "vehicle" ? vehicleType || null : null;
+  const effMaturity = kind === "life" ? maturityDate || null : null;
+
+  const dirty =
+    kind !== (data?.kind ?? "life") ||
+    effVehicleType !== (data?.vehicleType ?? null) ||
+    policyNumber !== (data?.policyNumber ?? "") ||
+    coverPaise !== (data?.coverPaise ?? 0) ||
+    premiumPaise !== (data?.premiumPaise ?? 0) ||
+    frequency !== (data?.premiumFrequency ?? "yearly") ||
+    (startDate || null) !== (data?.startDate ?? null) ||
+    (renewalDate || null) !== (data?.renewalDate ?? null) ||
+    effMaturity !== (data?.maturityDate ?? null) ||
+    nominee !== (data?.nominee ?? "");
+
+  function submit(e: FormEvent) {
+    e.preventDefault();
+    if (coverError || premiumError) return;
+    save.mutate(
+      {
+        kind,
+        vehicleType: effVehicleType,
+        policyNumber: policyNumber.trim(),
+        coverPaise,
+        premiumPaise,
+        premiumFrequency: frequency,
+        startDate: startDate || null,
+        renewalDate: renewalDate || null,
+        maturityDate: effMaturity,
+        nominee: nominee.trim(),
+      },
+      { onSuccess: () => toast("Policy details saved", "success") },
+    );
+  }
+
+  if (isPending)
+    return (
+      <Section title="Policy details">
+        <p className="text-sm text-slate-400">Loading…</p>
+      </Section>
+    );
+
+  return (
+    <form onSubmit={submit}>
+      <Section title="Policy details" hint="What the policy covers and what it costs to keep.">
+        <Field label="Type">
+          <select
+            value={kind}
+            onChange={(e) => setKind(e.target.value as InsuranceKind)}
+            className={inputClass}
+          >
+            {InsuranceKindSchema.options.map((k) => (
+              <option key={k} value={k}>
+                {INSURANCE_KIND_LABELS[k]}
+              </option>
+            ))}
+          </select>
+        </Field>
+        {kind === "vehicle" && (
+          <Field label="Vehicle">
+            <select
+              value={vehicleType}
+              onChange={(e) => setVehicleType(e.target.value as VehicleKind | "")}
+              className={inputClass}
+            >
+              <option value="">Not set</option>
+              {VehicleKindSchema.options.map((v) => (
+                <option key={v} value={v}>
+                  {VEHICLE_KIND_LABELS[v]}
+                </option>
+              ))}
+            </select>
+          </Field>
+        )}
+        <Field label="Policy number">
+          <input
+            value={policyNumber}
+            onChange={(e) => setPolicyNumber(e.target.value)}
+            placeholder="Policy / certificate no."
+            className={`${inputClass} font-mono`}
+          />
+        </Field>
+        <Field label={COVER_LABEL[kind]} error={coverError}>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-slate-400">₹</span>
+            <input
+              value={cover}
+              onChange={(e) => setCover(e.target.value)}
+              inputMode="decimal"
+              placeholder="1000000"
+              aria-invalid={coverError !== null}
+              className={`${inputClass} tabular-nums ${coverError ? "border-red-400" : ""}`}
+            />
+          </div>
+        </Field>
+        <Field label="Premium" error={premiumError}>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-slate-400">₹</span>
+            <input
+              value={premium}
+              onChange={(e) => setPremium(e.target.value)}
+              inputMode="decimal"
+              placeholder="12000"
+              aria-invalid={premiumError !== null}
+              className={`${inputClass} tabular-nums ${premiumError ? "border-red-400" : ""}`}
+            />
+          </div>
+        </Field>
+        <Field label="Frequency">
+          <select
+            value={frequency}
+            onChange={(e) => setFrequency(e.target.value as PremiumFrequency)}
+            className={inputClass}
+          >
+            {PremiumFrequencySchema.options.map((f) => (
+              <option key={f} value={f}>
+                {PREMIUM_FREQUENCY_LABELS[f]}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Starts on">
+          <input
+            type="date"
+            value={startDate}
+            onChange={(e) => setStartDate(e.target.value)}
+            className={inputClass}
+          />
+        </Field>
+        <Field label="Renews on">
+          <input
+            type="date"
+            value={renewalDate}
+            onChange={(e) => setRenewalDate(e.target.value)}
+            className={inputClass}
+          />
+        </Field>
+        {/* Only a life policy matures; the server rejects a maturity date elsewhere. */}
+        {kind === "life" && (
+          <Field label="Matures on">
+            <input
+              type="date"
+              value={maturityDate}
+              onChange={(e) => setMaturityDate(e.target.value)}
+              className={inputClass}
+            />
+          </Field>
+        )}
+        <Field label="Nominee">
+          <input
+            value={nominee}
+            onChange={(e) => setNominee(e.target.value)}
+            placeholder="Who's covered / benefits"
+            className={inputClass}
+          />
+        </Field>
+        <div className="pt-1">
+          <SaveButton
+            dirty={dirty}
+            disabled={coverError !== null || premiumError !== null}
+            pending={save.isPending}
+          />
+        </div>
+      </Section>
+    </form>
+  );
+}
+
+function PremiumsSection({ account }: { account: AccountWithBalance }) {
+  const { data: premiums } = usePolicyPremiums(account.id, true);
+  const { data: accounts } = useAccounts();
+  const log = useLogPremiumMutation(account.id);
+
+  // Premiums are paid from a real account — the policy itself and archived
+  // accounts aren't valid sources.
+  const payFrom = (accounts ?? []).filter(
+    (a) => a.id !== account.id && a.archivedAt === null && a.type !== "insurance",
+  );
+  const nameOf = new Map((accounts ?? []).map((a) => [a.id, a.name]));
+
+  const [fromAccountId, setFromAccountId] = useState("");
+  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [amount, setAmount] = useState("");
+  const [note, setNote] = useState("");
+
+  const amountPaise = amount === "" ? 0 : Math.round(Number(amount) * 100);
+  const amountError =
+    amount !== "" && (Number.isNaN(amountPaise) || amountPaise <= 0) ? "must be a positive amount" : null;
+  const canSubmit = fromAccountId !== "" && amountPaise > 0 && amountError === null;
+
+  function submit(e: FormEvent) {
+    e.preventDefault();
+    if (!canSubmit) return;
+    log.mutate(
+      { fromAccountId, date, amountPaise, note: note.trim() },
+      {
+        onSuccess: () => {
+          setAmount("");
+          setNote("");
+          toast("Premium logged", "success");
+        },
+      },
+    );
+  }
+
+  return (
+    <Section
+      title="Premiums"
+      hint="Each one is logged as a real expense on the paying account and tallied here."
+    >
+      {premiums && premiums.count > 0 ? (
+        <>
+          <div className="flex items-baseline justify-between rounded-md bg-slate-50 px-3 py-2 text-sm">
+            <span className="text-slate-500">Paid to date</span>
+            <span className="tabular-nums text-slate-700">
+              {formatINR(premiums.totalPaise)}{" "}
+              <span className="text-xs text-slate-400">· {premiums.count} payment{premiums.count === 1 ? "" : "s"}</span>
+            </span>
+          </div>
+          <ul className="space-y-1.5">
+            {premiums.items.map((p) => (
+              <li key={p.id} className="flex items-baseline gap-3 text-sm">
+                <span className="w-24 shrink-0 tabular-nums text-slate-500">{p.date}</span>
+                <span className="flex-1 truncate text-slate-600">
+                  {nameOf.get(p.accountId) ?? "—"}
+                  {p.note && <span className="ml-1 text-xs text-slate-400">· {p.note}</span>}
+                </span>
+                <span className="tabular-nums text-slate-700">{formatINR(Math.abs(p.amountPaise))}</span>
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : (
+        <p className="text-sm text-slate-400">No premiums logged yet.</p>
+      )}
+
+      <form onSubmit={submit} className="space-y-3 border-t border-slate-100 pt-4">
+        <Field label="Paid from">
+          <select
+            value={fromAccountId}
+            onChange={(e) => setFromAccountId(e.target.value)}
+            className={inputClass}
+          >
+            <option value="">Select account…</option>
+            {payFrom.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Date">
+          <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={inputClass} />
+        </Field>
+        <Field label="Amount" error={amountError}>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-slate-400">₹</span>
+            <input
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              inputMode="decimal"
+              placeholder="12000"
+              aria-invalid={amountError !== null}
+              className={`${inputClass} tabular-nums ${amountError ? "border-red-400" : ""}`}
+            />
+          </div>
+        </Field>
+        <Field label="Note">
+          <input
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="Optional"
+            className={inputClass}
+          />
+        </Field>
+        <div className="pt-1">
+          <button
+            type="submit"
+            disabled={!canSubmit || log.isPending}
+            className="rounded-md bg-slate-800 px-3 py-1.5 text-sm text-white disabled:opacity-40"
+          >
+            {log.isPending ? "Logging…" : "Log premium"}
+          </button>
+        </div>
+      </form>
+    </Section>
   );
 }

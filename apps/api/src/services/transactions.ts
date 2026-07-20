@@ -107,6 +107,7 @@ async function hydrate(db: DbOrTx, rows: TxRow[]): Promise<Transaction[]> {
     tags: r.tags,
     source: r.source,
     transferLinkId: linkByTx.get(r.id) ?? null,
+    policyAccountId: r.policyAccountId,
     splits: splitsByTx.get(r.id) ?? [],
   }));
 }
@@ -176,7 +177,10 @@ export async function getTransaction(db: Db, userId: string, id: string): Promis
 export async function createTransaction(
   db: DbOrTx,
   userId: string,
-  input: CreateTransaction & { source?: "manual" | "import" | "recurring" },
+  input: CreateTransaction & {
+    source?: "manual" | "import" | "recurring";
+    policyAccountId?: string | null;
+  },
 ): Promise<Transaction> {
   await assertOwnedAccount(db, userId, input.accountId);
   await assertOwnedCategory(db, userId, input.categoryId);

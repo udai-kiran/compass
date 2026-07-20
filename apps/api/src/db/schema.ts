@@ -105,6 +105,11 @@ export const accountType = pgEnum("account_type", [
   // no notion of. The balance is still what you owe (net of parked surplus), so
   // it lands in the loans bucket like any liability.
   "home_loan_od",
+  // Insurance policy (life/health/vehicle). A tracking record rather than a
+  // balance-bearing account: premiums are paid from a bank/card account and
+  // tagged to the policy (transactions.policy_account_id), so its own balance
+  // stays zero and it never enters net worth. See insurance_details.
+  "insurance",
 ]);
 
 export const accounts = pgTable(
@@ -207,6 +212,15 @@ export const transactions = pgTable(
       .notNull()
       .default(sql`'{}'::text[]`),
     source: transactionSource("source").notNull().default("manual"),
+    /**
+     * Insurance policy this expense pays a premium for — a link to an `insurance`
+     * account, kept apart from `accountId` (the account the money left). Null for
+     * ordinary transactions. Lets a policy show its premium history without the
+     * policy ever holding a balance. See services/insurance-details.ts.
+     */
+    policyAccountId: uuid("policy_account_id").references(() => accounts.id, {
+      onDelete: "set null",
+    }),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -215,6 +229,7 @@ export const transactions = pgTable(
     index("transactions_user_date_idx").on(t.userId, t.date.desc(), t.id.desc()),
     index("transactions_account_idx").on(t.accountId),
     index("transactions_category_idx").on(t.categoryId),
+    index("transactions_policy_idx").on(t.policyAccountId),
   ],
 );
 
@@ -683,6 +698,50 @@ export const overdraftDetails = pgTable("overdraft_details", {
   sanctionedLimitPaise: bigint("sanctioned_limit_paise", { mode: "number" }).notNull().default(0),
   /** annual interest rate in basis points (855 = 8.55%); drives the interest-saved estimate */
   annualRateBps: integer("annual_rate_bps").notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const insuranceKind = pgEnum("insurance_kind", ["life", "health", "vehicle"]);
+export const vehicleKind = pgEnum("vehicle_kind", ["car", "bike", "other"]);
+export const premiumFrequency = pgEnum("premium_frequency", [
+  "monthly",
+  "quarterly",
+  "half_yearly",
+  "yearly",
+  "single",
+]);
+
+/**
+ * Policy details for an `insurance` account. 1:1 extension keyed by account,
+ * like card_details / retirement_details. The insurer lives on accounts
+ * (institution) and the holder on accounts (holder_name); only policy-specific
+ * fields belong here. Premiums are tracked as ordinary expense transactions
+ * tagged with policy_account_id — nothing about the money flow lives here, only
+ * the policy's standing terms.
+ */
+export const insuranceDetails = pgTable("insurance_details", {
+  accountId: uuid("account_id")
+    .primaryKey()
+    .references(() => accounts.id, { onDelete: "cascade" }),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => users.id),
+  kind: insuranceKind("kind").notNull().default("life"),
+  /** car/bike/other for a vehicle policy; null for life/health */
+  vehicleType: vehicleKind("vehicle_type"),
+  policyNumber: text("policy_number").notNull().default(""),
+  /** sum assured (life) / sum insured (health) / IDV (vehicle), in paise */
+  coverPaise: bigint("cover_paise", { mode: "number" }).notNull().default(0),
+  /** premium per payment, in paise */
+  premiumPaise: bigint("premium_paise", { mode: "number" }).notNull().default(0),
+  premiumFrequency: premiumFrequency("premium_frequency").notNull().default("yearly"),
+  startDate: date("start_date"),
+  /** next renewal / premium due date */
+  renewalDate: date("renewal_date"),
+  /** endowment/money-back maturity; null for pure term, health, vehicle */
+  maturityDate: date("maturity_date"),
+  nominee: text("nominee").notNull().default(""),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
