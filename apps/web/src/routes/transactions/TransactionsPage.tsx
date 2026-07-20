@@ -337,7 +337,7 @@ function TxRow({
   onOpen: () => void;
   catName: (id: string | null) => string;
   accName: (id: string) => string;
-  accounts: Array<{ id: string; name: string; archivedAt: string | null }>;
+  accounts: Array<{ id: string; name: string; type: string; archivedAt: string | null }>;
   categories: Array<{ id: string; name: string; archivedAt: string | null }>;
   onUpdate: (
     patch: Partial<{
@@ -353,6 +353,15 @@ function TxRow({
     "category" | "date" | "amount" | "merchant" | "account" | null
   >(null);
   const isTransfer = tx.transferLinkId !== null;
+  // Distinguish a plain account move from a credit-card payment by looking at the
+  // two legs' account types, and name the counterpart so the row is self-explaining.
+  const counterpart = tx.transferCounterpartAccountId
+    ? accounts.find((a) => a.id === tx.transferCounterpartAccountId)
+    : undefined;
+  const thisAccount = accounts.find((a) => a.id === tx.accountId);
+  const involvesCard =
+    thisAccount?.type === "credit_card" || counterpart?.type === "credit_card";
+  const transferLabel = involvesCard ? "card payment" : "transfer";
   return (
     <div
       className="absolute left-0 flex w-full items-center gap-2 border-b border-slate-100 px-3 text-sm hover:bg-slate-50"
@@ -403,8 +412,20 @@ function TxRow({
         >
           {tx.merchant || "(no merchant)"}
           {isTransfer && (
-            <span className="ml-2 rounded bg-sky-100 px-1.5 py-0.5 text-xs font-normal text-sky-700">
-              transfer
+            <span
+              className={`ml-2 rounded px-1.5 py-0.5 text-xs font-normal ${
+                involvesCard ? "bg-violet-100 text-violet-700" : "bg-sky-100 text-sky-700"
+              }`}
+              title={
+                counterpart
+                  ? `${involvesCard ? "Credit-card payment" : "Transfer"} ${
+                      tx.amountPaise < 0 ? "to" : "from"
+                    } ${counterpart.name}`
+                  : undefined
+              }
+            >
+              {transferLabel}
+              {counterpart && ` ${tx.amountPaise < 0 ? "→" : "←"} ${counterpart.name}`}
             </span>
           )}
           {tx.splits.length > 0 && (

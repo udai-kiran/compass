@@ -1,6 +1,6 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
 import type { TransferSuggestion } from "@compass/shared";
-import type { Db } from "../db/index.ts";
+import type { Db, DbOrTx } from "../db/index.ts";
 import { transactions, transferLinks } from "../db/schema.ts";
 import { HttpError } from "../lib/errors.ts";
 
@@ -50,7 +50,7 @@ export async function suggestTransfers(db: Db, userId: string): Promise<Transfer
 }
 
 export async function linkTransfer(
-  db: Db,
+  db: DbOrTx,
   userId: string,
   outTransactionId: string,
   inTransactionId: string,

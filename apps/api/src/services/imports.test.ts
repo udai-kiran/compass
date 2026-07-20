@@ -77,6 +77,61 @@ test("suggestMapping matches a built-in preset by headers", () => {
   assert.equal(suggestMapping(["colA", "colB"]), null);
 });
 
+test("HDFC statement: preset auto-matches its real headers", () => {
+  const headers = [
+    "Date",
+    "Narration",
+    "Chq./Ref.No.",
+    "Value Dt",
+    "Withdrawal Amt.",
+    "Deposit Amt.",
+    "Closing Balance",
+  ];
+  assert.equal(suggestMapping(headers)?.name, "HDFC Bank");
+});
+
+test("HDFC statement: a withdrawal row parses (2-digit year, comma amount)", () => {
+  const mapping = suggestMapping([
+    "Date",
+    "Narration",
+    "Chq./Ref.No.",
+    "Value Dt",
+    "Withdrawal Amt.",
+    "Deposit Amt.",
+    "Closing Balance",
+  ])!.mapping;
+  const withdrawal = parseRow(
+    {
+      Date: "01/04/26",
+      Narration: "UPI-ACHAKALA SREENATH-ACHAKALA.SREENATH@IBL-UTIB0001628-982551223336-PAYMENT",
+      "Chq./Ref.No.": "0000982551223336",
+      "Value Dt": "01/04/26",
+      "Withdrawal Amt.": "320.00",
+      "Deposit Amt.": "",
+      "Closing Balance": "6,394.15",
+    },
+    mapping,
+    heuristicNormalize,
+  );
+  assert.equal(withdrawal.error, null);
+  assert.equal(withdrawal.date, "2026-04-01"); // DD/MM/YY → 20YY
+  assert.equal(withdrawal.amountPaise, -32000); // withdrawal is an outflow
+  const deposit = parseRow(
+    {
+      Date: "05/04/26",
+      Narration: "NEFT CR-SALARY",
+      "Chq./Ref.No.": "N123",
+      "Value Dt": "05/04/26",
+      "Withdrawal Amt.": "",
+      "Deposit Amt.": "50,000.00",
+      "Closing Balance": "56,394.15",
+    },
+    mapping,
+    heuristicNormalize,
+  );
+  assert.equal(deposit.amountPaise, 5_000_000); // deposit is an inflow
+});
+
 test("heuristicNormalize strips bank noise", () => {
   assert.equal(heuristicNormalize("POS 402911 AMAZON PAY INDIA BLR"), "Amazon Blr");
   assert.equal(heuristicNormalize("UPI-swiggy@ybl-9012"), "Swiggy");

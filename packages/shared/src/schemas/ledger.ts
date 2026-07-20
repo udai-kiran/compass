@@ -279,6 +279,12 @@ export const TransactionSchema = z.object({
   tags: z.array(z.string()),
   source: TransactionSourceSchema,
   transferLinkId: z.uuid().nullable(),
+  /**
+   * When this is one leg of a transfer, the account the other leg sits in — lets
+   * the UI tell a plain account-to-account move from a credit-card payment (and
+   * name the counterpart). Null when the transaction isn't a transfer leg.
+   */
+  transferCounterpartAccountId: z.uuid().nullable(),
   /** insurance policy this expense is a premium for; null for ordinary transactions */
   policyId: z.uuid().nullable(),
   splits: z.array(SplitSchema),
