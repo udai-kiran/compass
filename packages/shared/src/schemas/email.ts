@@ -90,6 +90,13 @@ export const ExtractedTransactionSchema = z.object({
   status: ExtractedTxnReviewStatusSchema,
   /** set once accepted into the ledger */
   transactionId: z.uuid().nullable(),
+  /**
+   * The other leg when this draft looks like one side of an account-to-account
+   * transfer (a debit + a matching credit, ~same day). Computed at read time,
+   * not stored; both legs point at each other so the inbox can offer to record
+   * them as a single transfer. Null when there's no unambiguous match.
+   */
+  transferPartnerId: z.uuid().nullable(),
   createdAt: z.string(),
   // denormalized email context for the review card
   subject: z.string(),
@@ -112,6 +119,21 @@ export const AcceptExtractedTxnSchema = z.object({
   categoryId: z.uuid().nullable().default(null),
 });
 export type AcceptExtractedTxn = z.input<typeof AcceptExtractedTxnSchema>;
+
+/**
+ * Accept two paired drafts as a single account-to-account transfer: the debit
+ * leg (`outId`) leaves `fromAccountId`, the credit leg (`inId`) lands in
+ * `toAccountId`. The server takes the amount from the drafts themselves, creates
+ * both ledger legs, and links them — so a transfer never counts as income+expense.
+ */
+export const AcceptTransferSchema = z.object({
+  outId: z.uuid(),
+  inId: z.uuid(),
+  fromAccountId: z.uuid(),
+  toAccountId: z.uuid(),
+  occurredAt: z.iso.date(),
+});
+export type AcceptTransfer = z.input<typeof AcceptTransferSchema>;
 
 /** Which review-inbox rows to list. */
 export const InboxStatusFilterSchema = z.object({

@@ -20,8 +20,8 @@ export function InboxPage() {
         <p className="mt-0.5 text-sm text-slate-500">
           Transactions our reader pulled from your email. We pre-fill the account and a category —
           reusing what you filed this merchant under before, or a best guess for a new one — so
-          check them, tweak anything that's off, and accept to add each to the ledger. Nothing is
-          added automatically.
+          check them, tweak anything that's off, and accept to add each to the ledger. A debit and
+          a matching credit are grouped as one transfer. Nothing is added automatically.
         </p>
       </header>
 
@@ -34,12 +34,43 @@ export function InboxPage() {
       )}
 
       <div className="space-y-3">
-        {drafts?.map((d) => (
-          <DraftCard key={d.id} draft={d} accounts={openAccounts} categories={openCategories} />
-        ))}
+        {drafts ? groupDrafts(drafts, openAccounts, openCategories) : null}
       </div>
     </div>
   );
+}
+
+/**
+ * Render the drafts, collapsing a matched debit+credit pair (draft.transferPartnerId)
+ * into a single Transfer card so a fund movement is reviewed once, not twice.
+ * Everything else renders as an ordinary draft.
+ */
+function groupDrafts(list: ExtractedTransaction[], accounts: Account[], categories: Category[]) {
+  const rendered = new Set<string>();
+  const items: React.ReactNode[] = [];
+  for (const d of list) {
+    if (rendered.has(d.id)) continue;
+    const partner = d.transferPartnerId ? list.find((x) => x.id === d.transferPartnerId) : undefined;
+    if (partner && !rendered.has(partner.id)) {
+      rendered.add(d.id);
+      rendered.add(partner.id);
+      const debit = d.direction === "debit" ? d : partner;
+      const credit = d.direction === "debit" ? partner : d;
+      items.push(
+        <TransferGroup
+          key={`t-${debit.id}-${credit.id}`}
+          debit={debit}
+          credit={credit}
+          accounts={accounts}
+          categories={categories}
+        />,
+      );
+    } else {
+      rendered.add(d.id);
+      items.push(<DraftCard key={d.id} draft={d} accounts={accounts} categories={categories} />);
+    }
+  }
+  return items;
 }
 
 function DraftCard({
@@ -170,6 +201,133 @@ function DraftCard({
           Reject
         </button>
         {draft.bankRef && <span className="ml-auto text-xs text-slate-400">Ref {draft.bankRef}</span>}
+      </div>
+    </section>
+  );
+}
+
+/**
+ * A detected transfer: one debit leg + its matching credit leg, offered as a
+ * single "record transfer" action. "Not a transfer" drops back to two ordinary
+ * draft cards so the reviewer is never trapped by a wrong guess.
+ */
+function TransferGroup({
+  debit,
+  credit,
+  accounts,
+  categories,
+}: {
+  debit: ExtractedTransaction;
+  credit: ExtractedTransaction;
+  accounts: Account[];
+  categories: Category[];
+}) {
+  const { acceptTransfer } = useInboxMutations();
+  const [notTransfer, setNotTransfer] = useState(false);
+  const [fromAccountId, setFromAccountId] = useState(debit.suggestedAccountId ?? "");
+  const [toAccountId, setToAccountId] = useState(credit.suggestedAccountId ?? "");
+  const [date, setDate] = useState(debit.occurredAt ?? credit.occurredAt ?? today());
+
+  if (notTransfer) {
+    return (
+      <div className="space-y-3">
+        <DraftCard draft={debit} accounts={accounts} categories={categories} />
+        <DraftCard draft={credit} accounts={accounts} categories={categories} />
+      </div>
+    );
+  }
+
+  const busy = acceptTransfer.isPending;
+
+  function onRecord() {
+    if (!fromAccountId || !toAccountId) {
+      toast("Pick both accounts first", "error");
+      return;
+    }
+    if (fromAccountId === toAccountId) {
+      toast("From and To must be different accounts", "error");
+      return;
+    }
+    acceptTransfer.mutate(
+      { outId: debit.id, inId: credit.id, fromAccountId, toAccountId, occurredAt: date },
+      { onSuccess: () => toast("Transfer added to the ledger", "success") },
+    );
+  }
+
+  return (
+    <section className="rounded-lg border border-indigo-200 bg-white">
+      <div className="flex items-start justify-between gap-4 border-b border-slate-100 p-4">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="text-base font-semibold text-slate-800">Looks like a transfer</span>
+            <span className="shrink-0 rounded bg-indigo-50 px-1.5 py-0.5 text-xs font-medium text-indigo-700">
+              Transfer
+            </span>
+          </div>
+          <p className="mt-0.5 text-xs text-slate-400">
+            A debit and a matching credit — record them as one movement between your accounts, not
+            as spend + income.
+          </p>
+        </div>
+        <span className="shrink-0 text-lg font-semibold tabular-nums text-slate-800">
+          {formatINR(debit.amountPaise)}
+        </span>
+      </div>
+
+      {(debit.sourceQuote || credit.sourceQuote) && (
+        <div className="space-y-1 border-b border-slate-100 bg-slate-50 px-4 py-2 text-xs italic text-slate-500">
+          {debit.sourceQuote && <p>“{debit.sourceQuote}”</p>}
+          {credit.sourceQuote && <p>“{credit.sourceQuote}”</p>}
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-3">
+        <Field label="From account">
+          <select
+            value={fromAccountId}
+            onChange={(e) => setFromAccountId(e.target.value)}
+            className="input"
+            aria-label="From account"
+          >
+            <option value="">Select…</option>
+            {accounts.map((a) => (
+              <option key={a.id} value={a.id}>{a.name}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="To account">
+          <select
+            value={toAccountId}
+            onChange={(e) => setToAccountId(e.target.value)}
+            className="input"
+            aria-label="To account"
+          >
+            <option value="">Select…</option>
+            {accounts.map((a) => (
+              <option key={a.id} value={a.id}>{a.name}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Date">
+          <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="input" />
+        </Field>
+      </div>
+
+      <div className="flex items-center gap-2 border-t border-slate-100 px-4 py-3">
+        <button
+          onClick={onRecord}
+          disabled={busy}
+          className="rounded-md bg-slate-800 px-4 py-1.5 text-sm text-white disabled:opacity-40"
+        >
+          {busy ? "Recording…" : "Record transfer"}
+        </button>
+        <button
+          onClick={() => setNotTransfer(true)}
+          disabled={busy}
+          className="rounded-md border border-slate-300 px-4 py-1.5 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-40"
+        >
+          Not a transfer
+        </button>
       </div>
     </section>
   );

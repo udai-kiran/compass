@@ -1,10 +1,16 @@
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
-import type { AcceptExtractedTxn, ExtractedTransaction, ExtractedTxnReviewStatus } from "@compass/shared";
-import type { Db } from "../db/index.ts";
-import { categories, emailIngestions, extractedTransactions, transactions } from "../db/schema.ts";
+import type {
+  AcceptExtractedTxn,
+  AcceptTransfer,
+  ExtractedTransaction,
+  ExtractedTxnReviewStatus,
+} from "@compass/shared";
+import type { Db, DbOrTx } from "../db/index.ts";
+import { accounts, categories, emailIngestions, extractedTransactions, transactions } from "../db/schema.ts";
 import { HttpError } from "../lib/errors.ts";
 import { getMerchantRules, normalizeMerchant } from "./merchants.ts";
 import { createTransaction } from "./transactions.ts";
+import { linkTransfer, TRANSFER_WINDOW_DAYS } from "./transfers.ts";
 
 /**
  * Review inbox for AI-extracted transactions. Rows land here as `pending` drafts
@@ -48,6 +54,8 @@ function toDto(row: {
     confidence: row.confidence ?? 0,
     status: row.status,
     transactionId: row.transactionId,
+    // filled in by listInbox for pending drafts; a plain row has no partner
+    transferPartnerId: null,
     createdAt: row.createdAt.toISOString(),
     subject: row.subject,
     fromAddr: row.fromAddr,
@@ -88,9 +96,58 @@ export async function listInbox(
     .where(and(eq(extractedTransactions.userId, userId), eq(extractedTransactions.status, status)))
     .orderBy(desc(extractedTransactions.createdAt));
   const dtos = rows.map(toDto);
-  // Only pending drafts get reviewed, so only they need a category pre-fill.
-  if (status === "pending") await applyHistoryCategory(db, userId, dtos);
+  // Only pending drafts get reviewed, so only they need the pre-fill work.
+  if (status === "pending") {
+    await applyHistoryCategory(db, userId, dtos);
+    const pairs = pickTransferPairs(dtos);
+    for (const d of dtos) d.transferPartnerId = pairs.get(d.id) ?? null;
+  }
   return dtos;
+}
+
+/**
+ * Find drafts that are the two legs of one account-to-account transfer: a debit
+ * and a matching credit (equal amount, within the transfer window, not the same
+ * known account). Only pairs a mutually-unique match — if a leg could pair with
+ * more than one counterpart it's left alone rather than guessed, mirroring
+ * autoLinkTransfers. Returns a symmetric id→partnerId map. Pure/testable.
+ */
+export function pickTransferPairs(
+  drafts: {
+    id: string;
+    direction: "debit" | "credit";
+    amountPaise: number;
+    occurredAt: string | null;
+    suggestedAccountId: string | null;
+  }[],
+  windowDays: number = TRANSFER_WINDOW_DAYS,
+): Map<string, string> {
+  const debits = drafts.filter((d) => d.direction === "debit" && d.occurredAt);
+  const credits = drafts.filter((d) => d.direction === "credit" && d.occurredAt);
+  const outCandidates = new Map<string, string[]>();
+  const inCandidates = new Map<string, string[]>();
+  for (const o of debits) {
+    for (const i of credits) {
+      if (o.amountPaise !== i.amountPaise) continue;
+      // a debit and credit on the *same* known account isn't a transfer (e.g. a reversal)
+      if (o.suggestedAccountId && i.suggestedAccountId && o.suggestedAccountId === i.suggestedAccountId) {
+        continue;
+      }
+      const days = Math.abs(Date.parse(o.occurredAt!) - Date.parse(i.occurredAt!)) / 86_400_000;
+      if (days > windowDays) continue;
+      (outCandidates.get(o.id) ?? outCandidates.set(o.id, []).get(o.id)!).push(i.id);
+      (inCandidates.get(i.id) ?? inCandidates.set(i.id, []).get(i.id)!).push(o.id);
+    }
+  }
+  const pairs = new Map<string, string>();
+  for (const [outId, ins] of outCandidates) {
+    if (ins.length !== 1) continue; // this debit matches more than one credit — ambiguous
+    const inId = ins[0]!;
+    if ((inCandidates.get(inId) ?? []).length !== 1) continue; // that credit is claimed by others too
+    pairs.set(outId, inId);
+    pairs.set(inId, outId);
+  }
+  return pairs;
 }
 
 /** History key: a normalized merchant paired with the category kind it was filed under. */
@@ -271,6 +328,112 @@ export async function acceptExtracted(
   });
 
   return reload(db, userId, id);
+}
+
+/**
+ * Claim one pending draft inside a transaction: flip it to `accepted` only if
+ * it's still `pending` (row-locked so racing requests can't both win), and
+ * report back what it was. Missing → 404, already-settled → 409.
+ */
+async function claimPending(db: DbOrTx, userId: string, id: string) {
+  const [claimed] = await db
+    .update(extractedTransactions)
+    .set({ status: "accepted", updatedAt: new Date() })
+    .where(
+      and(
+        eq(extractedTransactions.id, id),
+        eq(extractedTransactions.userId, userId),
+        eq(extractedTransactions.status, "pending"),
+      ),
+    )
+    .returning({
+      amountPaise: extractedTransactions.amountPaise,
+      direction: extractedTransactions.direction,
+    });
+  if (!claimed) {
+    const [exists] = await db
+      .select({ id: extractedTransactions.id })
+      .from(extractedTransactions)
+      .where(and(eq(extractedTransactions.id, id), eq(extractedTransactions.userId, userId)));
+    throw new HttpError(exists ? 409 : 404, exists ? "Draft is not pending" : "Draft not found");
+  }
+  return claimed;
+}
+
+/**
+ * Accept two paired drafts as one account-to-account transfer: create the debit
+ * leg on `fromAccountId` and the credit leg on `toAccountId`, then link them so
+ * the movement never shows up as income + expense. The amount comes from the
+ * drafts, not the client. All-or-nothing in a single transaction; both drafts
+ * are claimed the same race-safe way an ordinary accept is.
+ */
+export async function acceptTransfer(
+  db: Db,
+  userId: string,
+  input: AcceptTransfer,
+): Promise<ExtractedTransaction[]> {
+  if (input.fromAccountId === input.toAccountId) {
+    throw new HttpError(400, "A transfer needs two different accounts");
+  }
+  if (input.outId === input.inId) {
+    throw new HttpError(400, "A transfer needs two different drafts");
+  }
+
+  await db.transaction(async (tx) => {
+    const out = await claimPending(tx, userId, input.outId);
+    const inn = await claimPending(tx, userId, input.inId);
+    if (out.direction !== "debit" || inn.direction !== "credit") {
+      throw new HttpError(400, "A transfer is a debit leg paired with a credit leg");
+    }
+    if (out.amountPaise !== inn.amountPaise) {
+      throw new HttpError(400, "Transfer legs must be equal amounts");
+    }
+
+    // Ownership is re-checked inside createTransaction; the names are just for labels.
+    const [fromAcct, toAcct] = await Promise.all([
+      tx.query.accounts.findFirst({
+        where: and(eq(accounts.id, input.fromAccountId), eq(accounts.userId, userId)),
+        columns: { name: true },
+      }),
+      tx.query.accounts.findFirst({
+        where: and(eq(accounts.id, input.toAccountId), eq(accounts.userId, userId)),
+        columns: { name: true },
+      }),
+    ]);
+
+    const outTxn = await createTransaction(tx, userId, {
+      accountId: input.fromAccountId,
+      date: input.occurredAt,
+      amountPaise: -out.amountPaise,
+      merchant: toAcct ? `Transfer to ${toAcct.name}` : "Transfer out",
+      categoryId: null,
+      notes: "Transfer imported from email",
+      tags: [],
+      source: "import",
+    });
+    const inTxn = await createTransaction(tx, userId, {
+      accountId: input.toAccountId,
+      date: input.occurredAt,
+      amountPaise: inn.amountPaise,
+      merchant: fromAcct ? `Transfer from ${fromAcct.name}` : "Transfer in",
+      categoryId: null,
+      notes: "Transfer imported from email",
+      tags: [],
+      source: "import",
+    });
+    await linkTransfer(tx, userId, outTxn.id, inTxn.id, false);
+
+    await tx
+      .update(extractedTransactions)
+      .set({ transactionId: outTxn.id })
+      .where(and(eq(extractedTransactions.id, input.outId), eq(extractedTransactions.userId, userId)));
+    await tx
+      .update(extractedTransactions)
+      .set({ transactionId: inTxn.id })
+      .where(and(eq(extractedTransactions.id, input.inId), eq(extractedTransactions.userId, userId)));
+  });
+
+  return Promise.all([reload(db, userId, input.outId), reload(db, userId, input.inId)]);
 }
 
 export async function rejectExtracted(

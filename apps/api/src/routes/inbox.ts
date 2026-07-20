@@ -3,12 +3,14 @@ import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
 import {
   AcceptExtractedTxnSchema,
+  AcceptTransferSchema,
   ExtractedTransactionSchema,
   InboxCountSchema,
   InboxStatusFilterSchema,
 } from "@compass/shared";
 import {
   acceptExtracted,
+  acceptTransfer,
   countPending,
   listInbox,
   rejectExtracted,
@@ -44,6 +46,17 @@ export async function inboxRoutes(app: FastifyInstance) {
       },
     },
     async (req) => acceptExtracted(app.db, req.session!.userId, req.params.id, req.body),
+  );
+
+  r.post(
+    "/api/inbox/transfer",
+    {
+      schema: {
+        body: AcceptTransferSchema,
+        response: { 200: z.array(ExtractedTransactionSchema) },
+      },
+    },
+    async (req) => acceptTransfer(app.db, req.session!.userId, req.body),
   );
 
   r.post(
