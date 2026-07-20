@@ -308,6 +308,7 @@ const STATEMENT_SYSTEM = [
   "",
   "A transaction line looks like: DATE  DESCRIPTION  AMOUNT  <C|D>.",
   'direction: a "D" (debit) is a purchase/spend on the card → "debit"; a "C" (credit) is a payment received, refund, or cashback → "credit".',
+  'A credit that is a BILL PAYMENT to the card — "PAYMENT RECEIVED", "BBPS"/"BPPY", autopay, a NEFT/UPI/cheque payment, "payment thank you" — is a transfer/repayment, NOT income: keep direction "credit" but set its category to "". Only a genuine refund or cashback may take an income category.',
   "Extract every dated transaction in the statement period. Ignore summary, subtotal, interest-explanation and marketing lines that aren't dated transactions. Never invent figures. Amounts are Indian Rupees; a 2-digit year expands to 20YY.",
 ].join("\n");
 
