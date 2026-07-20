@@ -256,6 +256,9 @@ export async function classifyAndExtract(
     messages: [{ role: "user", content: userPrompt(email, categories) }],
     tools: [],
     maxTokens: 2048,
+    // A statement email's HTML body is bigger than an alert's; a slow reasoning
+    // model can exceed the default 30s, so allow more before giving up.
+    timeoutMs: 90_000,
   });
   const parsed = ModelResultSchema.safeParse(extractJson(turn.text));
   // Unparseable output is treated as "nothing to see here" rather than a crash;
@@ -326,6 +329,9 @@ export async function extractStatementTxns(
     ],
     tools: [],
     maxTokens: 4096,
+    // A whole statement is a big prompt; a slow reasoning model needs well over
+    // the default 30s. Give it up to 3 minutes before treating it as unavailable.
+    timeoutMs: 180_000,
   });
   const parsed = ModelResultSchema.safeParse(extractJson(turn.text));
   if (!parsed.success) return [];

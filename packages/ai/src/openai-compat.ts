@@ -44,8 +44,14 @@ export function createOpenAiCompatProvider(config: OpenAiCompatConfig): AiProvid
   const url = `${config.baseUrl.replace(/\/$/, "")}/chat/completions`;
   const headers = { authorization: `Bearer ${config.apiKey}` };
 
-  async function call(body: Record<string, unknown>): Promise<OpenAiResponse> {
-    return (await postJson(url, { model: config.model, ...body }, { headers })) as OpenAiResponse;
+  async function call(
+    body: Record<string, unknown>,
+    opts: { timeoutMs?: number } = {},
+  ): Promise<OpenAiResponse> {
+    return (await postJson(url, { model: config.model, ...body }, {
+      headers,
+      timeoutMs: opts.timeoutMs,
+    })) as OpenAiResponse;
   }
 
   function messageOf(res: OpenAiResponse): OpenAiMessage {
@@ -93,16 +99,19 @@ export function createOpenAiCompatProvider(config: OpenAiCompatConfig): AiProvid
     },
 
     async chat(request: ChatRequest): Promise<ChatTurn> {
-      const res = await call({
-        max_tokens: request.maxTokens ?? 1024,
-        messages: toOpenAiMessages(request),
-        tools: request.tools.length
-          ? request.tools.map((t) => ({
-              type: "function",
-              function: { name: t.name, description: t.description, parameters: t.inputSchema },
-            }))
-          : undefined,
-      });
+      const res = await call(
+        {
+          max_tokens: request.maxTokens ?? 1024,
+          messages: toOpenAiMessages(request),
+          tools: request.tools.length
+            ? request.tools.map((t) => ({
+                type: "function",
+                function: { name: t.name, description: t.description, parameters: t.inputSchema },
+              }))
+            : undefined,
+        },
+        { timeoutMs: request.timeoutMs },
+      );
       const msg = messageOf(res);
       const toolCalls: ToolCall[] = (msg.tool_calls ?? [])
         .filter((c) => c.function?.name)
