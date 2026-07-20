@@ -14,6 +14,28 @@ export type InsuranceKind = z.infer<typeof InsuranceKindSchema>;
 export const VehicleKindSchema = z.enum(["car", "bike", "other"]);
 export type VehicleKind = z.infer<typeof VehicleKindSchema>;
 
+/**
+ * Health-policy sub-type. Only meaningful for kind = "health"; null elsewhere.
+ * The core divide is indemnity (reimburses actual bills, up to the sum insured)
+ * vs. fixed-benefit (pays a defined lump sum on a trigger). See isFixedBenefit —
+ * the "cover" figure is a drawdown ceiling for indemnity, a guaranteed payout for
+ * fixed-benefit, so the two shouldn't be totalled as if they were the same thing.
+ */
+export const HealthTypeSchema = z.enum([
+  "indemnity",
+  "top_up",
+  "critical_illness",
+  "hospital_cash",
+  "personal_accident",
+  "disease_specific",
+]);
+export type HealthType = z.infer<typeof HealthTypeSchema>;
+
+/** Indemnity types reimburse costs; the rest pay a fixed benefit on a trigger. */
+export function isFixedBenefit(healthType: HealthType): boolean {
+  return healthType !== "indemnity" && healthType !== "top_up";
+}
+
 /** How often the premium falls due. "single" = one-time / single-premium policy. */
 export const PremiumFrequencySchema = z.enum([
   "monthly",
@@ -31,9 +53,16 @@ export const InsurancePolicySchema = z.object({
   kind: InsuranceKindSchema,
   /** car/bike/other for a vehicle policy; null for life/health */
   vehicleType: VehicleKindSchema.nullable(),
+  /** vehicle registration number (e.g. "KA01AB1234"); "" for non-vehicle policies */
+  vehicleRegNo: z.string(),
+  /** indemnity/critical-illness/etc. for a health policy; null for life/vehicle */
+  healthType: HealthTypeSchema.nullable(),
   /** insurance company, e.g. "LIC", "Star Health", "ICICI Lombard" */
   insurer: z.string(),
   policyNumber: z.string(),
+  /** URL to the policy wordings / terms document; "" when unset. Meant to be
+   *  machine-readable later — an agent can fetch and read the actual terms. */
+  policyWordingUrl: z.string(),
   /** sum assured (life) / sum insured (health) / IDV (vehicle), in paise */
   sumAssuredPaise: z.number().int(),
   /** accrued bonus / loyalty additions (endowment life), in paise */
@@ -58,8 +87,12 @@ const policyFields = {
   name: z.string().min(1).max(120),
   kind: InsuranceKindSchema.default("life"),
   vehicleType: VehicleKindSchema.nullable().default(null),
+  vehicleRegNo: z.string().max(20).default(""),
+  healthType: HealthTypeSchema.nullable().default(null),
   insurer: z.string().max(120).default(""),
   policyNumber: z.string().max(60).default(""),
+  /** a real URL, or "" to leave it unset */
+  policyWordingUrl: z.union([z.url(), z.literal("")]).default(""),
   sumAssuredPaise: z.number().int().min(0).default(0),
   bonusPaise: z.number().int().min(0).default(0),
   premiumPaise: z.number().int().min(0).default(0),
@@ -71,9 +104,15 @@ const policyFields = {
   notes: z.string().max(1000).default(""),
 };
 
-// A vehicle sub-type only belongs on a vehicle policy; a maturity date only on a
-// life policy (health/vehicle renew, they don't mature). Applied to both schemas.
-type PolicyConsistency = { kind: InsuranceKind; vehicleType: VehicleKind | null; maturityDate: string | null };
+// Sub-types belong only to their kind; a maturity date only to a life policy
+// (health/vehicle renew, they don't mature). Applied to both create and update.
+type PolicyConsistency = {
+  kind: InsuranceKind;
+  vehicleType: VehicleKind | null;
+  vehicleRegNo: string;
+  healthType: HealthType | null;
+  maturityDate: string | null;
+};
 function checkPolicyConsistency(value: PolicyConsistency, issues: z.core.$ZodRawIssue[]) {
   if (value.kind !== "vehicle" && value.vehicleType !== null) {
     issues.push({
@@ -81,6 +120,22 @@ function checkPolicyConsistency(value: PolicyConsistency, issues: z.core.$ZodRaw
       path: ["vehicleType"],
       message: "vehicle type only applies to a vehicle policy",
       input: value.vehicleType,
+    });
+  }
+  if (value.kind !== "vehicle" && value.vehicleRegNo !== "") {
+    issues.push({
+      code: "custom",
+      path: ["vehicleRegNo"],
+      message: "registration number only applies to a vehicle policy",
+      input: value.vehicleRegNo,
+    });
+  }
+  if (value.kind !== "health" && value.healthType !== null) {
+    issues.push({
+      code: "custom",
+      path: ["healthType"],
+      message: "health type only applies to a health policy",
+      input: value.healthType,
     });
   }
   if (value.kind !== "life" && value.maturityDate !== null) {
