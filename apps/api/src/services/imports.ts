@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { setImmediate as yieldLoop } from "node:timers/promises";
-import { and, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import type {
   BankPreset,
   CommitResult,
@@ -10,11 +10,20 @@ import type {
 } from "@compass/shared";
 import { ImportMappingSchema } from "@compass/shared";
 import type { Db } from "../db/index.ts";
-import { accounts, categories, importPresets, importRows, imports, transactions } from "../db/schema.ts";
+import {
+  accounts,
+  categories,
+  importPresets,
+  importRows,
+  imports,
+  transactions,
+  transferLinks,
+} from "../db/schema.ts";
 import { parseAmountCell, parseCsv, parseDateCell } from "../lib/csv.ts";
 import { HttpError } from "../lib/errors.ts";
 import { parseHdfcStatement } from "../lib/hdfc-statement.ts";
 import { getMerchantRules, normalizeMerchant } from "./merchants.ts";
+import { reconcileStatementTransactions } from "./import-reconciliation.ts";
 import { autoLinkTransfers } from "./transfers.ts";
 
 export const MAX_IMPORT_BYTES = 25 * 1024 * 1024;
@@ -117,8 +126,14 @@ export const BANK_PRESETS: BankPreset[] = [
 ];
 
 function mappingColumns(m: ImportMapping): string[] {
-  return [m.dateColumn, m.merchantColumn, m.amountColumn, m.debitColumn, m.creditColumn, m.notesColumn]
-    .filter((c): c is string => Boolean(c));
+  return [
+    m.dateColumn,
+    m.merchantColumn,
+    m.amountColumn,
+    m.debitColumn,
+    m.creditColumn,
+    m.notesColumn,
+  ].filter((c): c is string => Boolean(c));
 }
 
 /** Pick the built-in preset whose mapped columns all exist in the file's headers. */
@@ -176,7 +191,12 @@ export function parseRow(
   };
 }
 
-export function dedupeHash(accountId: string, date: string, amountPaise: number, merchant: string): string {
+export function dedupeHash(
+  accountId: string,
+  date: string,
+  amountPaise: number,
+  merchant: string,
+): string {
   return createHash("sha256")
     .update(`${accountId}|${date}|${amountPaise}|${merchant.toLowerCase()}`)
     .digest("hex");
@@ -476,7 +496,10 @@ export async function listImportRows(
       offset: query.offset,
       limit: query.limit,
     }),
-    db.select({ count: sql<number>`count(*)::int` }).from(importRows).where(where),
+    db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(importRows)
+      .where(where),
   ]);
   return { items: items.map(toRow), totalCount: total[0]!.count };
 }
@@ -510,10 +533,21 @@ export async function updateImportRow(
 
 // ---------- Commit / rollback ----------
 
-export async function commitImport(db: Db, userId: string, importId: string): Promise<CommitResult> {
+export async function commitImport(
+  db: Db,
+  userId: string,
+  importId: string,
+): Promise<CommitResult> {
   const batch = await ownedImport(db, userId, importId);
   if (batch.status !== "staged") throw new HttpError(409, "Import already committed");
   if (!batch.mapping) throw new HttpError(400, "Set a column mapping before committing");
+  const mapping = ImportMappingSchema.parse(batch.mapping);
+
+  const account = await db.query.accounts.findFirst({
+    where: and(eq(accounts.id, batch.accountId), eq(accounts.userId, userId)),
+    columns: { type: true },
+  });
+  if (!account) throw new HttpError(404, "Account not found");
 
   const rows = await db.query.importRows.findMany({
     where: eq(importRows.importId, importId),
@@ -521,11 +555,17 @@ export async function commitImport(db: Db, userId: string, importId: string): Pr
   });
 
   const committable = rows.filter(
-    (r) => r.include && !r.duplicate && r.error === null && r.date !== null && r.amountPaise !== null,
+    (r) =>
+      r.include && !r.duplicate && r.error === null && r.date !== null && r.amountPaise !== null,
   );
-  const skippedDuplicates = rows.filter((r) => r.duplicate && r.include).length;
+  let created = 0;
+  let matchedExisting = 0;
+  let updatedFromStatement = 0;
+  let reconciliationConflicts = 0;
+  let skippedDuplicates = rows.filter((r) => r.duplicate).length;
   const skippedErrors = rows.filter((r) => r.error !== null).length;
-  const skippedExcluded = rows.length - committable.length - skippedDuplicates - skippedErrors;
+  let skippedExcluded = rows.length - committable.length - skippedDuplicates - skippedErrors;
+  let reconciledNetPaise = committable.reduce((sum, row) => sum + row.amountPaise!, 0);
 
   // atomic: either the whole batch lands in transactions or none of it
   await db.transaction(async (t) => {
@@ -539,8 +579,122 @@ export async function commitImport(db: Db, userId: string, importId: string): Pr
       .returning({ id: imports.id });
     if (claimed.length === 0) throw new HttpError(409, "Import already committed");
 
-    for (let i = 0; i < committable.length; i += BATCH) {
-      const chunk = committable.slice(i, i + BATCH);
+    let toCreate = committable;
+    if (account.type === "credit_card") {
+      // Serialize different imports for one card. The second commit then sees
+      // the first commit's inserts and reconciles instead of recreating them.
+      await t.execute(sql`select id from ${accounts} where id = ${batch.accountId} for update`);
+
+      // Auto-flagged duplicates have include=false. They still participate in
+      // reconciliation so re-importing a statement attaches to existing data
+      // rather than silently dropping or recreating it.
+      const statementRows = rows
+        .filter(
+          (row) =>
+            (row.include || row.duplicate) &&
+            row.error === null &&
+            row.date !== null &&
+            row.amountPaise !== null,
+        )
+        .map((row) => ({
+          id: row.id,
+          date: row.date!,
+          amountPaise: row.amountPaise!,
+          merchant: row.merchant,
+          notes: row.notes,
+        }));
+
+      let existing: Array<{
+        id: string;
+        date: string;
+        amountPaise: number;
+        merchant: string;
+        notes: string;
+      }> = [];
+      if (statementRows.length > 0) {
+        const dates = statementRows.map((row) => row.date).sort();
+        const shift = (date: string, days: number) => {
+          const value = new Date(`${date}T00:00:00Z`);
+          value.setUTCDate(value.getUTCDate() + days);
+          return value.toISOString().slice(0, 10);
+        };
+        existing = await t
+          .select({
+            id: transactions.id,
+            date: transactions.date,
+            amountPaise: transactions.amountPaise,
+            merchant: transactions.merchant,
+            notes: transactions.notes,
+          })
+          .from(transactions)
+          .where(
+            and(
+              eq(transactions.userId, userId),
+              eq(transactions.accountId, batch.accountId),
+              isNull(transactions.deletedAt),
+              gte(transactions.date, shift(dates[0]!, -3)),
+              lte(transactions.date, shift(dates.at(-1)!, 3)),
+            ),
+          )
+          .orderBy(transactions.date, transactions.id);
+      }
+
+      const plan = reconcileStatementTransactions(statementRows, existing);
+      const updates = plan.filter((item) => item.action === "update");
+      for (const item of updates) {
+        await t
+          .update(transactions)
+          .set({
+            date: item.row.date,
+            amountPaise: item.row.amountPaise,
+            merchant: item.row.merchant,
+            ...(mapping.notesColumn ? { notes: item.row.notes } : {}),
+            source: "import",
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(transactions.id, item.transactionId),
+              eq(transactions.userId, userId),
+              eq(transactions.accountId, batch.accountId),
+            ),
+          );
+      }
+      const updatedIds = updates.map((item) => item.transactionId);
+      if (updatedIds.length > 0) {
+        // A statement correction can invalidate an inferred card payment.
+        // Preserve manual transfer links and let auto-linking rebuild its own.
+        await t
+          .delete(transferLinks)
+          .where(
+            and(
+              eq(transferLinks.userId, userId),
+              eq(transferLinks.auto, true),
+              or(
+                inArray(transferLinks.outTransactionId, updatedIds),
+                inArray(transferLinks.inTransactionId, updatedIds),
+              ),
+            ),
+          );
+      }
+
+      matchedExisting = plan.filter((item) => item.action === "matched").length;
+      updatedFromStatement = updates.length;
+      reconciliationConflicts = plan.filter((item) => item.action === "conflict").length;
+      skippedDuplicates = matchedExisting;
+      const createIds = new Set(
+        plan.filter((item) => item.action === "create").map((item) => item.row.id),
+      );
+      toCreate = rows.filter((row) => createIds.has(row.id));
+      skippedExcluded = rows.length - plan.length - skippedErrors;
+      reconciledNetPaise = plan
+        .filter((item) => item.action !== "conflict")
+        .reduce((sum, item) => sum + item.row.amountPaise, 0);
+    }
+
+    created = toCreate.length;
+    for (let i = 0; i < toCreate.length; i += BATCH) {
+      const chunk = toCreate.slice(i, i + BATCH);
       const inserted = await t
         .insert(transactions)
         .values(
@@ -569,22 +723,29 @@ export async function commitImport(db: Db, userId: string, importId: string): Pr
   // card payments (credits) that match a debit on the paying account become
   // transfers, not income — keeps aggregates and net worth honest
   const linkedTransfers = await autoLinkTransfers(db, userId);
-  const netPaise = committable.reduce((s, r) => s + r.amountPaise!, 0);
 
   return {
-    created: committable.length,
+    created,
+    matchedExisting,
+    updatedFromStatement,
+    reconciliationConflicts,
     skippedDuplicates,
     skippedExcluded,
     skippedErrors,
-    netPaise,
+    netPaise: reconciledNetPaise,
     linkedTransfers,
   };
 }
 
 /** Hard-delete exactly the batch's transactions; balances recompute automatically. */
-export async function rollbackImport(db: Db, userId: string, importId: string): Promise<{ removed: number }> {
+export async function rollbackImport(
+  db: Db,
+  userId: string,
+  importId: string,
+): Promise<{ removed: number }> {
   const batch = await ownedImport(db, userId, importId);
-  if (batch.status !== "committed") throw new HttpError(409, "Only committed imports can be rolled back");
+  if (batch.status !== "committed")
+    throw new HttpError(409, "Only committed imports can be rolled back");
 
   const rows = await db
     .select({ transactionId: importRows.transactionId })
@@ -594,11 +755,16 @@ export async function rollbackImport(db: Db, userId: string, importId: string): 
 
   await db.transaction(async (t) => {
     for (let i = 0; i < ids.length; i += BATCH) {
-      await t.delete(transactions).where(
-        and(eq(transactions.userId, userId), inArray(transactions.id, ids.slice(i, i + BATCH))),
-      );
+      await t
+        .delete(transactions)
+        .where(
+          and(eq(transactions.userId, userId), inArray(transactions.id, ids.slice(i, i + BATCH))),
+        );
     }
-    await t.update(importRows).set({ transactionId: null }).where(eq(importRows.importId, importId));
+    await t
+      .update(importRows)
+      .set({ transactionId: null })
+      .where(eq(importRows.importId, importId));
     await t.update(imports).set({ status: "rolled_back" }).where(eq(imports.id, importId));
   });
 

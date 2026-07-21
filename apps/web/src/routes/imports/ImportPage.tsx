@@ -116,7 +116,9 @@ function BatchWorkbench({ batch, onBack }: { batch: ImportBatch; onBack: () => v
           <button
             disabled={remove.isPending}
             onClick={() => {
-              if (confirm("Delete this import? It hasn't touched your ledger, so nothing is lost.")) {
+              if (
+                confirm("Delete this import? It hasn't touched your ledger, so nothing is lost.")
+              ) {
                 remove.mutate(batch.id, {
                   onSuccess: () => {
                     toast(staged ? "Import cancelled" : "Import deleted", "success");
@@ -447,9 +449,20 @@ function CommitBar({ batch }: { batch: ImportBatch }) {
         onClick={() =>
           commit.mutate(batch.id, {
             onSuccess: (r) => {
+              const reconciled = [
+                r.matchedExisting > 0 ? `${r.matchedExisting} already matched` : "",
+                r.updatedFromStatement > 0
+                  ? `${r.updatedFromStatement} corrected from statement`
+                  : "",
+                r.reconciliationConflicts > 0
+                  ? `${r.reconciliationConflicts} conflicts skipped`
+                  : "",
+              ]
+                .filter(Boolean)
+                .join(", ");
               toast(
-                `Imported ${r.created} transactions (${r.skippedDuplicates} duplicates, ${r.skippedErrors} errors, ${r.skippedExcluded} excluded skipped)`,
-                "success",
+                `Created ${r.created} transactions${reconciled ? `; ${reconciled}` : ""} (${r.skippedErrors} errors, ${r.skippedExcluded} excluded)`,
+                r.reconciliationConflicts > 0 ? "error" : "success",
               );
               const net = `Net ${formatINR(r.netPaise)}`;
               const links =
