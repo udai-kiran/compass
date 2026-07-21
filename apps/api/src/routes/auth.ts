@@ -14,6 +14,7 @@ import {
 import { HttpError } from "../lib/errors.ts";
 import { changePassword, registerOwner, updateProfile, verifyLogin } from "../services/auth.ts";
 import { createSession, destroySession, listSessions } from "../services/session.ts";
+import { ensureDemoData } from "../services/demo.ts";
 import { countUsers, findUserById } from "../repositories/users.ts";
 import { clearSessionCookie, setSessionCookie } from "../plugins/auth.ts";
 import { getAiSettings, getUserAiProvider } from "../services/ai-settings.ts";
@@ -28,7 +29,25 @@ export async function authRoutes(app: FastifyInstance) {
       config: { public: true },
       schema: { response: { 200: BootstrapStatusSchema } },
     },
-    async () => ({ needsBootstrap: (await countUsers(app.db)) === 0 }),
+    async () => ({
+      needsBootstrap: (await countUsers(app.db)) === 0,
+      demoAvailable: app.config.DEMO_ENABLED,
+    }),
+  );
+
+  // Public: start a read-only demo session (data seeded on first use). Every
+  // write from the resulting session is rejected by the auth guard.
+  r.post(
+    "/api/auth/demo",
+    { config: { public: true }, schema: { response: { 200: UserSchema } } },
+    async (req, reply) => {
+      if (!app.config.DEMO_ENABLED) throw new HttpError(404, "Demo is not enabled");
+      const demoUserId = await ensureDemoData(app.db, app.config);
+      const row = await findUserById(app.db, demoUserId);
+      if (!row) throw new HttpError(500, "Demo account could not be prepared");
+      setSessionCookie(reply, await createSession(app.redis, row.id, { demo: true }));
+      return { id: row.id, email: row.email, displayName: row.displayName, isDemo: true };
+    },
   );
 
   r.post(
@@ -71,7 +90,7 @@ export async function authRoutes(app: FastifyInstance) {
   r.get("/api/auth/me", { schema: { response: { 200: UserSchema } } }, async (req) => {
     const row = await findUserById(app.db, req.session!.userId);
     if (!row) throw new HttpError(401, "Session user no longer exists");
-    return { id: row.id, email: row.email, displayName: row.displayName };
+    return { id: row.id, email: row.email, displayName: row.displayName, isDemo: row.isDemo };
   });
 
   r.patch(

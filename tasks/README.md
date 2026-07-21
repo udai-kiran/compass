@@ -61,6 +61,7 @@ One file per task; the `status:` field in each file's frontmatter is the source 
 | 6.6 | [Encrypted backup & restore](./06.06-backup-restore.md) | 6 — Insights, reports, polish | done |
 | 6.7 | [Settings](./06.07-settings-page.md) | 6 — Insights, reports, polish | done |
 | 6.8 | [Security & UX hardening](./06.08-hardening.md) | 6 — Insights, reports, polish | done |
+| 6.9 | [Read-only demo mode](./06.09-demo-mode.md) | 6 — Insights, reports, polish | done |
 | 7.1 | [AiProvider interface + NullProvider + capabilities](./07.01-ai-provider-interface.md) | 7 — AI module (optional) | done |
 | 7.2 | [Anthropic & Ollama providers](./07.02-anthropic-ollama-providers.md) | 7 — AI module (optional) | done |
 | 7.3 | [AI categorization suggestions](./07.03-ai-categorization.md) | 7 — AI module (optional) | done |

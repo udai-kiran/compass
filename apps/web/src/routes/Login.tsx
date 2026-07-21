@@ -4,6 +4,7 @@ import { Navigate, useNavigate } from "react-router";
 import { LoginRequestSchema, UserSchema } from "@compass/shared";
 import { ApiError, apiPost } from "../lib/api.ts";
 import { meQuery, useBootstrapStatus } from "../lib/auth.ts";
+import { DemoButton } from "../components/DemoButton.tsx";
 
 export function Login() {
   const { data: bootstrap } = useBootstrapStatus();
@@ -80,6 +81,7 @@ export function Login() {
         >
           {login.isPending ? "Signing in…" : "Sign in"}
         </button>
+        {bootstrap?.demoAvailable && <DemoButton />}
       </form>
     </div>
   );

@@ -45,6 +45,15 @@ const EnvSchema = z.object({
   /** disable rate limiting (useful for load tests); always off under NODE_ENV=test */
   RATE_LIMIT_DISABLED: z.stringbool().default(false),
   /**
+   * Expose a public, read-only demo account. When true, /api/auth/demo mints a
+   * read-only session for a seeded "demo" user (created on first use), and the
+   * login/welcome screens offer a "Explore the demo" entry. Every write from a
+   * demo session is rejected, so the demo data can never be altered.
+   */
+  DEMO_ENABLED: z.stringbool().default(false),
+  /** Login for the seeded demo user; kept out of the owner-bootstrap count. */
+  DEMO_EMAIL: z.email().default("demo@compass.app"),
+  /**
    * Owner account provisioned by `npm run db:bootstrap` (the compose `migrate`
    * service). Only the bootstrap reads these — the API never does, so the
    * password is optional here and validated by the bootstrap itself.

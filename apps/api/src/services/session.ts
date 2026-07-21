@@ -8,11 +8,18 @@ export const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days, sliding
 export interface SessionData {
   userId: string;
   createdAt: string;
+  /** a read-only demo session — every write is rejected by the auth guard */
+  demo?: boolean;
 }
 
-export async function createSession(redis: Redis, userId: string): Promise<string> {
+export async function createSession(
+  redis: Redis,
+  userId: string,
+  opts: { demo?: boolean } = {},
+): Promise<string> {
   const id = randomBytes(32).toString("hex");
   const data: SessionData = { userId, createdAt: new Date().toISOString() };
+  if (opts.demo) data.demo = true;
   await redis.set(PREFIX + id, JSON.stringify(data), "EX", SESSION_TTL_SECONDS);
   await redis.sadd(USER_PREFIX + userId, id);
   return id;

@@ -16,10 +16,14 @@ export const UserSchema = z.object({
   id: z.uuid(),
   email: z.email(),
   displayName: z.string(),
+  /** the read-only demo account — the UI shows a banner and blocks edits */
+  isDemo: z.boolean().default(false),
 });
 
 export const BootstrapStatusSchema = z.object({
   needsBootstrap: z.boolean(),
+  /** whether the public demo entry (/api/auth/demo) is available */
+  demoAvailable: z.boolean().default(false),
 });
 
 export const UpdateProfileSchema = z.object({ displayName: z.string().min(1) });
