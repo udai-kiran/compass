@@ -5,7 +5,13 @@ import type { Db } from "../db/index.ts";
 import { bankCashTotal } from "./balances.ts";
 import { cached } from "./cache.ts";
 import { getUtilization } from "./budgets.ts";
-import { currentPeriodKey, incomeExpense, periodRange, spentByCategory } from "./periods.ts";
+import {
+  currentPeriodKey,
+  incomeExpense,
+  LIABILITY_TYPES_SQL,
+  periodRange,
+  spentByCategory,
+} from "./periods.ts";
 import { listTransactions } from "./transactions.ts";
 
 const TTL = 300;
@@ -57,9 +63,11 @@ export async function getTrends(db: Db, redis: Redis, userId: string, months: nu
 
     const totals = await db.execute(sql`
       select to_char(t.date, 'YYYY-MM') as month,
-        coalesce(sum(case when t.amount_paise > 0 then t.amount_paise else 0 end), 0)::bigint as income,
+        coalesce(sum(case when t.amount_paise > 0 and a.type not in (${LIABILITY_TYPES_SQL})
+          then t.amount_paise else 0 end), 0)::bigint as income,
         coalesce(sum(case when t.amount_paise < 0 then -t.amount_paise else 0 end), 0)::bigint as expense
       from transactions t
+      join accounts a on a.id = t.account_id
       where t.user_id = ${userId} and t.deleted_at is null
         and t.date >= ${from} and t.date <= ${to} and ${notTransfer}
       group by 1

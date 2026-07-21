@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
 import {
+  CardActivitySchema,
   CardDetailsSchema,
   CardSummarySchema,
   CreateRewardEntrySchema,
@@ -11,6 +12,7 @@ import {
 import {
   addRewardEntry,
   deleteRewardEntry,
+  getCardActivity,
   listCards,
   listRewards,
   setCardStatementPassword,
@@ -66,6 +68,12 @@ export async function cardRoutes(app: FastifyInstance) {
         req.body.password,
         mailboxSecret(app.config),
       ),
+  );
+
+  r.get(
+    "/api/cards/:accountId/activity",
+    { schema: { params: AccountParams, response: { 200: CardActivitySchema } } },
+    async (req) => getCardActivity(app.db, req.session!.userId, req.params.accountId),
   );
 
   r.get(

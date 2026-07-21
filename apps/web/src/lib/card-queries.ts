@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 import {
+  CardActivitySchema,
   CardDetailsSchema,
   CardSummarySchema,
   RewardEntrySchema,
@@ -25,6 +26,14 @@ export function useCards() {
   return useQuery({
     queryKey: ["cards"],
     queryFn: () => apiGet("/api/cards", z.array(CardSummarySchema)),
+  });
+}
+
+export function useCardActivity(accountId: string | null) {
+  return useQuery({
+    queryKey: ["card-activity", accountId],
+    queryFn: () => apiGet(`/api/cards/${accountId}/activity`, CardActivitySchema),
+    enabled: accountId !== null,
   });
 }
 

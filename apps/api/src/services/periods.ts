@@ -1,6 +1,17 @@
 import { sql } from "drizzle-orm";
-import type { BudgetPeriod } from "@compass/shared";
+import { LIABILITY_ACCOUNT_TYPES, type BudgetPeriod } from "@compass/shared";
 import type { Db } from "../db/index.ts";
+
+/**
+ * SQL list of the liability account types. A positive amount on one of these (a
+ * credit-card / loan payment, or a refund) is a repayment or reversal — never
+ * income — so income sums exclude inflows on these accounts. The queries that use
+ * it alias the accounts table as `a`. Shared by the income aggregations.
+ */
+export const LIABILITY_TYPES_SQL = sql.join(
+  LIABILITY_ACCOUNT_TYPES.map((t) => sql`${t}`),
+  sql`, `,
+);
 
 /** "2026-07" → { from: "2026-07-01", to: "2026-07-31" }; "2026" → whole year. */
 export function periodRange(period: BudgetPeriod, key: string): { from: string; to: string } {
@@ -77,9 +88,11 @@ export async function incomeExpense(
 ): Promise<{ incomePaise: number; expensePaise: number }> {
   const res = await db.execute(sql`
     select
-      coalesce(sum(case when t.amount_paise > 0 then t.amount_paise else 0 end), 0)::bigint as income,
+      coalesce(sum(case when t.amount_paise > 0 and a.type not in (${LIABILITY_TYPES_SQL})
+        then t.amount_paise else 0 end), 0)::bigint as income,
       coalesce(sum(case when t.amount_paise < 0 then -t.amount_paise else 0 end), 0)::bigint as expense
     from transactions t
+    join accounts a on a.id = t.account_id
     where t.user_id = ${userId} and t.deleted_at is null
       and t.date >= ${from} and t.date <= ${to}
       and not exists (select 1 from transfer_links tl

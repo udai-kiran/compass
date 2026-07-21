@@ -7,6 +7,7 @@ import { toCsv } from "../lib/csv.ts";
 import { bankCashTotal } from "./balances.ts";
 import { cached } from "./cache.ts";
 import { getTrends } from "./dashboard.ts";
+import { LIABILITY_TYPES_SQL } from "./periods.ts";
 import { advanceDate } from "./recurring.ts";
 
 const TTL = 300;
@@ -65,9 +66,11 @@ export async function getForecast(db: Db, redis: Redis, userId: string): Promise
     const burnRes = await db.execute(sql`
       select
         coalesce(sum(case when t.amount_paise < 0 then -t.amount_paise else 0 end), 0)::bigint as expense,
-        coalesce(sum(case when t.amount_paise > 0 then t.amount_paise else 0 end), 0)::bigint as income,
+        coalesce(sum(case when t.amount_paise > 0 and a.type not in (${LIABILITY_TYPES_SQL})
+          then t.amount_paise else 0 end), 0)::bigint as income,
         coalesce(sum(case when t.amount_paise < 0 and t.source <> 'recurring' then -t.amount_paise else 0 end), 0)::bigint as discretionary
       from transactions t
+      join accounts a on a.id = t.account_id
       where t.user_id = ${userId} and t.deleted_at is null
         and t.date >= ${from90} and t.date <= ${today} and ${notTransfer}
     `);

@@ -88,6 +88,8 @@ export interface ChatRequest {
   messages: ChatMessage[];
   tools: ToolSpec[];
   maxTokens?: number;
+  /** override the default HTTP timeout (ms) — a big statement on a slow model needs longer */
+  timeoutMs?: number;
 }
 
 /** One assistant turn: free text plus any tool calls the model wants run. */

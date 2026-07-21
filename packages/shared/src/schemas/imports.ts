@@ -72,6 +72,12 @@ export const UpdateImportRowSchema = z.object({
 
 export const CommitResultSchema = z.object({
   created: z.number().int(),
+  /** exact statement rows already represented in the ledger */
+  matchedExisting: z.number().int(),
+  /** existing card transactions corrected using statement values */
+  updatedFromStatement: z.number().int(),
+  /** ambiguous rows left untouched rather than overwriting the wrong transaction */
+  reconciliationConflicts: z.number().int(),
   skippedDuplicates: z.number().int(),
   skippedExcluded: z.number().int(),
   skippedErrors: z.number().int(),
