@@ -355,6 +355,8 @@ export type CreateHoldingEvent = z.input<typeof CreateHoldingEventSchema>;
 export const SetValuationSchema = z.object({
   date: z.iso.date(),
   valuePaise: z.number().int().min(0),
+  /** NAV per unit on this date, when it came from a NAV feed; null for a manual value. */
+  nav: z.number().min(0).nullable().default(null),
 });
 export type SetValuation = z.input<typeof SetValuationSchema>;
 

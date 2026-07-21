@@ -932,6 +932,13 @@ export const holdingValuations = pgTable(
       .references(() => holdings.id, { onDelete: "cascade" }),
     date: date("date").notNull(),
     valuePaise: bigint("value_paise", { mode: "number" }).notNull(),
+    /**
+     * NAV per unit on `date` (from the AMFI feed), when known. Lets the day's
+     * change be the true market move — (navToday − navPrev) on the held units —
+     * rather than a raw value delta that a same-day buy would distort. Null for
+     * manual valuations that only recorded a total value.
+     */
+    nav: doublePrecision("nav"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [uniqueIndex("holding_valuations_unique_idx").on(t.holdingId, t.date)],

@@ -218,6 +218,13 @@
       "when": 1784613418256,
       "tag": "0030_strong_diamondback",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1784616444431,
+      "tag": "0031_mixed_mother_askani",
+      "breakpoints": true
     }
   ]
 }

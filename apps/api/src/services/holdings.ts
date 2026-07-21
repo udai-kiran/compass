@@ -129,12 +129,13 @@ export async function setValuation(
   input: SetValuation,
 ): Promise<void> {
   await ownedHolding(db, userId, holdingId);
+  const nav = input.nav ?? null;
   await db
     .insert(holdingValuations)
-    .values({ holdingId, date: input.date, valuePaise: input.valuePaise })
+    .values({ holdingId, date: input.date, valuePaise: input.valuePaise, nav })
     .onConflictDoUpdate({
       target: [holdingValuations.holdingId, holdingValuations.date],
-      set: { valuePaise: input.valuePaise },
+      set: { valuePaise: input.valuePaise, nav },
     });
 }
 
@@ -251,7 +252,15 @@ export async function getPortfolio(db: Db, userId: string): Promise<Portfolio> {
     const latest = hVals[0] ?? null;
     const previous = hVals[1] ?? null;
     const value = latest?.valuePaise ?? remainingCostPaise;
-    const dayChangePaise = latest && previous ? latest.valuePaise - previous.valuePaise : null;
+    // Prefer the true market move from the stored NAVs — (navToday − navPrev) on
+    // the held units, derived from the latest value so a same-day buy can't
+    // distort it. Fall back to the raw value delta when a NAV wasn't recorded.
+    const dayChangePaise =
+      latest && previous
+        ? latest.nav !== null && previous.nav !== null && latest.nav > 0
+          ? Math.round((latest.valuePaise * (latest.nav - previous.nav)) / latest.nav)
+          : latest.valuePaise - previous.valuePaise
+        : null;
     return {
       ...toHolding(h),
       investedPaise: remainingCostPaise,
@@ -375,7 +384,11 @@ export async function refreshNav(db: Db, userId: string): Promise<RefreshNavResu
     if (!nav) continue; // code not in today's feed (new/suspended scheme)
     const units = unitsHeld(events.filter((e) => e.holdingId === h.id));
     const valuePaise = Math.round(units * nav.nav * 100);
-    await setValuation(db, userId, h.id, { date: nav.date, valuePaise: Math.max(0, valuePaise) });
+    await setValuation(db, userId, h.id, {
+      date: nav.date,
+      valuePaise: Math.max(0, valuePaise),
+      nav: nav.nav,
+    });
     asOf = nav.date;
     refreshed += 1;
   }
