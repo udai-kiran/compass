@@ -8,9 +8,12 @@
 -- `mailbox_credentials` (saving Google OAuth creds → 500), but affects every
 -- table created out-of-band as postgres.
 --
--- This script reassigns any public table/sequence NOT already owned by the app
--- role back to it. Ownership (not just GRANT) is required so future migrations,
--- which run as `compass`, can ALTER these tables.
+-- This script reassigns any public table/sequence/type NOT already owned by the
+-- app role back to it. Ownership (not just GRANT) is required so future
+-- migrations, which run as `compass`, can ALTER these objects. Enum types matter
+-- too: `ALTER TYPE ... ADD VALUE` can only be run by the type's owner, so an enum
+-- created out-of-band as postgres blocks any later migration that extends it
+-- (this surfaced on `extracted_txn_status` when migration 0038 added 'duplicate').
 --
 -- Run as a SUPERUSER (postgres), it is idempotent:
 --   psql "$DATABASE_URL_SUPERUSER" -f apps/api/scripts/repair-table-ownership.sql
@@ -34,6 +37,12 @@ BEGIN
     SELECT 'SEQUENCE', format('%I.%I', schemaname, sequencename)
       FROM pg_sequences
       WHERE schemaname = 'public' AND sequenceowner <> app_role
+    UNION ALL
+    SELECT 'TYPE', format('%I.%I', n.nspname, t.typname)
+      FROM pg_type t
+      JOIN pg_namespace n ON n.oid = t.typnamespace
+      JOIN pg_roles r ON r.oid = t.typowner
+      WHERE n.nspname = 'public' AND t.typtype = 'e' AND r.rolname <> app_role
   LOOP
     EXECUTE format('ALTER %s %s OWNER TO %I', obj.kind, obj.ident, app_role);
     RAISE NOTICE 'reassigned % % -> %', obj.kind, obj.ident, app_role;
