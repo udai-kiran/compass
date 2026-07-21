@@ -108,9 +108,11 @@ function AccountDetail({ account }: { account: AccountWithBalance }) {
 function StatementPasswordSection({ account }: { account: AccountWithBalance }) {
   const { data: holders } = useCardHolders();
   const mutation = useStatementPasswordMutation();
-  // The statement password is an issuer-level setting, shared across the bank's cards.
-  const holder = holders?.find((h) => h.cards.some((c) => c.accountId === account.id));
-  const hasPassword = holder?.settings?.hasStatementPassword ?? false;
+  // The statement password is per-card (issuers embed the card's own last-4).
+  const card = holders
+    ?.flatMap((h) => h.cards)
+    .find((c) => c.accountId === account.id);
+  const hasPassword = card?.details?.hasStatementPassword ?? false;
   const [password, setPassword] = useState("");
   const dirty = password.trim() !== "";
 

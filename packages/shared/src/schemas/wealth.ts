@@ -7,8 +7,9 @@ export type CardNetwork = z.infer<typeof CardNetworkSchema>;
 
 /**
  * Per-card fields. Issuer and last-4 come from the account (institution/
- * accountLast4); anything shared across a bank's cards (limit, statement
- * password, mobile, alerts) lives on CardIssuerSettings, not here.
+ * accountLast4); the genuinely shared fields (combined limit, mobile, alerts)
+ * live on CardIssuerSettings. The statement-PDF password is per-card (issuers
+ * like HDFC embed the card's last-4 in it), so it lives here.
  */
 export const CardDetailsSchema = z.object({
   accountId: z.uuid(),
@@ -17,6 +18,8 @@ export const CardDetailsSchema = z.object({
   cycleDay: z.number().int().min(1).max(28),
   dueDay: z.number().int().min(1).max(28),
   earnRatePer100: z.number().int().min(0),
+  /** whether a statement-PDF password is stored; the value itself is never sent out */
+  hasStatementPassword: z.boolean(),
 });
 export type CardDetails = z.infer<typeof CardDetailsSchema>;
 
@@ -45,8 +48,6 @@ export const CardIssuerSettingsSchema = z.object({
   remindDays: z.number().int().min(0).max(30),
   /** registered mobile (10 digits) for the bill-payment UPI VPA; "" when unset */
   billMobile: z.string(),
-  /** whether a statement-PDF password is stored; the value itself is never sent out */
-  hasStatementPassword: z.boolean(),
 });
 export type CardIssuerSettings = z.infer<typeof CardIssuerSettingsSchema>;
 
@@ -57,11 +58,6 @@ export const UpsertCardIssuerSettingsSchema = z.object({
   utilizationAlertPct: z.number().int().min(1).max(100).nullable().default(30),
   remindDays: z.number().int().min(0).max(30).default(3),
   billMobile: z.string().default(""),
-  /**
-   * Password to open this bank's statement PDFs. Omit to leave it unchanged, ""
-   * to clear it, a value to set it. Stored encrypted; never returned.
-   */
-  statementPassword: z.string().max(200).optional(),
 });
 export type UpsertCardIssuerSettings = z.input<typeof UpsertCardIssuerSettingsSchema>;
 
