@@ -9,6 +9,8 @@ type Dump = Record<string, Array<Record<string, unknown>>>;
 export const DEFERRED_RESTORE_COLUMNS = {
   accounts: ["goal_id"],
   categories: ["parent_id"],
+  // insurance_policies restores after transactions in ALL_TABLES order
+  transactions: ["policy_id"],
 } as const satisfies Record<string, readonly string[]>;
 
 /** Database-generated columns present in `select *` dumps but never insertable. */
@@ -72,6 +74,11 @@ export async function restoreDump(pool: pg.Pool, dump: Dump): Promise<void> {
     for (const row of dump.categories ?? []) {
       if (row.parent_id !== null && row.parent_id !== undefined) {
         await client.query("update categories set parent_id = $1 where id = $2", [row.parent_id, row.id]);
+      }
+    }
+    for (const row of dump.transactions ?? []) {
+      if (row.policy_id !== null && row.policy_id !== undefined) {
+        await client.query("update transactions set policy_id = $1 where id = $2", [row.policy_id, row.id]);
       }
     }
     await client.query("commit");

@@ -1,11 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { mkdir, readdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { dirname, join, relative } from "node:path";
 import {
   CreateBucketCommand,
   DeleteObjectCommand,
   GetObjectCommand,
   HeadBucketCommand,
+  ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
@@ -22,6 +23,8 @@ export interface Storage {
   put(data: Buffer, contentType: string): Promise<string>;
   get(key: string): Promise<Buffer>;
   delete(key: string): Promise<void>;
+  /** Every key in the backend — used by the orphaned-object report. */
+  list(): Promise<string[]>;
   /** Ensure the backend is ready (create the bucket if missing). No-op for disk. */
   ensureReady(): Promise<void>;
 }
@@ -50,6 +53,12 @@ class DiskStorage implements Storage {
   async delete(key: string): Promise<void> {
     await unlink(join(this.dir, key)).catch(() => {});
   }
+  async list(): Promise<string[]> {
+    const entries = await readdir(this.dir, { recursive: true, withFileTypes: true }).catch(() => []);
+    return entries
+      .filter((e) => e.isFile())
+      .map((e) => relative(this.dir, join(e.parentPath, e.name)));
+  }
   async ensureReady(): Promise<void> {
     await mkdir(this.dir, { recursive: true });
   }
@@ -75,6 +84,18 @@ class S3Storage implements Storage {
   }
   async delete(key: string): Promise<void> {
     await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
+  }
+  async list(): Promise<string[]> {
+    const keys: string[] = [];
+    let token: string | undefined;
+    do {
+      const res = await this.client.send(
+        new ListObjectsV2Command({ Bucket: this.bucket, ContinuationToken: token }),
+      );
+      for (const obj of res.Contents ?? []) if (obj.Key) keys.push(obj.Key);
+      token = res.IsTruncated ? res.NextContinuationToken : undefined;
+    } while (token);
+    return keys;
   }
   async ensureReady(): Promise<void> {
     try {
