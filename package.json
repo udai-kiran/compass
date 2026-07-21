@@ -30,7 +30,6 @@
     "typescript": "~5.9.0",
     "typescript-eslint": "^8.63.0"
   },
-  "_overrides_note": "concurrently@10 pins the vulnerable shell-quote@1.8.4 (GHSA-395f-4hp3-45gv); the override below forces the patched line.",
   "overrides": {
     "shell-quote": "^1.10.0"
   },
