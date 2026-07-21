@@ -125,7 +125,7 @@ function Badge({ children }: { children: ReactNode }) {
 function PolicyCard({ policy }: { policy: InsurancePolicy }) {
   const [editing, setEditing] = useState(false);
   const [showPremiums, setShowPremiums] = useState(false);
-  const { remove } = usePolicyMutations();
+  const { remove, uploadDocument, removeDocument } = usePolicyMutations();
 
   const kindLabel =
     policy.kind === "vehicle" && policy.vehicleType
@@ -193,6 +193,71 @@ function PolicyCard({ policy }: { policy: InsurancePolicy }) {
         </div>
       )}
 
+      {!editing && policy.coveredMembers.length > 0 && (
+        <div className="border-t border-slate-100 px-4 py-3">
+          <p className="text-xs text-slate-500">Covered members</p>
+          <div className="mt-1 flex flex-wrap gap-1.5">
+            {policy.coveredMembers.map((m, i) => (
+              <span key={i} className="rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-700">
+                {m}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {!editing && (
+        <div className="flex flex-wrap items-center gap-3 border-t border-slate-100 px-4 py-3 text-sm">
+          {policy.documentName ? (
+            <>
+              <a
+                href={`/api/insurance/policies/${policy.id}/document`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-slate-700 underline hover:text-slate-900"
+              >
+                📄 {policy.documentName} ↗
+              </a>
+              <button
+                type="button"
+                onClick={() =>
+                  removeDocument.mutate(policy.id, { onSuccess: () => toast("Document removed") })
+                }
+                disabled={removeDocument.isPending}
+                className="text-xs text-red-600 hover:underline disabled:opacity-40"
+              >
+                Remove
+              </button>
+            </>
+          ) : (
+            <label className="cursor-pointer">
+              <span className="rounded-md border border-slate-300 px-3 py-1.5 text-slate-600 hover:bg-slate-50">
+                ⬆ Upload policy document
+              </span>
+              <input
+                type="file"
+                accept=".pdf,image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f)
+                    uploadDocument.mutate(
+                      { id: policy.id, file: f },
+                      {
+                        onSuccess: () => toast("Policy document uploaded", "success"),
+                        onError: (err) =>
+                          toast(err instanceof Error ? err.message : "Upload failed", "error"),
+                      },
+                    );
+                  e.target.value = "";
+                }}
+              />
+            </label>
+          )}
+          {uploadDocument.isPending && <span className="text-xs text-slate-400">Uploading…</span>}
+        </div>
+      )}
+
       {policy.policyWordingUrl && !editing && (
         <p className="border-t border-slate-100 px-4 py-3 text-sm">
           <a
@@ -256,6 +321,7 @@ function PolicyForm({ policy, onDone }: { policy?: InsurancePolicy; onDone: () =
   const [renewalDate, setRenewalDate] = useState(policy?.renewalDate ?? "");
   const [maturityDate, setMaturityDate] = useState(policy?.maturityDate ?? "");
   const [nominee, setNominee] = useState(policy?.nominee ?? "");
+  const [coveredMembers, setCoveredMembers] = useState<string[]>(policy?.coveredMembers ?? []);
   const [notes, setNotes] = useState(policy?.notes ?? "");
 
   const pending = create.isPending || update.isPending;
@@ -281,6 +347,7 @@ function PolicyForm({ policy, onDone }: { policy?: InsurancePolicy; onDone: () =
       renewalDate: renewalDate || null,
       maturityDate: kind === "life" ? (maturityDate || null) : null,
       nominee: nominee.trim(),
+      coveredMembers: coveredMembers.map((m) => m.trim()).filter(Boolean),
       notes: notes.trim(),
     };
     const onSuccess = () => {
@@ -375,8 +442,40 @@ function PolicyForm({ policy, onDone }: { policy?: InsurancePolicy; onDone: () =
         </Field>
       )}
       <Field label="Nominee">
-        <input value={nominee} onChange={(e) => setNominee(e.target.value)} className="input" placeholder="Who's covered / benefits" />
+        <input value={nominee} onChange={(e) => setNominee(e.target.value)} className="input" placeholder="Who receives the benefit" />
       </Field>
+      <div className="col-span-2 sm:col-span-3">
+        <label className="mb-1 block text-xs font-medium text-slate-500">Covered members</label>
+        <div className="space-y-2">
+          {coveredMembers.map((m, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <input
+                value={m}
+                onChange={(e) =>
+                  setCoveredMembers((list) => list.map((x, j) => (j === i ? e.target.value : x)))
+                }
+                className="input flex-1"
+                placeholder="Member name (e.g. self, spouse, child)"
+              />
+              <button
+                type="button"
+                onClick={() => setCoveredMembers((list) => list.filter((_, j) => j !== i))}
+                className="shrink-0 rounded-md border border-slate-300 px-2 py-1.5 text-xs text-slate-500 hover:bg-slate-100"
+                aria-label="Remove member"
+              >
+                ✕
+              </button>
+            </div>
+          ))}
+          <button
+            type="button"
+            onClick={() => setCoveredMembers((list) => [...list, ""])}
+            className="rounded-md border border-slate-300 px-3 py-1 text-xs text-slate-600 hover:bg-slate-100"
+          >
+            + Add member
+          </button>
+        </div>
+      </div>
       <Field label="Policy wordings URL">
         <input
           type="url"

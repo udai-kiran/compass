@@ -77,6 +77,12 @@ export const InsurancePolicySchema = z.object({
   /** maturity date for an endowment/money-back life policy; null for term/health/vehicle */
   maturityDate: z.iso.date().nullable(),
   nominee: z.string(),
+  /** people covered by the policy (e.g. a family-floater's members) */
+  coveredMembers: z.array(z.string()),
+  /** uploaded policy document metadata; null fields when no file is attached */
+  documentName: z.string().nullable(),
+  documentMime: z.string().nullable(),
+  documentSizeBytes: z.number().int().nullable(),
   notes: z.string(),
   archived: z.boolean(),
 });
@@ -101,6 +107,8 @@ const policyFields = {
   renewalDate: z.iso.date().nullable().default(null),
   maturityDate: z.iso.date().nullable().default(null),
   nominee: z.string().max(120).default(""),
+  /** covered members, each a non-empty name; up to 20 */
+  coveredMembers: z.array(z.string().min(1).max(120)).max(20).default([]),
   notes: z.string().max(1000).default(""),
 };
 
