@@ -3,6 +3,7 @@ import { createAiProvider, type AiProvider } from "@compass/ai";
 import { EXTRACT_QUEUE, ExtractJobSchema } from "@compass/shared";
 import { loadConfig } from "./config.ts";
 import {
+  applyStatementRewards,
   createPool,
   loadAccounts,
   loadAiSettings,
@@ -17,11 +18,14 @@ import {
 import { decryptSecret } from "./crypto.ts";
 import { parseEmail, type ParsedEmail } from "./email.ts";
 import {
+  extractStatementSummary,
   extractStatementTxns,
+  hasRewardData,
   matchLinesToLedger,
   MAX_STATEMENT_CHARS,
   runExtraction,
   STATEMENT_MATCH_WINDOW_DAYS,
+  type StatementSummary,
 } from "./extract.ts";
 import { extractPdfText } from "./pdf.ts";
 import type { CategoryRef } from "./extract.ts";
@@ -90,16 +94,25 @@ function baseUrlAllowed(value: string): boolean {
  * to an unencrypted statement (no card matched). Leaves it deferred when no
  * stored password opens the PDF — the user can add the password and replay.
  */
+interface StatementOutcome {
+  status: EmailIngestStatus;
+  rows: InboxRow[];
+  /** the card whose password opened the PDF; null for an unencrypted statement */
+  accountId: string | null;
+  /** totals + reward summary; null when nothing opened or the summary didn't parse */
+  summary: StatementSummary | null;
+}
+
 async function processStatement(
   email: ParsedEmail,
   ai: AiProvider,
   userId: string,
   ctx: { receivedDate: string | null; categories: CategoryRef[] },
-): Promise<{ status: EmailIngestStatus; rows: InboxRow[] }> {
+): Promise<StatementOutcome> {
   const pdf = email.attachments.find(
     (a) => a.contentType.toLowerCase().includes("pdf") || a.filename.toLowerCase().endsWith(".pdf"),
   );
-  if (!pdf) return { status: "deferred", rows: [] };
+  if (!pdf) return { status: "deferred", rows: [], accountId: null, summary: null };
   // Guard the worker's memory: a real statement is well under this; anything
   // bigger is left for manual handling rather than fed into pdf.js.
   if (pdf.content.length > MAX_STATEMENT_PDF_BYTES) {
@@ -107,7 +120,7 @@ async function processStatement(
       bytes: pdf.content.length,
       max: MAX_STATEMENT_PDF_BYTES,
     });
-    return { status: "deferred", rows: [] };
+    return { status: "deferred", rows: [], accountId: null, summary: null };
   }
 
   const extractFrom = async (text: string, accountId: string | null) => {
@@ -117,7 +130,11 @@ async function processStatement(
         cap: MAX_STATEMENT_CHARS,
       });
     }
-    return extractStatementTxns(text, ai, { ...ctx, accountId });
+    // Transaction lines and the summary (totals + rewards) are separate passes:
+    // the summary is best-effort, so its failure never costs us the transactions.
+    const rows = await extractStatementTxns(text, ai, { ...ctx, accountId });
+    const summary = await extractStatementSummary(text, ai).catch(() => null);
+    return { rows, summary };
   };
 
   const cards = await loadCreditCards(pool, userId);
@@ -136,20 +153,29 @@ async function processStatement(
     }
     const opened = await extractPdfText(pdf.content, [password]);
     if (opened) {
-      const rows = await extractFrom(opened.text, card.id);
+      const { rows, summary } = await extractFrom(opened.text, card.id);
       log("info", "statement extracted", { accountId: card.id, found: rows.length });
-      return { status: "extracted", rows };
+      return { status: "extracted", rows, accountId: card.id, summary };
     }
   }
 
   // Not encrypted (or no stored password matched): open it plainly if we can.
   const unlocked = await extractPdfText(pdf.content, []);
   if (unlocked) {
-    const rows = await extractFrom(unlocked.text, null);
-    return { status: "extracted", rows };
+    const { rows, summary } = await extractFrom(unlocked.text, null);
+    return { status: "extracted", rows, accountId: null, summary };
   }
   log("warn", "statement PDF not opened — no matching card password stored");
-  return { status: "deferred", rows: [] };
+  return { status: "deferred", rows: [], accountId: null, summary: null };
+}
+
+/** "Jul 2026" from a YYYY-MM-DD; the fallback is used when the statement omits a date. */
+function periodLabel(isoDate: string | null): string {
+  if (!isoDate) return "Statement";
+  const d = new Date(`${isoDate}T00:00:00Z`);
+  return Number.isNaN(d.getTime())
+    ? "Statement"
+    : d.toLocaleString("en-US", { month: "short", year: "numeric", timeZone: "UTC" });
 }
 
 function shiftIso(iso: string, days: number): string {
@@ -221,8 +247,9 @@ const worker = new Worker(
       // process that separately, overriding the (deferred) email-body outcome.
       let status = outcome.status;
       let rows: SaveRow[] = outcome.rows;
+      let stmt: StatementOutcome | null = null;
       if (outcome.classification === "card_statement") {
-        const stmt = await processStatement(email, ai, ingestion.userId, { receivedDate, categories });
+        stmt = await processStatement(email, ai, ingestion.userId, { receivedDate, categories });
         status = stmt.status;
         // Suppress lines already in the ledger from real-time alerts this cycle.
         rows = await annotateStatementDuplicates(stmt.rows, ingestion.userId);
@@ -242,6 +269,28 @@ const worker = new Worker(
         duplicates,
         inserted,
       });
+
+      // Reward points from the statement summary — best-effort and replace-on-
+      // replay (keyed by ingestion), so re-processing never double-counts.
+      if (stmt?.accountId && stmt.summary && hasRewardData(stmt.summary.rewards)) {
+        const date = stmt.summary.statementDate ?? receivedDate ?? new Date().toISOString().slice(0, 10);
+        try {
+          const entries = await applyStatementRewards(pool, {
+            userId: ingestion.userId,
+            accountId: stmt.accountId,
+            ingestionId: ingestion.id,
+            date,
+            periodLabel: periodLabel(stmt.summary.statementDate ?? receivedDate),
+            rewards: stmt.summary.rewards,
+          });
+          log("info", "statement rewards updated", { accountId: stmt.accountId, entries });
+        } catch (e) {
+          log("warn", "statement rewards update failed", {
+            accountId: stmt.accountId,
+            err: e instanceof Error ? e.message : String(e),
+          });
+        }
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       await setStatus(pool, ingestion.id, "failed", message).catch(() => {});

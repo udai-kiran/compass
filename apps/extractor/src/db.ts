@@ -1,6 +1,7 @@
 import pg from "pg";
 import type { EmailIngestStatus } from "@compass/shared";
-import type { AccountRef, CategoryRef, InboxRow } from "./extract.ts";
+import { computeStatementRewardEntries } from "./extract.ts";
+import type { AccountRef, CategoryRef, InboxRow, StatementRewards } from "./extract.ts";
 
 export function createPool(connectionString: string): pg.Pool {
   return new pg.Pool({ connectionString });
@@ -225,6 +226,55 @@ export async function saveResults(
     }
     await client.query("commit");
     return inserted;
+  } catch (err) {
+    await client.query("rollback");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Record a statement's reward-points summary against its card. Idempotent on
+ * replay: this ingestion's prior reward rows are deleted first, then rebuilt.
+ * Earned/redeemed become signed entries; a reconciling adjustment lands the
+ * account's running sum on the statement's closing balance (see
+ * computeStatementRewardEntries). Returns how many entries were written.
+ */
+export async function applyStatementRewards(
+  pool: pg.Pool,
+  args: {
+    userId: string;
+    accountId: string;
+    ingestionId: string;
+    date: string; // YYYY-MM-DD for the entries
+    periodLabel: string;
+    rewards: StatementRewards;
+  },
+): Promise<number> {
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    // Replace this statement's prior reward rows so a replay never double-counts.
+    await client.query(`delete from reward_entries where account_id = $1 and ingestion_id = $2`, [
+      args.accountId,
+      args.ingestionId,
+    ]);
+    const sumRes = await client.query<{ base: string }>(
+      `select coalesce(sum(points), 0)::int as base from reward_entries where account_id = $1`,
+      [args.accountId],
+    );
+    const baseSum = Number(sumRes.rows[0]!.base);
+    const entries = computeStatementRewardEntries(baseSum, args.rewards, args.periodLabel);
+    for (const e of entries) {
+      await client.query(
+        `insert into reward_entries (user_id, account_id, date, points, note, ingestion_id)
+         values ($1,$2,$3,$4,$5,$6)`,
+        [args.userId, args.accountId, args.date, e.points, e.note, args.ingestionId],
+      );
+    }
+    await client.query("commit");
+    return entries.length;
   } catch (err) {
     await client.query("rollback");
     throw err;

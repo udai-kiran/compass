@@ -281,6 +281,13 @@
       "when": 1784655771306,
       "tag": "0039_curved_korg",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1784658971140,
+      "tag": "0040_free_slyde",
+      "breakpoints": true
     }
   ]
 }
