@@ -125,6 +125,7 @@ export interface LedgerTxnRow {
   id: string;
   amountPaise: number;
   date: string;
+  occurredAtTs: string | null;
   merchant: string;
 }
 
@@ -140,8 +141,15 @@ export async function loadCardLedgerTxns(
   fromDate: string,
   toDate: string,
 ): Promise<LedgerTxnRow[]> {
-  const res = await pool.query<{ id: string; amount_paise: string; date: string; merchant: string }>(
-    `select id, amount_paise, to_char(date, 'YYYY-MM-DD') as date, merchant
+  const res = await pool.query<{
+    id: string;
+    amount_paise: string;
+    date: string;
+    occurred_at_ts: string | null;
+    merchant: string;
+  }>(
+    `select id, amount_paise, to_char(date, 'YYYY-MM-DD') as date,
+            to_char(occurred_at, 'YYYY-MM-DD"T"HH24:MI:SSOF') as occurred_at_ts, merchant
        from transactions
       where user_id = $1 and account_id = $2 and deleted_at is null
         and date between $3 and $4`,
@@ -151,6 +159,7 @@ export async function loadCardLedgerTxns(
     id: r.id,
     amountPaise: Number(r.amount_paise),
     date: r.date,
+    occurredAtTs: r.occurred_at_ts,
     merchant: r.merchant,
   }));
 }
@@ -189,10 +198,10 @@ export async function saveResults(
     for (const row of args.rows) {
       const res = await client.query(
         `insert into extracted_transactions
-           (user_id, ingestion_id, amount_paise, direction, occurred_at, counterparty,
+           (user_id, ingestion_id, amount_paise, direction, occurred_at, occurred_at_ts, counterparty,
             suggested_account_id, suggested_category_id, bank_ref, source_quote, confidence,
             dedupe_hash, status, matched_transaction_id)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
          on conflict (user_id, dedupe_hash) do nothing`,
         [
           args.ingestion.userId,
@@ -200,6 +209,7 @@ export async function saveResults(
           row.amountPaise,
           row.direction,
           row.occurredAt,
+          row.occurredAtTs,
           row.counterparty,
           row.suggestedAccountId,
           row.suggestedCategoryId,

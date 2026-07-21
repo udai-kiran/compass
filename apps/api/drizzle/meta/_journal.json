@@ -274,6 +274,13 @@
       "when": 1784648364130,
       "tag": "0038_small_sleeper",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1784655771306,
+      "tag": "0039_curved_korg",
+      "breakpoints": true
     }
   ]
 }

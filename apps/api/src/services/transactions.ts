@@ -201,6 +201,8 @@ export async function createTransaction(
   input: CreateTransaction & {
     source?: "manual" | "import" | "recurring";
     policyId?: string | null;
+    /** precise transaction instant when known (e.g. carried from an accepted alert) */
+    occurredAt?: Date | null;
   },
 ): Promise<Transaction> {
   await assertOwnedAccount(db, userId, input.accountId);

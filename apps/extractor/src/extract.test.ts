@@ -5,6 +5,7 @@ import {
   decideStatus,
   dedupeHashFor,
   extractStatementTxns,
+  istTimestamp,
   matchAccount,
   matchCategory,
   matchLinesToLedger,
@@ -254,14 +255,16 @@ const line = (
   direction: "debit" | "credit",
   occurredAt: string | null,
   counterparty = "",
-): MatchableLine => ({ amountPaise, direction, occurredAt, counterparty });
+  occurredAtTs: string | null = null,
+): MatchableLine => ({ amountPaise, direction, occurredAt, occurredAtTs, counterparty });
 
-const ledgerTxn = (id: string, amountPaise: number, date: string, merchant = ""): LedgerTxn => ({
-  id,
-  amountPaise,
-  date,
-  merchant,
-});
+const ledgerTxn = (
+  id: string,
+  amountPaise: number,
+  date: string,
+  merchant = "",
+  occurredAtTs: string | null = null,
+): LedgerTxn => ({ id, amountPaise, date, occurredAtTs, merchant });
 
 test("merchantSimilarity: exact / substring / unknown / shared-token", () => {
   assert.equal(merchantSimilarity("Swiggy", "swiggy"), 1);
@@ -310,4 +313,48 @@ test("matchLinesToLedger: a dateless line never matches", () => {
     matchLinesToLedger([line(50000, "debit", null, "Swiggy")], [ledgerTxn("t1", -50000, "2026-07-10", "Swiggy")]),
     [null],
   );
+});
+
+// ---- timestamp matching ----
+
+test("istTimestamp: combines date + HH:MM as IST; null without both", () => {
+  assert.equal(istTimestamp("2026-07-10", "14:32"), "2026-07-10T09:02:00.000Z"); // 14:32 IST = 09:02 UTC
+  assert.equal(istTimestamp("2026-07-10", "9:05:30"), "2026-07-10T03:35:30.000Z");
+  assert.equal(istTimestamp("2026-07-10", null), null);
+  assert.equal(istTimestamp(null, "14:32"), null);
+  assert.equal(istTimestamp("2026-07-10", "25:00"), null); // invalid hour
+  assert.equal(istTimestamp("2026-07-10", "not a time"), null);
+});
+
+test("matchLinesToLedger: timestamp within tolerance locks the pair", () => {
+  const lines = [line(50000, "debit", "2026-07-10", "Cafe", "2026-07-10T09:02:00.000Z")];
+  const ledger = [ledgerTxn("t1", -50000, "2026-07-10", "SOMETHING ELSE", "2026-07-10T09:03:00.000Z")];
+  // Different merchant text, but the printed times match → locked anyway.
+  assert.deepEqual(matchLinesToLedger(lines, ledger), ["t1"]);
+});
+
+test("matchLinesToLedger: timestamps disambiguate two same-amount, same-day spends", () => {
+  const lines = [
+    line(30000, "debit", "2026-07-10", "Uber", "2026-07-10T08:00:00.000Z"),
+    line(30000, "debit", "2026-07-10", "Uber", "2026-07-10T18:00:00.000Z"),
+  ];
+  const ledger = [
+    ledgerTxn("t1", -30000, "2026-07-10", "Uber", "2026-07-10T18:00:30.000Z"),
+    ledgerTxn("t2", -30000, "2026-07-10", "Uber", "2026-07-10T08:00:20.000Z"),
+  ];
+  // Identical amount/day/merchant — only the timestamp tells them apart.
+  assert.deepEqual(matchLinesToLedger(lines, ledger), ["t2", "t1"]);
+});
+
+test("matchLinesToLedger: same amount but a distant time is never paired", () => {
+  const lines = [line(30000, "debit", "2026-07-10", "Uber", "2026-07-10T08:00:00.000Z")];
+  const ledger = [ledgerTxn("t1", -30000, "2026-07-10", "Uber", "2026-07-10T20:00:00.000Z")];
+  assert.deepEqual(matchLinesToLedger(lines, ledger), [null]);
+});
+
+test("matchLinesToLedger: falls back to date-window+merchant when a side has no timestamp", () => {
+  // Line has a timestamp, ledger row doesn't → fuzzy fallback still matches.
+  const lines = [line(50000, "debit", "2026-07-10", "Swiggy", "2026-07-10T09:02:00.000Z")];
+  const ledger = [ledgerTxn("t1", -50000, "2026-07-11", "SWIGGY LTD")];
+  assert.deepEqual(matchLinesToLedger(lines, ledger), ["t1"]);
 });

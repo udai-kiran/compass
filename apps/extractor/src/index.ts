@@ -180,6 +180,7 @@ async function annotateStatementDuplicates(rows: InboxRow[], userId: string): Pr
       amountPaise: r.amountPaise,
       direction: r.direction,
       occurredAt: r.occurredAt,
+      occurredAtTs: r.occurredAtTs,
       counterparty: r.counterparty,
     })),
     ledger,

@@ -302,7 +302,10 @@ export async function acceptExtracted(
           eq(extractedTransactions.status, "pending"),
         ),
       )
-      .returning({ bankRef: extractedTransactions.bankRef });
+      .returning({
+        bankRef: extractedTransactions.bankRef,
+        occurredAtTs: extractedTransactions.occurredAtTs,
+      });
     if (!claimed) {
       // Nothing to claim: the draft is missing, or already settled / lost a race.
       const [exists] = await tx
@@ -315,6 +318,8 @@ export async function acceptExtracted(
     const txn = await createTransaction(tx, userId, {
       accountId: input.accountId,
       date: input.occurredAt,
+      // Keep the alert's precise instant so a later statement line matches on it.
+      occurredAt: claimed.occurredAtTs,
       amountPaise: signed,
       merchant: input.merchant,
       // The reviewer's confirmed category (AI-guessed then editable); null if cleared.
@@ -355,6 +360,7 @@ async function claimPending(db: DbOrTx, userId: string, id: string) {
     .returning({
       amountPaise: extractedTransactions.amountPaise,
       direction: extractedTransactions.direction,
+      occurredAtTs: extractedTransactions.occurredAtTs,
     });
   if (!claimed) {
     const [exists] = await db
@@ -410,6 +416,7 @@ export async function acceptTransfer(
     const outTxn = await createTransaction(tx, userId, {
       accountId: input.fromAccountId,
       date: input.occurredAt,
+      occurredAt: out.occurredAtTs,
       amountPaise: -out.amountPaise,
       merchant: toAcct ? `Transfer to ${toAcct.name}` : "Transfer out",
       categoryId: null,
@@ -420,6 +427,7 @@ export async function acceptTransfer(
     const inTxn = await createTransaction(tx, userId, {
       accountId: input.toAccountId,
       date: input.occurredAt,
+      occurredAt: inn.occurredAtTs,
       amountPaise: inn.amountPaise,
       merchant: fromAcct ? `Transfer from ${fromAcct.name}` : "Transfer in",
       categoryId: null,
