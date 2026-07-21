@@ -2,9 +2,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { AiProvider } from "@compass/ai";
 import {
+  computeStatementRewardEntries,
   decideStatus,
   dedupeHashFor,
+  extractStatementSummary,
   extractStatementTxns,
+  hasRewardData,
   istTimestamp,
   matchAccount,
   matchCategory,
@@ -357,4 +360,63 @@ test("matchLinesToLedger: falls back to date-window+merchant when a side has no 
   const lines = [line(50000, "debit", "2026-07-10", "Swiggy", "2026-07-10T09:02:00.000Z")];
   const ledger = [ledgerTxn("t1", -50000, "2026-07-11", "SWIGGY LTD")];
   assert.deepEqual(matchLinesToLedger(lines, ledger), ["t1"]);
+});
+
+// ---- statement summary + rewards ----
+
+const rewards = (
+  opening: number | null,
+  earned: number | null,
+  redeemed: number | null,
+  closing: number | null,
+) => ({ opening, earned, redeemed, closing });
+
+test("hasRewardData: true when any field is present", () => {
+  assert.equal(hasRewardData(rewards(null, null, null, null)), false);
+  assert.equal(hasRewardData(rewards(null, 100, null, null)), true);
+  assert.equal(hasRewardData(rewards(null, null, null, 500)), true);
+});
+
+test("computeStatementRewardEntries: earned + redeemed + closing lands the sum on closing", () => {
+  // base 400, earned 250, redeemed 100 → projected 550; closing 600 → +50 adjust.
+  const out = computeStatementRewardEntries(400, rewards(400, 250, 100, 600), "Jul 2026");
+  assert.deepEqual(out, [
+    { points: 250, note: "Jul 2026: earned" },
+    { points: -100, note: "Jul 2026: redeemed" },
+    { points: 50, note: "Jul 2026: balance adjustment" },
+  ]);
+  assert.equal(400 + out.reduce((s, e) => s + e.points, 0), 600); // running sum == closing
+});
+
+test("computeStatementRewardEntries: no adjustment when deltas already reconcile", () => {
+  const out = computeStatementRewardEntries(400, rewards(400, 250, 100, 550), "Jul 2026");
+  assert.deepEqual(out, [
+    { points: 250, note: "Jul 2026: earned" },
+    { points: -100, note: "Jul 2026: redeemed" },
+  ]);
+});
+
+test("computeStatementRewardEntries: closing only → a single balance adjustment", () => {
+  assert.deepEqual(computeStatementRewardEntries(120, rewards(null, null, null, 500), "Jul 2026"), [
+    { points: 380, note: "Jul 2026: balance adjustment" },
+  ]);
+  // Nothing stated → nothing recorded.
+  assert.deepEqual(computeStatementRewardEntries(120, rewards(null, null, null, null), "Jul 2026"), []);
+});
+
+test("extractStatementSummary: parses totals→paise + reward points; null on junk", async () => {
+  const ai = fakeAi(
+    JSON.stringify({
+      totalAmountDue: 15230.5,
+      minimumAmountDue: 763,
+      statementDate: "2026-07-20",
+      rewardPoints: { opening: 400, earned: 250, redeemed: 100, closing: 550 },
+    }),
+  );
+  const s = await extractStatementSummary("<statement>", ai);
+  assert.equal(s?.totalDuePaise, 1523050);
+  assert.equal(s?.minDuePaise, 76300);
+  assert.equal(s?.statementDate, "2026-07-20");
+  assert.deepEqual(s?.rewards, { opening: 400, earned: 250, redeemed: 100, closing: 550 });
+  assert.equal(await extractStatementSummary("<statement>", fakeAi("no json here")), null);
 });

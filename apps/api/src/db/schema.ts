@@ -899,9 +899,20 @@ export const rewardEntries = pgTable(
     /** positive = earned, negative = redeemed/expired */
     points: integer("points").notNull(),
     note: text("note").notNull().default(""),
+    /**
+     * The statement ingestion that produced this entry (null = hand-entered). Lets
+     * a statement's reward rows be replaced wholesale on replay so re-processing
+     * never double-counts the balance. Kept (unlinked) if the ingestion is deleted.
+     */
+    ingestionId: uuid("ingestion_id").references(() => emailIngestions.id, {
+      onDelete: "set null",
+    }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("reward_entries_account_idx").on(t.accountId, t.date)],
+  (t) => [
+    index("reward_entries_account_idx").on(t.accountId, t.date),
+    index("reward_entries_ingestion_idx").on(t.ingestionId),
+  ],
 );
 
 export const emiDetails = pgTable("emi_details", {

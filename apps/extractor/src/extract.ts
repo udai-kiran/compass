@@ -380,6 +380,130 @@ export async function extractStatementTxns(
 }
 
 // ---------------------------------------------------------------------------
+// Statement summary — the totals + reward-points block the transaction pass
+// deliberately skips. Feeds reward tracking now and statement reconciliation
+// later. Best-effort: a parse failure returns null and never fails the job.
+// ---------------------------------------------------------------------------
+
+const StatementSummarySchema = z.object({
+  totalAmountDue: z.number().nullable().default(null),
+  minimumAmountDue: z.number().nullable().default(null),
+  statementDate: z.string().nullable().default(null),
+  rewardPoints: z
+    .object({
+      opening: z.number().nullable().default(null),
+      earned: z.number().nullable().default(null),
+      redeemed: z.number().nullable().default(null),
+      closing: z.number().nullable().default(null),
+    })
+    .default(() => ({ opening: null, earned: null, redeemed: null, closing: null })),
+});
+
+export interface StatementRewards {
+  opening: number | null;
+  earned: number | null;
+  redeemed: number | null;
+  closing: number | null;
+}
+
+export interface StatementSummary {
+  /** signed against how the statement reads: due amounts are positive rupees→paise */
+  totalDuePaise: number | null;
+  minDuePaise: number | null;
+  /** statement close date, YYYY-MM-DD */
+  statementDate: string | null;
+  rewards: StatementRewards;
+}
+
+const STATEMENT_SUMMARY_SYSTEM = [
+  "From a CREDIT-CARD STATEMENT's summary (not the transaction rows), extract only:",
+  'Return ONLY JSON, no prose: {"totalAmountDue": number|null, "minimumAmountDue": number|null,',
+  ' "statementDate": "YYYY-MM-DD"|null (the statement/closing date),',
+  ' "rewardPoints": {"opening": int|null, "earned": int|null, "redeemed": int|null, "closing": int|null}}',
+  "",
+  "Amounts are Indian Rupees (a number, no symbols/commas). Reward points are whole",
+  "numbers. `redeemed` is a POSITIVE count of points redeemed/adjusted-down this",
+  "cycle (0 if none). `closing` is the reward-points balance as on the statement",
+  "date (labels vary: 'Total/Net Reward Points', 'Points Balance', 'Closing'). Use",
+  "null for any field the statement doesn't state. Never invent numbers.",
+].join("\n");
+
+/** Round rupees to integer paise; null passes through. */
+function rupeesToPaise(v: number | null): number | null {
+  return v === null ? null : Math.round(v * 100);
+}
+
+/**
+ * Pull the summary block (totals + reward points) from a statement's text. The
+ * card is already known (its password opened the PDF). Returns null on a parse
+ * failure — rewards are best-effort and must never sink the whole extraction.
+ */
+export async function extractStatementSummary(
+  text: string,
+  ai: AiProvider,
+): Promise<StatementSummary | null> {
+  const turn = await ai.chat({
+    system: STATEMENT_SUMMARY_SYSTEM,
+    messages: [{ role: "user", content: `STATEMENT:\n${text.slice(0, MAX_STATEMENT_CHARS)}` }],
+    tools: [],
+    maxTokens: 512,
+    timeoutMs: 120_000,
+    retries: 1,
+  });
+  const parsed = StatementSummarySchema.safeParse(extractJson(turn.text));
+  if (!parsed.success) return null;
+  const d = parsed.data;
+  const asInt = (v: number | null) => (v === null ? null : Math.round(v));
+  return {
+    totalDuePaise: rupeesToPaise(d.totalAmountDue),
+    minDuePaise: rupeesToPaise(d.minimumAmountDue),
+    statementDate: validIsoDate(d.statementDate),
+    rewards: {
+      opening: asInt(d.rewardPoints.opening),
+      earned: asInt(d.rewardPoints.earned),
+      redeemed: asInt(d.rewardPoints.redeemed),
+      closing: asInt(d.rewardPoints.closing),
+    },
+  };
+}
+
+/** One reward-ledger delta to write for a statement (points signed, +earn/−redeem). */
+export interface RewardDelta {
+  points: number;
+  note: string;
+}
+
+/** True when a statement gave us at least one reward number worth recording. */
+export function hasRewardData(r: StatementRewards): boolean {
+  return r.opening !== null || r.earned !== null || r.redeemed !== null || r.closing !== null;
+}
+
+/**
+ * Turn a statement's reward summary into ledger deltas. Earned and redeemed
+ * become their own signed entries; when the statement states a closing balance
+ * (authoritative) a reconciling adjustment is added so the account's running sum
+ * lands exactly on it — self-healing across a missed statement or a drifted
+ * manual entry. `baseSum` is the sum of the account's OTHER reward entries (this
+ * statement's excluded). Returns [] when there's nothing to record.
+ */
+export function computeStatementRewardEntries(
+  baseSum: number,
+  rewards: StatementRewards,
+  periodLabel: string,
+): RewardDelta[] {
+  const out: RewardDelta[] = [];
+  const earned = rewards.earned ?? 0;
+  const redeemed = rewards.redeemed ?? 0;
+  if (earned !== 0) out.push({ points: earned, note: `${periodLabel}: earned` });
+  if (redeemed !== 0) out.push({ points: -redeemed, note: `${periodLabel}: redeemed` });
+  if (rewards.closing !== null) {
+    const adjustment = rewards.closing - (baseSum + earned - redeemed);
+    if (adjustment !== 0) out.push({ points: adjustment, note: `${periodLabel}: balance adjustment` });
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
 // Statement dedupe: match statement lines to ledger transactions already
 // recorded from real-time alerts during the cycle, so the statement doesn't
 // re-book what's already there.
