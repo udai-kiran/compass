@@ -90,6 +90,8 @@ export interface ChatRequest {
   maxTokens?: number;
   /** override the default HTTP timeout (ms) — a big statement on a slow model needs longer */
   timeoutMs?: number;
+  /** override the default retry count — fewer for a long, expensive call */
+  retries?: number;
 }
 
 /** One assistant turn: free text plus any tool calls the model wants run. */

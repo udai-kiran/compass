@@ -14,7 +14,7 @@ import {
 } from "./db.ts";
 import { decryptSecret } from "./crypto.ts";
 import { parseEmail, type ParsedEmail } from "./email.ts";
-import { extractStatementTxns, runExtraction } from "./extract.ts";
+import { extractStatementTxns, MAX_STATEMENT_CHARS, runExtraction } from "./extract.ts";
 import { extractPdfText } from "./pdf.ts";
 import type { CategoryRef } from "./extract.ts";
 import type { InboxRow } from "./extract.ts";
@@ -23,6 +23,9 @@ import type { EmailIngestStatus } from "@compass/shared";
 const config = loadConfig();
 const pool = createPool(config.DATABASE_URL);
 const secret = config.MAILBOX_SECRET || config.SESSION_SECRET;
+
+/** Cap on a statement PDF attachment before it's handed to pdf.js. */
+const MAX_STATEMENT_PDF_BYTES = 15 * 1024 * 1024;
 
 function log(
   level: "info" | "warn" | "error",
@@ -89,6 +92,25 @@ async function processStatement(
     (a) => a.contentType.toLowerCase().includes("pdf") || a.filename.toLowerCase().endsWith(".pdf"),
   );
   if (!pdf) return { status: "deferred", rows: [] };
+  // Guard the worker's memory: a real statement is well under this; anything
+  // bigger is left for manual handling rather than fed into pdf.js.
+  if (pdf.content.length > MAX_STATEMENT_PDF_BYTES) {
+    log("warn", "statement PDF too large to process", {
+      bytes: pdf.content.length,
+      max: MAX_STATEMENT_PDF_BYTES,
+    });
+    return { status: "deferred", rows: [] };
+  }
+
+  const extractFrom = async (text: string, accountId: string | null) => {
+    if (text.length > MAX_STATEMENT_CHARS) {
+      log("warn", "statement text exceeds the extraction cap — some transactions may be missing", {
+        chars: text.length,
+        cap: MAX_STATEMENT_CHARS,
+      });
+    }
+    return extractStatementTxns(text, ai, { ...ctx, accountId });
+  };
 
   const cards = await loadCreditCards(pool, userId);
   for (const card of cards) {
@@ -97,11 +119,16 @@ async function processStatement(
     try {
       password = decryptSecret(card.statementPasswordEnc, secret);
     } catch {
-      continue; // a bad envelope shouldn't stop us trying the other cards
+      // Almost always a MAILBOX_SECRET mismatch between the API (which encrypted
+      // it) and this worker. Surface it instead of silently skipping the card.
+      log("warn", "could not decrypt a stored card password — is MAILBOX_SECRET the same as the API's?", {
+        accountId: card.id,
+      });
+      continue;
     }
     const opened = await extractPdfText(pdf.content, [password]);
     if (opened) {
-      const rows = await extractStatementTxns(opened.text, ai, { ...ctx, accountId: card.id });
+      const rows = await extractFrom(opened.text, card.id);
       log("info", "statement extracted", { accountId: card.id, found: rows.length });
       return { status: "extracted", rows };
     }
@@ -110,7 +137,7 @@ async function processStatement(
   // Not encrypted (or no stored password matched): open it plainly if we can.
   const unlocked = await extractPdfText(pdf.content, []);
   if (unlocked) {
-    const rows = await extractStatementTxns(unlocked.text, ai, { ...ctx, accountId: null });
+    const rows = await extractFrom(unlocked.text, null);
     return { status: "extracted", rows };
   }
   log("warn", "statement PDF not opened — no matching card password stored");
