@@ -24,6 +24,7 @@ import {
   useIssuerSettingsMutation,
   useRewardMutations,
   useRewards,
+  useStatementPasswordMutation,
 } from "../../lib/card-queries.ts";
 
 const NETWORK_LABELS: Record<CardNetwork, string> = {
@@ -304,8 +305,6 @@ function BankSettingsForm({ holder, onDone }: { holder: CardHolderSummary; onDon
   );
   const [remindDays, setRemindDays] = useState(String(s?.remindDays ?? 3));
   const [billMobile, setBillMobile] = useState(s?.billMobile ?? "");
-  const [statementPassword, setStatementPassword] = useState("");
-  const hasPassword = s?.hasStatementPassword ?? false;
   const institution = holder.institution!;
 
   const base = (): UpsertCardIssuerSettings => ({
@@ -318,26 +317,12 @@ function BankSettingsForm({ holder, onDone }: { holder: CardHolderSummary; onDon
 
   function submit(e: FormEvent) {
     e.preventDefault();
-    const body = base();
-    if (statementPassword.trim()) body.statementPassword = statementPassword;
-    mutation.mutate(body, {
+    mutation.mutate(base(), {
       onSuccess: () => {
         toast("Bank settings saved", "success");
         onDone();
       },
     });
-  }
-
-  function removePassword() {
-    mutation.mutate(
-      { ...base(), statementPassword: "" },
-      {
-        onSuccess: () => {
-          toast("Statement password removed");
-          setStatementPassword("");
-        },
-      },
-    );
   }
 
   return (
@@ -393,32 +378,6 @@ function BankSettingsForm({ holder, onDone }: { holder: CardHolderSummary; onDon
           placeholder="10-digit mobile"
         />
       </Field>
-      <Field
-        label={
-          hasPassword ? "Statement PDF password (saved — type to replace)" : "Statement PDF password"
-        }
-      >
-        <div className="flex items-center gap-2">
-          <input
-            type="password"
-            value={statementPassword}
-            onChange={(e) => setStatementPassword(e.target.value)}
-            autoComplete="off"
-            className="input"
-            placeholder={hasPassword ? "••••••••" : "opens the e-statement PDF"}
-          />
-          {hasPassword && (
-            <button
-              type="button"
-              onClick={removePassword}
-              disabled={mutation.isPending}
-              className="shrink-0 text-xs text-red-600 hover:underline disabled:opacity-40"
-            >
-              Remove
-            </button>
-          )}
-        </div>
-      </Field>
       <div className="col-span-2 flex gap-2 sm:col-span-3">
         <button
           type="submit"
@@ -443,12 +402,30 @@ function BankSettingsForm({ holder, onDone }: { holder: CardHolderSummary; onDon
 function DetailsForm({ card, onDone }: { card: CardSummary; onDone: () => void }) {
   const d = card.details;
   const mutation = useCardDetailsMutation();
+  const passwordMutation = useStatementPasswordMutation();
   const [network, setNetwork] = useState<string>(d?.network ?? "");
   const [productName, setProductName] = useState(d?.productName ?? "");
   const [bankName, setBankName] = useState(card.bankName ?? "");
   const [cycleDay, setCycleDay] = useState(String(d?.cycleDay ?? 1));
   const [dueDay, setDueDay] = useState(String(d?.dueDay ?? 15));
   const [earnRate, setEarnRate] = useState(String(d?.earnRatePer100 ?? 0));
+  const [statementPassword, setStatementPassword] = useState("");
+  const hasPassword = d?.hasStatementPassword ?? false;
+
+  // Saved on its own (separate endpoint) so it survives a card-details edit and
+  // isn't sent as plaintext through the details form. Per-card: each of a bank's
+  // cards has its own e-statement password (issuers embed the card's last-4).
+  function savePassword(value: string, msg: string) {
+    passwordMutation.mutate(
+      { accountId: card.accountId, password: value },
+      {
+        onSuccess: () => {
+          toast(msg, "success");
+          setStatementPassword("");
+        },
+      },
+    );
+  }
 
   function submit(e: FormEvent) {
     e.preventDefault();
@@ -531,6 +508,44 @@ function DetailsForm({ card, onDone }: { card: CardSummary; onDone: () => void }
           className="input"
         />
       </Field>
+      <div className="col-span-2">
+        <Field
+          label={
+            hasPassword
+              ? "Statement PDF password (saved — type to replace)"
+              : "Statement PDF password"
+          }
+        >
+          <div className="flex items-center gap-2">
+            <input
+              type="password"
+              value={statementPassword}
+              onChange={(e) => setStatementPassword(e.target.value)}
+              autoComplete="off"
+              className="input"
+              placeholder={hasPassword ? "••••••••" : "opens this card's e-statement PDF"}
+            />
+            <button
+              type="button"
+              onClick={() => savePassword(statementPassword, "Statement password saved")}
+              disabled={!statementPassword.trim() || passwordMutation.isPending}
+              className="shrink-0 rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-600 disabled:opacity-40"
+            >
+              Set
+            </button>
+            {hasPassword && (
+              <button
+                type="button"
+                onClick={() => savePassword("", "Statement password removed")}
+                disabled={passwordMutation.isPending}
+                className="shrink-0 text-xs text-red-600 hover:underline disabled:opacity-40"
+              >
+                Remove
+              </button>
+            )}
+          </div>
+        </Field>
+      </div>
       <div className="col-span-2 flex gap-2">
         <button
           type="submit"

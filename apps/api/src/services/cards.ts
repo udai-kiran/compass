@@ -37,6 +37,8 @@ function toDetails(d: DetailsRow): CardDetails {
     cycleDay: d.cycleDay,
     dueDay: d.dueDay,
     earnRatePer100: d.earnRatePer100,
+    // Expose only that a password exists — never the value itself.
+    hasStatementPassword: d.statementPasswordEnc !== "",
   };
 }
 
@@ -47,8 +49,6 @@ function toIssuerSettings(s: IssuerRow): CardIssuerSettings {
     utilizationAlertPct: s.utilizationAlertPct,
     remindDays: s.remindDays,
     billMobile: s.billMobile,
-    // Expose only that a password exists — never the value itself.
-    hasStatementPassword: s.statementPasswordEnc !== "",
   };
 }
 
@@ -159,18 +159,17 @@ export async function getIssuerSettings(
 
 /**
  * Create or update the settings shared across a bank's cards (combined limit,
- * utilization alert, reminder lead time, registered mobile, statement password).
- * The password follows the omit/"" /value convention. Guards that the user
- * actually has a card at that institution, so settings can't dangle.
+ * utilization alert, reminder lead time, registered mobile). Guards that the
+ * user actually has a card at that institution, so settings can't dangle. (The
+ * statement password is per-card — see setCardStatementPassword.)
  */
 export async function upsertIssuerSettings(
   db: Db,
   userId: string,
   input: UpsertCardIssuerSettings,
-  secret: string,
 ): Promise<CardIssuerSettings> {
   const parsed = UpsertCardIssuerSettingsSchema.parse(input);
-  const { institution, statementPassword, ...cols } = parsed;
+  const { institution, ...cols } = parsed;
   const owns = await db.query.accounts.findFirst({
     where: and(
       eq(accounts.userId, userId),
@@ -180,25 +179,21 @@ export async function upsertIssuerSettings(
     columns: { id: true },
   });
   if (!owns) throw new HttpError(404, "No card found for that bank");
-  // Statement password: omitted → leave unchanged; "" → clear; a value → encrypt.
-  const encValue = statementPassword ? encryptSecret(statementPassword, secret) : "";
-  const passwordSet = statementPassword === undefined ? {} : { statementPasswordEnc: encValue };
   const rows = await db
     .insert(cardIssuerSettings)
-    .values({ ...cols, userId, institution, statementPasswordEnc: encValue })
+    .values({ ...cols, userId, institution })
     .onConflictDoUpdate({
       target: [cardIssuerSettings.userId, cardIssuerSettings.institution],
-      set: { ...cols, ...passwordSet, updatedAt: new Date() },
+      set: { ...cols, updatedAt: new Date() },
     })
     .returning();
   return toIssuerSettings(rows[0]!);
 }
 
 /**
- * Set (or, with "", clear) just the statement-PDF password for a card's issuer,
- * without touching the rest of the issuer settings — so it can be edited from
- * the account page too. Resolves the card to its bank; the password is shared
- * across every card of that bank.
+ * Set (or, with "", clear) a card's statement-PDF password, without touching the
+ * rest of its details. Per-card: issuers like HDFC embed the card's own last-4
+ * in the password, so each card of a bank needs its own.
  */
 export async function setCardStatementPassword(
   db: Db,
@@ -207,17 +202,13 @@ export async function setCardStatementPassword(
   password: string,
   secret: string,
 ): Promise<{ hasStatementPassword: boolean }> {
-  const acc = await ownedCardAccount(db, userId, accountId);
-  const institution = issuerKey(acc.institution);
-  if (!institution) {
-    throw new HttpError(400, "Set the card's bank before adding a statement password");
-  }
+  await ownedCardAccount(db, userId, accountId);
   const enc = password ? encryptSecret(password, secret) : "";
   await db
-    .insert(cardIssuerSettings)
-    .values({ userId, institution, statementPasswordEnc: enc })
+    .insert(cardDetails)
+    .values({ userId, accountId, statementPasswordEnc: enc })
     .onConflictDoUpdate({
-      target: [cardIssuerSettings.userId, cardIssuerSettings.institution],
+      target: cardDetails.accountId,
       set: { statementPasswordEnc: enc, updatedAt: new Date() },
     });
   return { hasStatementPassword: enc !== "" };
@@ -225,8 +216,7 @@ export async function setCardStatementPassword(
 
 /**
  * The decrypted statement-PDF password for a card, or null when none is stored.
- * Used by the statement importer to open the encrypted PDF. The password lives
- * on the card's issuer, shared across the bank's cards.
+ * Used by the statement importer to open the encrypted PDF. Per-card.
  */
 export async function getCardStatementPassword(
   db: Db,
@@ -234,14 +224,9 @@ export async function getCardStatementPassword(
   accountId: string,
   secret: string,
 ): Promise<string | null> {
-  const acc = await ownedCardAccount(db, userId, accountId);
-  const institution = issuerKey(acc.institution);
-  if (!institution) return null;
-  const row = await db.query.cardIssuerSettings.findFirst({
-    where: and(
-      eq(cardIssuerSettings.userId, userId),
-      eq(cardIssuerSettings.institution, institution),
-    ),
+  await ownedCardAccount(db, userId, accountId);
+  const row = await db.query.cardDetails.findFirst({
+    where: and(eq(cardDetails.accountId, accountId), eq(cardDetails.userId, userId)),
     columns: { statementPasswordEnc: true },
   });
   if (!row || row.statementPasswordEnc === "") return null;

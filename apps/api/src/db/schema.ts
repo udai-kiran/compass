@@ -593,9 +593,11 @@ export const cardNetwork = pgEnum("card_network", [
 
 /**
  * Issuer and last-4 live on `accounts` (institution/accountLast4) — every
- * account has them. Only genuinely card-specific fields belong here; anything
- * shared across a bank's cards (limit, statement password, mobile, alerts)
- * lives on `card_issuer_settings`, keyed by the account's institution.
+ * account has them. Card-specific fields belong here; the genuinely shared
+ * fields (combined limit, mobile, utilization/reminder alerts) live on
+ * `card_issuer_settings`, keyed by the account's institution. The statement-PDF
+ * password stays per-card: issuers like HDFC embed the card's own last-4 in it,
+ * so one bank's cards each need their own.
  */
 export const cardDetails = pgTable("card_details", {
   accountId: uuid("account_id")
@@ -613,6 +615,12 @@ export const cardDetails = pgTable("card_details", {
   dueDay: integer("due_day").notNull().default(15),
   /** reward points earned per ₹100 spent (0 = no program) */
   earnRatePer100: integer("earn_rate_per_100").notNull().default(0),
+  /**
+   * Password to open this card's statement PDFs, encrypted at rest (secret-box).
+   * "" when unset. Never returned to the client — the API exposes only whether
+   * one is stored (see CardDetails.hasStatementPassword).
+   */
+  statementPasswordEnc: text("statement_password_enc").notNull().default(""),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -620,10 +628,11 @@ export const cardDetails = pgTable("card_details", {
 /**
  * Settings shared across every card of one bank/issuer. In India an issuer
  * typically gives a single combined credit limit spanning all your cards with
- * them, and the statement password / registered mobile are the same across
- * those cards — so these live at the issuer level, keyed by (user, institution),
- * not per card. The `institution` matches `accounts.institution`; cards with no
- * institution set have no issuer settings (each is its own "unassigned" holder).
+ * them, and the registered mobile is the same across those cards — so these
+ * live at the issuer level, keyed by (user, institution), not per card. (The
+ * statement password is NOT shared — it's per-card, on `card_details`.) The
+ * `institution` matches `accounts.institution`; cards with no institution set
+ * have no issuer settings (each is its own "unassigned" holder).
  */
 export const cardIssuerSettings = pgTable(
   "card_issuer_settings",
@@ -645,12 +654,6 @@ export const cardIssuerSettings = pgTable(
      * the issuer has no VPA scheme.
      */
     billMobile: text("bill_mobile").notNull().default(""),
-    /**
-     * Password to open this bank's statement PDFs, encrypted at rest (secret-box).
-     * "" when unset. Never returned to the client — the API exposes only whether
-     * one is stored (see CardIssuerSettings.hasStatementPassword).
-     */
-    statementPasswordEnc: text("statement_password_enc").notNull().default(""),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

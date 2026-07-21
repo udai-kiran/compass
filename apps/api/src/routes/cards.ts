@@ -64,8 +64,7 @@ export async function cardRoutes(app: FastifyInstance) {
         response: { 200: CardIssuerSettingsSchema },
       },
     },
-    async (req) =>
-      upsertIssuerSettings(app.db, req.session!.userId, req.body, mailboxSecret(app.config)),
+    async (req) => upsertIssuerSettings(app.db, req.session!.userId, req.body),
   );
 
   r.put(
