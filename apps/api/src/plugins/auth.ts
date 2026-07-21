@@ -6,12 +6,16 @@ export const SESSION_COOKIE = "compass_sid";
 
 declare module "fastify" {
   interface FastifyRequest {
-    session: { id: string; userId: string } | null;
+    session: { id: string; userId: string; demo: boolean } | null;
   }
   interface FastifyContextConfig {
     public?: boolean;
   }
 }
+
+const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+/** The only write a demo session may perform — ending its own session. */
+const DEMO_WRITE_ALLOWLIST = new Set(["/api/auth/logout"]);
 
 export function setSessionCookie(reply: FastifyReply, sessionId: string): void {
   reply.setCookie(SESSION_COOKIE, sessionId, {
@@ -44,7 +48,7 @@ export async function setupAuth(app: FastifyInstance): Promise<void> {
       const unsigned = req.unsignCookie(raw);
       if (unsigned.valid && unsigned.value) {
         const data = await getSession(app.redis, unsigned.value);
-        if (data) req.session = { id: unsigned.value, userId: data.userId };
+        if (data) req.session = { id: unsigned.value, userId: data.userId, demo: data.demo === true };
       }
     }
 
@@ -55,6 +59,18 @@ export async function setupAuth(app: FastifyInstance): Promise<void> {
       return reply
         .code(401)
         .send({ error: "Unauthorized", message: "Authentication required" });
+    }
+
+    // Read-only demo: reject every state-changing request from a demo session at
+    // this single chokepoint, so the seeded demo data can never be altered.
+    if (
+      req.session?.demo &&
+      MUTATING_METHODS.has(req.method) &&
+      !DEMO_WRITE_ALLOWLIST.has(req.routeOptions.url ?? "")
+    ) {
+      return reply
+        .code(403)
+        .send({ error: "DemoReadOnly", message: "This is a read-only demo — sign up to make changes." });
     }
   });
 }

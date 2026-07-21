@@ -8,7 +8,7 @@ import { countUsers, findUserByEmail, findUserById, type UserRow } from "../repo
 import { seedDefaultCategories } from "./categories.ts";
 
 function toUser(row: UserRow): User {
-  return { id: row.id, email: row.email, displayName: row.displayName };
+  return { id: row.id, email: row.email, displayName: row.displayName, isDemo: row.isDemo };
 }
 
 /**

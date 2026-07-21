@@ -4,8 +4,12 @@ import { users } from "../db/schema.ts";
 
 export type UserRow = typeof users.$inferSelect;
 
+/** Owner accounts only — the seeded demo user never counts toward bootstrap. */
 export async function countUsers(db: Db): Promise<number> {
-  const rows = await db.select({ count: sql<number>`count(*)::int` }).from(users);
+  const rows = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(users)
+    .where(eq(users.isDemo, false));
   return rows[0]?.count ?? 0;
 }
 

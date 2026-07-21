@@ -4,6 +4,7 @@ import { Navigate, useNavigate } from "react-router";
 import { RegisterRequestSchema, UserSchema } from "@compass/shared";
 import { apiPost } from "../lib/api.ts";
 import { useBootstrapStatus } from "../lib/auth.ts";
+import { DemoButton } from "../components/DemoButton.tsx";
 
 /** First-run owner account creation — only reachable while no user exists. */
 export function Welcome() {
@@ -77,6 +78,7 @@ export function Welcome() {
         >
           {register.isPending ? "Creating…" : "Create account"}
         </button>
+        {bootstrap?.demoAvailable && <DemoButton />}
       </form>
     </div>
   );
