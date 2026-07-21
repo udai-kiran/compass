@@ -10,7 +10,7 @@ import { accounts, categories, emailIngestions, extractedTransactions, transacti
 import { HttpError } from "../lib/errors.ts";
 import { getMerchantRules, normalizeMerchant } from "./merchants.ts";
 import { createTransaction } from "./transactions.ts";
-import { linkTransfer, TRANSFER_WINDOW_DAYS } from "./transfers.ts";
+import { autoLinkTransfers, linkTransfer, TRANSFER_WINDOW_DAYS } from "./transfers.ts";
 
 /**
  * Review inbox for AI-extracted transactions. Rows land here as `pending` drafts
@@ -327,6 +327,9 @@ export async function acceptExtracted(
       .where(and(eq(extractedTransactions.id, id), eq(extractedTransactions.userId, userId)));
   });
 
+  // Same as the CSV-import path: a card payment (credit) that matches a debit on
+  // the paying account becomes a transfer, not income. Runs after commit.
+  await autoLinkTransfers(db, userId);
   return reload(db, userId, id);
 }
 
