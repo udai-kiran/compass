@@ -3,36 +3,58 @@ import type {
   CardActivity,
   CardActivityTxn,
   CardDetails,
+  CardHolderSummary,
+  CardIssuerSettings,
   CardSummary,
   CreateRewardEntry,
   RewardEntry,
   UpsertCardDetails,
+  UpsertCardIssuerSettings,
 } from "@compass/shared";
-import { formatINR, UpsertCardDetailsSchema } from "@compass/shared";
+import { formatINR, UpsertCardDetailsSchema, UpsertCardIssuerSettingsSchema } from "@compass/shared";
 import type { Db } from "../db/index.ts";
-import { accounts, alertLedger, cardDetails, rewardEntries, transactions } from "../db/schema.ts";
+import {
+  accounts,
+  alertLedger,
+  cardDetails,
+  cardIssuerSettings,
+  rewardEntries,
+  transactions,
+} from "../db/schema.ts";
 import { HttpError } from "../lib/errors.ts";
 import { decryptSecret, encryptSecret } from "../lib/secret-box.ts";
 import { createNotification } from "./notifications.ts";
 import { currentPeriodKey } from "./periods.ts";
 
 type DetailsRow = typeof cardDetails.$inferSelect;
+type IssuerRow = typeof cardIssuerSettings.$inferSelect;
 
 function toDetails(d: DetailsRow): CardDetails {
   return {
     accountId: d.accountId,
     network: d.network,
     productName: d.productName,
-    billMobile: d.billMobile,
     cycleDay: d.cycleDay,
     dueDay: d.dueDay,
-    creditLimitPaise: d.creditLimitPaise,
-    utilizationAlertPct: d.utilizationAlertPct,
-    remindDays: d.remindDays,
     earnRatePer100: d.earnRatePer100,
-    // Expose only that a password exists — never the value itself.
-    hasStatementPassword: d.statementPasswordEnc !== "",
   };
+}
+
+function toIssuerSettings(s: IssuerRow): CardIssuerSettings {
+  return {
+    institution: s.institution,
+    creditLimitPaise: s.creditLimitPaise,
+    utilizationAlertPct: s.utilizationAlertPct,
+    remindDays: s.remindDays,
+    billMobile: s.billMobile,
+    // Expose only that a password exists — never the value itself.
+    hasStatementPassword: s.statementPasswordEnc !== "",
+  };
+}
+
+/** The trimmed institution that groups a card into an issuer holder, or null. */
+function issuerKey(institution: string | null): string | null {
+  return institution?.trim() || null;
 }
 
 function pad(n: number): string {
@@ -91,7 +113,6 @@ export async function upsertCardDetails(
   userId: string,
   accountId: string,
   input: UpsertCardDetails,
-  secret: string,
 ): Promise<CardDetails> {
   await ownedCardAccount(db, userId, accountId);
   const parsed = UpsertCardDetailsSchema.parse(input);
@@ -99,18 +120,14 @@ export async function upsertCardDetails(
   // out of the card_details row and write it through to the account. Both writes
   // run in one transaction so a failed account update can't leave the card_details
   // change committed on its own.
-  const { bankName, statementPassword, ...cardCols } = parsed;
-  // Statement password: omitted → leave unchanged; "" → clear; a value → encrypt.
-  const encValue = statementPassword ? encryptSecret(statementPassword, secret) : "";
-  const passwordSet =
-    statementPassword === undefined ? {} : { statementPasswordEnc: encValue };
+  const { bankName, ...cardCols } = parsed;
   const row = await db.transaction(async (tx) => {
     const rows = await tx
       .insert(cardDetails)
-      .values({ ...cardCols, accountId, userId, statementPasswordEnc: encValue })
+      .values({ ...cardCols, accountId, userId })
       .onConflictDoUpdate({
         target: cardDetails.accountId,
-        set: { ...cardCols, ...passwordSet, updatedAt: new Date() },
+        set: { ...cardCols, updatedAt: new Date() },
       })
       .returning();
     // Omitted bankName means "leave the issuer as-is"; "" clears it, a name sets it.
@@ -125,10 +142,63 @@ export async function upsertCardDetails(
   return toDetails(row);
 }
 
+/** The issuer settings for one of the user's banks, or null when none are saved. */
+export async function getIssuerSettings(
+  db: Db,
+  userId: string,
+  institution: string,
+): Promise<CardIssuerSettings | null> {
+  const row = await db.query.cardIssuerSettings.findFirst({
+    where: and(
+      eq(cardIssuerSettings.userId, userId),
+      eq(cardIssuerSettings.institution, institution),
+    ),
+  });
+  return row ? toIssuerSettings(row) : null;
+}
+
 /**
- * Set (or, with "", clear) just this card's statement-PDF password, without
- * touching its cycle/limit — so it can be edited from the account page too.
- * Creates the card_details row (with defaults) if the card has none yet.
+ * Create or update the settings shared across a bank's cards (combined limit,
+ * utilization alert, reminder lead time, registered mobile, statement password).
+ * The password follows the omit/"" /value convention. Guards that the user
+ * actually has a card at that institution, so settings can't dangle.
+ */
+export async function upsertIssuerSettings(
+  db: Db,
+  userId: string,
+  input: UpsertCardIssuerSettings,
+  secret: string,
+): Promise<CardIssuerSettings> {
+  const parsed = UpsertCardIssuerSettingsSchema.parse(input);
+  const { institution, statementPassword, ...cols } = parsed;
+  const owns = await db.query.accounts.findFirst({
+    where: and(
+      eq(accounts.userId, userId),
+      eq(accounts.type, "credit_card"),
+      eq(accounts.institution, institution),
+    ),
+    columns: { id: true },
+  });
+  if (!owns) throw new HttpError(404, "No card found for that bank");
+  // Statement password: omitted → leave unchanged; "" → clear; a value → encrypt.
+  const encValue = statementPassword ? encryptSecret(statementPassword, secret) : "";
+  const passwordSet = statementPassword === undefined ? {} : { statementPasswordEnc: encValue };
+  const rows = await db
+    .insert(cardIssuerSettings)
+    .values({ ...cols, userId, institution, statementPasswordEnc: encValue })
+    .onConflictDoUpdate({
+      target: [cardIssuerSettings.userId, cardIssuerSettings.institution],
+      set: { ...cols, ...passwordSet, updatedAt: new Date() },
+    })
+    .returning();
+  return toIssuerSettings(rows[0]!);
+}
+
+/**
+ * Set (or, with "", clear) just the statement-PDF password for a card's issuer,
+ * without touching the rest of the issuer settings — so it can be edited from
+ * the account page too. Resolves the card to its bank; the password is shared
+ * across every card of that bank.
  */
 export async function setCardStatementPassword(
   db: Db,
@@ -137,13 +207,17 @@ export async function setCardStatementPassword(
   password: string,
   secret: string,
 ): Promise<{ hasStatementPassword: boolean }> {
-  await ownedCardAccount(db, userId, accountId);
+  const acc = await ownedCardAccount(db, userId, accountId);
+  const institution = issuerKey(acc.institution);
+  if (!institution) {
+    throw new HttpError(400, "Set the card's bank before adding a statement password");
+  }
   const enc = password ? encryptSecret(password, secret) : "";
   await db
-    .insert(cardDetails)
-    .values({ accountId, userId, statementPasswordEnc: enc })
+    .insert(cardIssuerSettings)
+    .values({ userId, institution, statementPasswordEnc: enc })
     .onConflictDoUpdate({
-      target: cardDetails.accountId,
+      target: [cardIssuerSettings.userId, cardIssuerSettings.institution],
       set: { statementPasswordEnc: enc, updatedAt: new Date() },
     });
   return { hasStatementPassword: enc !== "" };
@@ -151,7 +225,8 @@ export async function setCardStatementPassword(
 
 /**
  * The decrypted statement-PDF password for a card, or null when none is stored.
- * Used by the statement importer to open the encrypted PDF.
+ * Used by the statement importer to open the encrypted PDF. The password lives
+ * on the card's issuer, shared across the bank's cards.
  */
 export async function getCardStatementPassword(
   db: Db,
@@ -159,15 +234,36 @@ export async function getCardStatementPassword(
   accountId: string,
   secret: string,
 ): Promise<string | null> {
-  const row = await db.query.cardDetails.findFirst({
-    where: and(eq(cardDetails.accountId, accountId), eq(cardDetails.userId, userId)),
+  const acc = await ownedCardAccount(db, userId, accountId);
+  const institution = issuerKey(acc.institution);
+  if (!institution) return null;
+  const row = await db.query.cardIssuerSettings.findFirst({
+    where: and(
+      eq(cardIssuerSettings.userId, userId),
+      eq(cardIssuerSettings.institution, institution),
+    ),
     columns: { statementPasswordEnc: true },
   });
   if (!row || row.statementPasswordEnc === "") return null;
   return decryptSecret(row.statementPasswordEnc, secret);
 }
 
-export async function listCards(db: Db, userId: string, today?: string): Promise<CardSummary[]> {
+/** Combined utilization %, rounded to 0.1, or null when there's no limit. */
+function utilization(owedPaise: number, limitPaise: number): number | null {
+  return limitPaise > 0 ? Math.round((owedPaise / limitPaise) * 1000) / 10 : null;
+}
+
+/**
+ * Every credit card grouped under its bank/issuer holder. Cards sharing an
+ * institution roll up into one holder whose limit and utilization are combined
+ * (India's typical shared limit); cards with no institution each become their
+ * own "unassigned" holder with no shared settings.
+ */
+export async function listCardHolders(
+  db: Db,
+  userId: string,
+  today?: string,
+): Promise<CardHolderSummary[]> {
   const ref = today ?? new Date().toISOString().slice(0, 10);
   const cards = await db.query.accounts.findMany({
     where: and(eq(accounts.userId, userId), eq(accounts.type, "credit_card")),
@@ -176,8 +272,14 @@ export async function listCards(db: Db, userId: string, today?: string): Promise
   if (cards.length === 0) return [];
   const details = await db.query.cardDetails.findMany({ where: eq(cardDetails.userId, userId) });
   const detailsByAccount = new Map(details.map((d) => [d.accountId, d]));
+  const issuers = await db.query.cardIssuerSettings.findMany({
+    where: eq(cardIssuerSettings.userId, userId),
+  });
+  const issuerByInstitution = new Map(issuers.map((s) => [s.institution, s]));
 
-  const out: CardSummary[] = [];
+  // Build each card's summary + its current owed, then group by institution.
+  type Built = { institution: string | null; owed: number; card: CardSummary };
+  const built: Built[] = [];
   for (const acc of cards) {
     if (acc.archivedAt) continue;
     const d = detailsByAccount.get(acc.id);
@@ -200,48 +302,60 @@ export async function listCards(db: Db, userId: string, today?: string): Promise
       .from(rewardEntries)
       .where(eq(rewardEntries.accountId, acc.id));
 
-    if (!d) {
-      out.push({
+    const lastClose = d ? stmtClose : null;
+    const prevClose = d && lastClose ? lastOccurrence(dayBefore(lastClose), d.cycleDay) : null;
+    const owedAtClose = -(acc.openingBalancePaise + Number(row.at_close));
+    built.push({
+      institution: issuerKey(acc.institution),
+      owed: Math.max(0, -balance),
+      card: {
         accountId: acc.id,
         name: acc.name,
         bankName: acc.institution,
         last4: acc.accountLast4,
-        details: null,
+        details: d ? toDetails(d) : null,
         balancePaise: balance,
-        statementStart: null,
-        statementEnd: null,
-        amountDuePaise: Math.max(0, -balance),
-        dueDate: null,
-        currentSpendPaise: 0,
-        utilizationPct: null,
+        statementStart: prevClose,
+        statementEnd: lastClose,
+        amountDuePaise: Math.max(0, owedAtClose),
+        dueDate: d && lastClose ? nextOccurrence(lastClose, d.dueDay) : null,
+        currentSpendPaise: -Number(row.current_spend),
         rewardPoints: rewards[0]!.points,
-      });
-      continue;
-    }
-
-    const lastClose = stmtClose;
-    const prevClose = lastOccurrence(dayBefore(lastClose), d.cycleDay);
-    const owedAtClose = -(acc.openingBalancePaise + Number(row.at_close));
-    out.push({
-      accountId: acc.id,
-      name: acc.name,
-      bankName: acc.institution,
-      last4: acc.accountLast4,
-      details: toDetails(d),
-      balancePaise: balance,
-      statementStart: prevClose,
-      statementEnd: lastClose,
-      amountDuePaise: Math.max(0, owedAtClose),
-      dueDate: nextOccurrence(lastClose, d.dueDay),
-      currentSpendPaise: -Number(row.current_spend),
-      utilizationPct:
-        d.creditLimitPaise > 0
-          ? Math.round((Math.max(0, -balance) / d.creditLimitPaise) * 1000) / 10
-          : null,
-      rewardPoints: rewards[0]!.points,
+      },
     });
   }
-  return out;
+
+  // Group in first-seen order: same institution → one holder; null → singleton.
+  const order: string[] = [];
+  const groups = new Map<string, { institution: string | null; items: Built[] }>();
+  for (const b of built) {
+    const key = b.institution ? `inst:${b.institution}` : `acc:${b.card.accountId}`;
+    let g = groups.get(key);
+    if (!g) {
+      g = { institution: b.institution, items: [] };
+      groups.set(key, g);
+      order.push(key);
+    }
+    g.items.push(b);
+  }
+
+  return order.map((key) => {
+    const g = groups.get(key)!;
+    const settings = g.institution ? (issuerByInstitution.get(g.institution) ?? null) : null;
+    const creditLimitPaise = settings?.creditLimitPaise ?? 0;
+    const utilizationAlertPct = settings?.utilizationAlertPct ?? null;
+    const totalOwedPaise = g.items.reduce((sum, b) => sum + b.owed, 0);
+    return {
+      institution: g.institution,
+      bankName: g.institution ?? g.items[0]!.card.name,
+      settings: settings ? toIssuerSettings(settings) : null,
+      creditLimitPaise,
+      totalOwedPaise,
+      utilizationPct: utilization(totalOwedPaise, creditLimitPaise),
+      utilizationAlertPct,
+      cards: g.items.map((b) => b.card),
+    };
+  });
 }
 
 /** Days-shifted ISO date (e.g. 45 days before `iso`). */
@@ -335,51 +449,56 @@ export async function getCardActivity(
 /** Daily job: due-date reminders for every configured card, once per due date. */
 export async function evaluateCardDueReminders(db: Db): Promise<number> {
   const today = new Date().toISOString().slice(0, 10);
-  const all = await db.query.cardDetails.findMany();
+  const users = await db.selectDistinct({ userId: cardDetails.userId }).from(cardDetails);
   let sent = 0;
-  for (const d of all) {
-    const cards = await listCards(db, d.userId, today);
-    const card = cards.find((c) => c.accountId === d.accountId);
-    if (!card || card.dueDate === null || card.amountDuePaise <= 0) continue;
-    const remindFrom = new Date(`${card.dueDate}T00:00:00Z`);
-    remindFrom.setUTCDate(remindFrom.getUTCDate() - d.remindDays);
-    if (today < remindFrom.toISOString().slice(0, 10) || today > card.dueDate) continue;
-    const inserted = await db
-      .insert(alertLedger)
-      .values({ userId: d.userId, kind: "card-due", refKey: `${d.accountId}:${card.dueDate}` })
-      .onConflictDoNothing()
-      .returning({ id: alertLedger.id });
-    if (inserted.length === 0) continue;
-    await createNotification(db, d.userId, {
-      type: "bill",
-      title: `${card.name} payment due ${card.dueDate === today ? "today" : `on ${card.dueDate}`}`,
-      body: `${formatINR(card.amountDuePaise)} due for the statement ending ${card.statementEnd ?? ""}.`,
-      data: { accountId: d.accountId, dueDate: card.dueDate },
-    });
-    sent += 1;
+  for (const { userId } of users) {
+    const holders = await listCardHolders(db, userId, today);
+    for (const holder of holders) {
+      // Reminder lead time is an issuer-level setting; due dates stay per card.
+      const remindDays = holder.settings?.remindDays ?? 3;
+      for (const card of holder.cards) {
+        if (card.dueDate === null || card.amountDuePaise <= 0) continue;
+        const remindFrom = new Date(`${card.dueDate}T00:00:00Z`);
+        remindFrom.setUTCDate(remindFrom.getUTCDate() - remindDays);
+        if (today < remindFrom.toISOString().slice(0, 10) || today > card.dueDate) continue;
+        const inserted = await db
+          .insert(alertLedger)
+          .values({ userId, kind: "card-due", refKey: `${card.accountId}:${card.dueDate}` })
+          .onConflictDoNothing()
+          .returning({ id: alertLedger.id });
+        if (inserted.length === 0) continue;
+        await createNotification(db, userId, {
+          type: "bill",
+          title: `${card.name} payment due ${card.dueDate === today ? "today" : `on ${card.dueDate}`}`,
+          body: `${formatINR(card.amountDuePaise)} due for the statement ending ${card.statementEnd ?? ""}.`,
+          data: { accountId: card.accountId, dueDate: card.dueDate },
+        });
+        sent += 1;
+      }
+    }
   }
   return sent;
 }
 
-/** Alerts-queue detector: utilization crossing the per-card threshold, once per period. */
+/** Alerts-queue detector: combined utilization crossing a bank's threshold, once per period. */
 export async function evaluateCardUtilization(db: Db, userId: string): Promise<number> {
-  const cards = await listCards(db, userId);
+  const holders = await listCardHolders(db, userId);
   const period = currentPeriodKey("monthly");
   let fired = 0;
-  for (const c of cards) {
-    if (!c.details || c.details.utilizationAlertPct === null || c.utilizationPct === null) continue;
-    if (c.utilizationPct < c.details.utilizationAlertPct) continue;
+  for (const h of holders) {
+    if (h.institution === null || h.utilizationAlertPct === null || h.utilizationPct === null) continue;
+    if (h.utilizationPct < h.utilizationAlertPct) continue;
     const inserted = await db
       .insert(alertLedger)
-      .values({ userId, kind: "card-utilization", refKey: `${c.accountId}:${period}` })
+      .values({ userId, kind: "card-utilization", refKey: `${h.institution}:${period}` })
       .onConflictDoNothing()
       .returning({ id: alertLedger.id });
     if (inserted.length === 0) continue;
     await createNotification(db, userId, {
       type: "budget",
-      title: `${c.name} is at ${c.utilizationPct}% utilization`,
-      body: `${formatINR(Math.max(0, -c.balancePaise))} of ${formatINR(c.details.creditLimitPaise)} limit.`,
-      data: { accountId: c.accountId },
+      title: `${h.bankName} cards at ${h.utilizationPct}% utilization`,
+      body: `${formatINR(h.totalOwedPaise)} of ${formatINR(h.creditLimitPaise)} combined limit.`,
+      data: { institution: h.institution },
     });
     fired += 1;
   }

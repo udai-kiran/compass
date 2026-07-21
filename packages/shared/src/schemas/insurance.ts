@@ -46,6 +46,17 @@ export const PremiumFrequencySchema = z.enum([
 ]);
 export type PremiumFrequency = z.infer<typeof PremiumFrequencySchema>;
 
+/** An uploaded health card (family-floater: one per covered member). */
+export const HealthCardSchema = z.object({
+  id: z.uuid(),
+  /** the member this card is for; "" when unlabeled */
+  label: z.string(),
+  fileName: z.string(),
+  mimeType: z.string(),
+  sizeBytes: z.number().int(),
+});
+export type HealthCard = z.infer<typeof HealthCardSchema>;
+
 export const InsurancePolicySchema = z.object({
   id: z.uuid(),
   /** a short label for lists, e.g. "LIC Jeevan Anand" */
@@ -83,6 +94,8 @@ export const InsurancePolicySchema = z.object({
   documentName: z.string().nullable(),
   documentMime: z.string().nullable(),
   documentSizeBytes: z.number().int().nullable(),
+  /** uploaded health cards (health policies; one per member) */
+  healthCards: z.array(HealthCardSchema),
   notes: z.string(),
   archived: z.boolean(),
 });

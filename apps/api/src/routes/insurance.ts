@@ -11,12 +11,15 @@ import {
 import { HttpError } from "../lib/errors.ts";
 import { MAX_ATTACHMENT_BYTES } from "../services/attachments.ts";
 import {
+  addHealthCard,
   createPolicy,
+  deleteHealthCard,
   deletePolicy,
   deletePolicyDocument,
   listPolicies,
   listPolicyPremiums,
   logPremium,
+  readHealthCard,
   readPolicyDocument,
   savePolicyDocument,
   updatePolicy,
@@ -55,7 +58,7 @@ export async function insuranceRoutes(app: FastifyInstance) {
     "/api/insurance/policies/:id",
     { schema: { params: PolicyParams, response: { 200: z.object({ ok: z.boolean() }) } } },
     async (req) => {
-      await deletePolicy(app.db, req.session!.userId, req.params.id, app.config.STORAGE_DIR);
+      await deletePolicy(app.db, req.session!.userId, req.params.id, app.storage);
       return { ok: true };
     },
   );
@@ -68,7 +71,7 @@ export async function insuranceRoutes(app: FastifyInstance) {
     const file = await req.file({ limits: { fileSize: MAX_ATTACHMENT_BYTES, files: 1 } });
     if (!file) throw new HttpError(400, "Expected a multipart file field");
     const data = await file.toBuffer();
-    const policy = await savePolicyDocument(app.db, app.config.STORAGE_DIR, req.session!.userId, id, {
+    const policy = await savePolicyDocument(app.db, app.storage, req.session!.userId, id, {
       fileName: file.filename,
       mimeType: file.mimetype,
       data,
@@ -80,7 +83,7 @@ export async function insuranceRoutes(app: FastifyInstance) {
     const { id } = PolicyParams.parse(req.params);
     const { fileName, mimeType, data } = await readPolicyDocument(
       app.db,
-      app.config.STORAGE_DIR,
+      app.storage,
       req.session!.userId,
       id,
     );
@@ -94,7 +97,53 @@ export async function insuranceRoutes(app: FastifyInstance) {
     "/api/insurance/policies/:id/document",
     { schema: { params: PolicyParams, response: { 200: InsurancePolicySchema } } },
     async (req) =>
-      deletePolicyDocument(app.db, app.config.STORAGE_DIR, req.session!.userId, req.params.id),
+      deletePolicyDocument(app.db, app.storage, req.session!.userId, req.params.id),
+  );
+
+  // ---- health cards (multiple uploaded files per policy) ----
+
+  // multipart body; the member label rides as a ?label= query param
+  app.post("/api/insurance/policies/:id/health-cards", async (req, reply) => {
+    const { id } = PolicyParams.parse(req.params);
+    const label = z.object({ label: z.string().max(120).default("") }).parse(req.query).label;
+    const file = await req.file({ limits: { fileSize: MAX_ATTACHMENT_BYTES, files: 1 } });
+    if (!file) throw new HttpError(400, "Expected a multipart file field");
+    const data = await file.toBuffer();
+    const policy = await addHealthCard(
+      app.db,
+      app.storage,
+      req.session!.userId,
+      id,
+      { fileName: file.filename, mimeType: file.mimetype, data },
+      label,
+    );
+    return reply.code(201).send(policy);
+  });
+
+  app.get("/api/insurance/health-cards/:cardId", async (req, reply) => {
+    const { cardId } = z.object({ cardId: z.uuid() }).parse(req.params);
+    const { fileName, mimeType, data } = await readHealthCard(
+      app.db,
+      app.storage,
+      req.session!.userId,
+      cardId,
+    );
+    return reply
+      .header("content-type", mimeType)
+      .header("content-disposition", `inline; filename="${encodeURIComponent(fileName)}"`)
+      .send(data);
+  });
+
+  r.delete(
+    "/api/insurance/policies/:id/health-cards/:cardId",
+    {
+      schema: {
+        params: z.object({ id: z.uuid(), cardId: z.uuid() }),
+        response: { 200: InsurancePolicySchema },
+      },
+    },
+    async (req) =>
+      deleteHealthCard(app.db, app.storage, req.session!.userId, req.params.id, req.params.cardId),
   );
 
   r.get(

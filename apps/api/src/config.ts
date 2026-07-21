@@ -12,6 +12,18 @@ const EnvSchema = z.object({
   PORT: z.coerce.number().int().min(1).max(65535).default(3001),
   SESSION_SECRET: z.string().min(32, "must be at least 32 characters of random data"),
   STORAGE_DIR: z.string().default("./data/attachments"),
+  /**
+   * S3-compatible object storage for uploaded files (MinIO in prod). When
+   * S3_ENDPOINT is set, files live in the bucket; otherwise they fall back to
+   * STORAGE_DIR on disk (handy for local dev without MinIO running).
+   */
+  S3_ENDPOINT: z.string().default(""),
+  S3_BUCKET: z.string().default("compass-files"),
+  S3_REGION: z.string().default("us-east-1"),
+  S3_ACCESS_KEY: z.string().default(""),
+  S3_SECRET_KEY: z.string().default(""),
+  /** MinIO needs path-style URLs (bucket in the path, not the host). */
+  S3_FORCE_PATH_STYLE: z.stringbool().default(true),
   BACKUP_DIR: z.string().default("./data/backups"),
   /** encryption key for backups; falls back to SESSION_SECRET when unset */
   BACKUP_KEY: z.string().default(""),

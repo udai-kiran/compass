@@ -1,4 +1,5 @@
 import Fastify, { type FastifyError, type FastifyInstance } from "fastify";
+import { ZodError } from "zod";
 import {
   hasZodFastifySchemaValidationErrors,
   serializerCompiler,
@@ -49,6 +50,7 @@ import { inboxRoutes } from "./routes/inbox.ts";
 import { mailboxRoutes } from "./routes/mailboxes.ts";
 import { invalidateUserCache } from "./services/cache.ts";
 import { enqueueBudgetEvaluation } from "./jobs/index.ts";
+import { createStorage, type Storage } from "./lib/storage.ts";
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -57,6 +59,7 @@ declare module "fastify" {
     db: Db;
     redis: Redis;
     queues: Queues;
+    storage: Storage;
   }
 }
 
@@ -77,6 +80,8 @@ export async function buildApp(config: Config): Promise<FastifyInstance> {
   app.decorate("pg", createPool(config.DATABASE_URL));
   app.decorate("db", createDb(app.pg));
   app.decorate("redis", createRedis(config.REDIS_URL));
+  app.decorate("storage", createStorage(config));
+  await app.storage.ensureReady();
   // AI is per-user now (Settings → AI), resolved per request from ai_settings —
   // there is no global provider. See services/ai-settings.ts.
   await startJobs(app);
@@ -96,6 +101,18 @@ export async function buildApp(config: Config): Promise<FastifyInstance> {
         issues: err.validation.map((v) => ({
           path: v.instancePath,
           message: v.message,
+        })),
+      });
+    }
+    // Manual .parse() calls in handlers (multipart routes validate params/query
+    // themselves) throw raw ZodErrors — a malformed request, not a server fault.
+    if (err instanceof ZodError) {
+      return reply.code(400).send({
+        error: "Bad Request",
+        message: "Request does not match the schema",
+        issues: err.issues.map((i) => ({
+          path: `/${i.path.join("/")}`,
+          message: i.message,
         })),
       });
     }

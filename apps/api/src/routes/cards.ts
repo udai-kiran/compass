@@ -4,20 +4,32 @@ import { z } from "zod";
 import {
   CardActivitySchema,
   CardDetailsSchema,
-  CardSummarySchema,
+  CardHolderSummarySchema,
+  CardIssuerSettingsSchema,
+  CardStatementSchema,
   CreateRewardEntrySchema,
   RewardEntrySchema,
   UpsertCardDetailsSchema,
+  UpsertCardIssuerSettingsSchema,
 } from "@compass/shared";
+import { HttpError } from "../lib/errors.ts";
 import {
   addRewardEntry,
   deleteRewardEntry,
   getCardActivity,
-  listCards,
+  listCardHolders,
   listRewards,
   setCardStatementPassword,
   upsertCardDetails,
+  upsertIssuerSettings,
 } from "../services/cards.ts";
+import {
+  deleteCardStatement,
+  listCardStatements,
+  readCardStatement,
+  saveCardStatement,
+} from "../services/card-statements.ts";
+import { MAX_ATTACHMENT_BYTES } from "../services/attachments.ts";
 import { mailboxSecret } from "../services/mailboxes.ts";
 
 const AccountParams = z.object({ accountId: z.uuid() });
@@ -28,8 +40,8 @@ export async function cardRoutes(app: FastifyInstance) {
 
   r.get(
     "/api/cards",
-    { schema: { response: { 200: z.array(CardSummarySchema) } } },
-    async (req) => listCards(app.db, req.session!.userId),
+    { schema: { response: { 200: z.array(CardHolderSummarySchema) } } },
+    async (req) => listCardHolders(app.db, req.session!.userId),
   );
 
   r.put(
@@ -41,14 +53,19 @@ export async function cardRoutes(app: FastifyInstance) {
         response: { 200: CardDetailsSchema },
       },
     },
+    async (req) => upsertCardDetails(app.db, req.session!.userId, req.params.accountId, req.body),
+  );
+
+  r.put(
+    "/api/card-issuers/settings",
+    {
+      schema: {
+        body: UpsertCardIssuerSettingsSchema,
+        response: { 200: CardIssuerSettingsSchema },
+      },
+    },
     async (req) =>
-      upsertCardDetails(
-        app.db,
-        req.session!.userId,
-        req.params.accountId,
-        req.body,
-        mailboxSecret(app.config),
-      ),
+      upsertIssuerSettings(app.db, req.session!.userId, req.body, mailboxSecret(app.config)),
   );
 
   r.put(
@@ -102,6 +119,58 @@ export async function cardRoutes(app: FastifyInstance) {
     { schema: { params: RewardParams, response: { 200: z.object({ ok: z.boolean() }) } } },
     async (req) => {
       await deleteRewardEntry(app.db, req.session!.userId, req.params.accountId, req.params.id);
+      return { ok: true };
+    },
+  );
+
+  // ---- statements (PDF/image uploads stored in MinIO, per card) ----
+
+  r.get(
+    "/api/cards/:accountId/statements",
+    { schema: { params: AccountParams, response: { 200: z.array(CardStatementSchema) } } },
+    async (req) => listCardStatements(app.db, req.session!.userId, req.params.accountId),
+  );
+
+  // multipart body — schema validation not applicable; period rides as ?period=
+  app.post("/api/cards/:accountId/statements", async (req, reply) => {
+    const { accountId } = AccountParams.parse(req.params);
+    const period = z
+      .object({ period: z.iso.date().nullable().default(null) })
+      .parse(req.query).period;
+    const file = await req.file({ limits: { fileSize: MAX_ATTACHMENT_BYTES, files: 1 } });
+    if (!file) throw new HttpError(400, "Expected a multipart file field");
+    const data = await file.toBuffer();
+    const statement = await saveCardStatement(
+      app.db,
+      app.storage,
+      req.session!.userId,
+      accountId,
+      { fileName: file.filename, mimeType: file.mimetype, data },
+      period,
+    );
+    return reply.code(201).send(statement);
+  });
+
+  app.get("/api/card-statements/:id", async (req, reply) => {
+    const { id } = z.object({ id: z.uuid() }).parse(req.params);
+    const { meta, data } = await readCardStatement(app.db, app.storage, req.session!.userId, id);
+    return reply
+      .header("content-type", meta.mimeType)
+      .header("content-disposition", `inline; filename="${encodeURIComponent(meta.fileName)}"`)
+      .send(data);
+  });
+
+  r.delete(
+    "/api/cards/:accountId/statements/:id",
+    { schema: { params: RewardParams, response: { 200: z.object({ ok: z.boolean() }) } } },
+    async (req) => {
+      await deleteCardStatement(
+        app.db,
+        app.storage,
+        req.session!.userId,
+        req.params.accountId,
+        req.params.id,
+      );
       return { ok: true };
     },
   );

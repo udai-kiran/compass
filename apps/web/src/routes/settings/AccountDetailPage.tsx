@@ -25,7 +25,7 @@ import {
 import { InstitutionDatalist, InstitutionIcon, INSTITUTION_LIST_ID } from "../../lib/institutions.tsx";
 import { UpiQr, upiPayUri } from "../../components/UpiQr.tsx";
 import { useAccountMutations, useAccounts } from "../../lib/queries.ts";
-import { useCards, useStatementPasswordMutation } from "../../lib/card-queries.ts";
+import { useCardHolders, useStatementPasswordMutation } from "../../lib/card-queries.ts";
 import { toast } from "../../lib/toast.tsx";
 
 const SUBTYPE_LABELS: Record<BankAccountSubtype, string> = {
@@ -106,10 +106,11 @@ function AccountDetail({ account }: { account: AccountWithBalance }) {
 }
 
 function StatementPasswordSection({ account }: { account: AccountWithBalance }) {
-  const { data: cards } = useCards();
+  const { data: holders } = useCardHolders();
   const mutation = useStatementPasswordMutation();
-  const card = cards?.find((c) => c.accountId === account.id);
-  const hasPassword = card?.details?.hasStatementPassword ?? false;
+  // The statement password is an issuer-level setting, shared across the bank's cards.
+  const holder = holders?.find((h) => h.cards.some((c) => c.accountId === account.id));
+  const hasPassword = holder?.settings?.hasStatementPassword ?? false;
   const [password, setPassword] = useState("");
   const dirty = password.trim() !== "";
 
