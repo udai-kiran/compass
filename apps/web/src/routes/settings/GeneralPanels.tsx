@@ -238,13 +238,180 @@ export function DataPanel() {
           <a href="/api/export/transactions.csv" className="rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-50">Transactions (CSV)</a>
         </div>
       </section>
+      <BackupSection />
+      <RestoreSection />
+      <OrphanSection />
       <section className="rounded-lg border border-slate-200 bg-white p-4">
-        <h2 className="text-sm font-semibold text-slate-700">Backups</h2>
+        <h2 className="text-sm font-semibold text-slate-700">Server backups</h2>
         <p className="mt-1 text-xs text-slate-400">
-          Encrypted backups run weekly to the server's backup directory. See BACKUP_RESTORE.md for the restore procedure.
+          Separately, encrypted full-database backups run weekly to the server's backup directory.
+          See BACKUP_RESTORE.md for the instance-level restore procedure.
         </p>
       </section>
     </div>
+  );
+}
+
+/** Download an encrypted archive: every row plus every uploaded file. */
+function BackupSection() {
+  const [passphrase, setPassphrase] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function download() {
+    setBusy(true);
+    try {
+      const res = await fetch("/api/backup/archive", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ passphrase }),
+      });
+      if (!res.ok) {
+        const body = (await res.json()) as { message?: string };
+        throw new Error(body.message ?? "Backup failed");
+      }
+      const blob = await res.blob();
+      const name =
+        res.headers.get("content-disposition")?.match(/filename="([^"]+)"/)?.[1] ??
+        "compass-backup.cmpb";
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = name;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast("Backup downloaded — keep the passphrase safe, it cannot be recovered", "success");
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "Backup failed", "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="rounded-lg border border-slate-200 bg-white p-4">
+      <h2 className="text-sm font-semibold text-slate-700">Encrypted backup</h2>
+      <p className="mt-1 text-xs text-slate-400">
+        One file with everything — every record plus every uploaded document, statement, and card.
+        Encrypted with a passphrase you choose, so it restores on any Compass instance.
+      </p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <input
+          type="password"
+          value={passphrase}
+          onChange={(e) => setPassphrase(e.target.value)}
+          placeholder="Passphrase (min 8 chars)"
+          className="rounded-md border border-slate-300 px-3 py-1.5 text-sm"
+          autoComplete="new-password"
+        />
+        <button
+          onClick={() => void download()}
+          disabled={busy || passphrase.length < 8}
+          className="rounded-md bg-slate-800 px-4 py-1.5 text-sm text-white hover:bg-slate-700 disabled:opacity-40"
+        >
+          {busy ? "Preparing…" : "Download backup"}
+        </button>
+      </div>
+    </section>
+  );
+}
+
+/** Upload an archive into a fresh account (new instance / after data loss). */
+function RestoreSection() {
+  const [passphrase, setPassphrase] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function restore() {
+    if (!file) return;
+    setBusy(true);
+    try {
+      const form = new FormData();
+      form.append("passphrase", passphrase);
+      form.append("file", file);
+      const res = await fetch("/api/backup/restore", { method: "POST", body: form });
+      const body = (await res.json()) as { message?: string; rows?: number; files?: number };
+      if (!res.ok) throw new Error(body.message ?? "Restore failed");
+      toast(`Restored ${body.rows} records and ${body.files} files — reloading`, "success");
+      setTimeout(() => window.location.reload(), 1200);
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "Restore failed", "error");
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="rounded-lg border border-slate-200 bg-white p-4">
+      <h2 className="text-sm font-semibold text-slate-700">Restore from backup</h2>
+      <p className="mt-1 text-xs text-slate-400">
+        Bring a backup into this account — it must be fresh (no accounts or transactions yet).
+        Register, come here, upload, and everything comes back: records and files.
+      </p>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <input
+          type="file"
+          accept=".cmpb"
+          onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+          className="text-sm text-slate-600 file:mr-2 file:rounded-md file:border file:border-slate-300 file:bg-white file:px-3 file:py-1.5 file:text-sm file:text-slate-600"
+        />
+        <input
+          type="password"
+          value={passphrase}
+          onChange={(e) => setPassphrase(e.target.value)}
+          placeholder="Backup passphrase"
+          className="rounded-md border border-slate-300 px-3 py-1.5 text-sm"
+          autoComplete="off"
+        />
+        <button
+          onClick={() => void restore()}
+          disabled={busy || !file || passphrase.length < 8}
+          className="rounded-md bg-slate-800 px-4 py-1.5 text-sm text-white hover:bg-slate-700 disabled:opacity-40"
+        >
+          {busy ? "Restoring…" : "Restore"}
+        </button>
+      </div>
+    </section>
+  );
+}
+
+/** Report-only check for storage objects no record references. */
+function OrphanSection() {
+  const [result, setResult] = useState<{ totalObjects: number; orphaned: number } | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function check() {
+    setBusy(true);
+    try {
+      const res = await fetch("/api/backup/orphans");
+      if (!res.ok) throw new Error("Check failed");
+      setResult((await res.json()) as { totalObjects: number; orphaned: number });
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "Check failed", "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="rounded-lg border border-slate-200 bg-white p-4">
+      <h2 className="text-sm font-semibold text-slate-700">Storage health</h2>
+      <p className="mt-1 text-xs text-slate-400">
+        Finds uploaded objects that no record references anymore. Report only — nothing is deleted.
+      </p>
+      <div className="mt-3 flex items-center gap-3">
+        <button
+          onClick={() => void check()}
+          disabled={busy}
+          className="rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-40"
+        >
+          {busy ? "Checking…" : "Check storage"}
+        </button>
+        {result && (
+          <span className="text-sm text-slate-600">
+            {result.totalObjects} objects · {result.orphaned === 0 ? "no orphans" : `${result.orphaned} orphaned`}
+          </span>
+        )}
+      </div>
+    </section>
   );
 }
 

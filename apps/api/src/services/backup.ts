@@ -1,10 +1,13 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { Readable } from "node:stream";
 import { sql } from "drizzle-orm";
 import type { Config } from "../config.ts";
 import type { Db } from "../db/index.ts";
+import { writeArchive, type ArchiveFileRef, type ArchiveHeader } from "../lib/backup-archive.ts";
 import { toCsv } from "../lib/csv.ts";
-import { encryptBackup } from "../lib/crypto-backup.ts";
+import { encryptBackup, encryptBackupStream } from "../lib/crypto-backup.ts";
+import type { Storage } from "../lib/storage.ts";
 
 /**
  * Every application table in a stable logical order. This is not, and cannot be,
@@ -121,6 +124,86 @@ export async function transactionsCsv(db: Db, userId: string): Promise<string> {
     ]);
   }
   return toCsv(rows);
+}
+
+/**
+ * Every column that holds an opaque storage key. The archive builder pulls the
+ * referenced objects from these; the orphan report treats any object NOT
+ * referenced here as unowned. A new file-bearing table must be added here or
+ * its files silently drop out of backups — the drift test guards this against
+ * the schema.
+ */
+export const FILE_COLUMNS: ReadonlyArray<{ table: string; column: string }> = [
+  { table: "attachments", column: "stored_path" },
+  { table: "insurance_policies", column: "document_path" },
+  { table: "insurance_health_cards", column: "stored_path" },
+  { table: "card_statements", column: "stored_path" },
+];
+
+/** File references found in an exported per-user dump, in FILE_COLUMNS order. */
+export function collectFileRefs(tables: ArchiveHeader["tables"]): ArchiveFileRef[] {
+  const refs: ArchiveFileRef[] = [];
+  for (const { table, column } of FILE_COLUMNS) {
+    for (const row of tables[table] ?? []) {
+      const key = row[column];
+      if (typeof key === "string" && key !== "") {
+        refs.push({ table, column, rowId: String(row.id), key });
+      }
+    }
+  }
+  return refs;
+}
+
+/**
+ * One user's complete backup — every row plus every storage object those rows
+ * reference — as an encrypted v2 envelope stream (constant memory; blobs are
+ * fetched one at a time as the stream drains). A missing storage object is
+ * recorded as an empty frame rather than failing the whole backup.
+ */
+export async function buildUserBackupStream(
+  db: Db,
+  storage: Storage,
+  userId: string,
+  passphrase: string,
+): Promise<Readable> {
+  const tables: ArchiveHeader["tables"] = {};
+  for (const t of [...Object.keys(USER_TABLES), ...Object.keys(LINKED_TABLES)]) {
+    tables[t] = (await dumpUserTable(db, t, userId)) as Array<Record<string, unknown>>;
+  }
+  const header: ArchiveHeader = {
+    version: 2,
+    exportedAt: new Date().toISOString(),
+    userId,
+    tables,
+    files: collectFileRefs(tables),
+  };
+  const plaintext = Readable.from(writeArchive(header, (ref) => storage.get(ref.key).catch(() => null)));
+  return encryptBackupStream(plaintext, passphrase);
+}
+
+/** Storage keys referenced by any row, across all users. */
+export async function referencedStorageKeys(db: Db): Promise<Set<string>> {
+  const keys = new Set<string>();
+  for (const { table, column } of FILE_COLUMNS) {
+    const res = await db.execute(sql`
+      select ${sql.identifier(column)} as key from ${sql.identifier(table)}
+      where ${sql.identifier(column)} is not null`);
+    for (const row of res.rows as Array<{ key: string }>) if (row.key) keys.add(row.key);
+  }
+  return keys;
+}
+
+/**
+ * Objects in storage that no row references (from crashed uploads or the
+ * best-effort deletes). Report only — deleting is a human decision.
+ */
+export async function orphanedStorageKeys(
+  db: Db,
+  storage: Storage,
+): Promise<{ total: number; orphans: string[] }> {
+  const referenced = await referencedStorageKeys(db);
+  const keys = await storage.list();
+  return { total: keys.length, orphans: keys.filter((key) => !referenced.has(key)) };
 }
 
 function backupKey(config: Config): string {

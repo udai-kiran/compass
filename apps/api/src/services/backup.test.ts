@@ -1,9 +1,17 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { getTableName, is, Table } from "drizzle-orm";
+import { getTableColumns, getTableName, is, Table } from "drizzle-orm";
 import * as schema from "../db/schema.ts";
-import { ALL_TABLES, exportGaps, LINKED_TABLES, USER_TABLES } from "./backup.ts";
+import {
+  ALL_TABLES,
+  collectFileRefs,
+  exportGaps,
+  FILE_COLUMNS,
+  LINKED_TABLES,
+  USER_TABLES,
+} from "./backup.ts";
 import { firstPassRow } from "../db/restore.ts";
+import { restorableTables } from "./restore-user.ts";
 
 /** Every pgTable defined in the schema, by its SQL name. */
 function schemaTableNames(): string[] {
@@ -33,6 +41,63 @@ test("no table is scoped both directly and through a parent", () => {
   assert.deepEqual(both, [], `tables scoped twice: ${both.join(", ")}`);
 });
 
+test("every storage-key column in the schema is covered by FILE_COLUMNS", () => {
+  // A table storing opaque storage keys must be in FILE_COLUMNS, or its files
+  // silently drop out of the per-user archive and the orphan report.
+  const inSchema: string[] = [];
+  for (const value of Object.values(schema)) {
+    if (!is(value, Table)) continue;
+    const table = getTableName(value);
+    for (const column of Object.values(getTableColumns(value))) {
+      if (column.name === "stored_path" || column.name === "document_path") {
+        inSchema.push(`${table}.${column.name}`);
+      }
+    }
+  }
+  const covered = new Set(FILE_COLUMNS.map((f) => `${f.table}.${f.column}`));
+  const missing = inSchema.filter((c) => !covered.has(c));
+  const stale = [...covered].filter((c) => !inSchema.includes(c));
+  assert.deepEqual(missing, [], `file columns missing from FILE_COLUMNS: ${missing.join(", ")}`);
+  assert.deepEqual(stale, [], `FILE_COLUMNS lists columns not in the schema: ${stale.join(", ")}`);
+});
+
+test("collectFileRefs pulls every non-empty storage key from a dump", () => {
+  const refs = collectFileRefs({
+    attachments: [
+      { id: "a1", stored_path: "ab/one" },
+      { id: "a2", stored_path: "" },
+    ],
+    insurance_policies: [
+      { id: "p1", document_path: "cd/two" },
+      { id: "p2", document_path: null },
+    ],
+    card_statements: [{ id: "s1", stored_path: "ef/three" }],
+  });
+  assert.deepEqual(
+    refs.map((r) => [r.table, r.rowId, r.key]),
+    [
+      ["attachments", "a1", "ab/one"],
+      ["insurance_policies", "p1", "cd/two"],
+      ["card_statements", "s1", "ef/three"],
+    ],
+  );
+});
+
+test("the per-user restore covers exactly the exported tables, in parent-first order", () => {
+  const tables = restorableTables();
+  assert.deepEqual(
+    [...tables].sort(),
+    [...Object.keys(USER_TABLES), ...Object.keys(LINKED_TABLES)].sort(),
+  );
+  // Spot-check FK ordering the insert pass depends on.
+  const at = (t: string) => tables.indexOf(t);
+  assert.ok(at("accounts") < at("transactions"));
+  assert.ok(at("transactions") < at("attachments"));
+  assert.ok(at("accounts") < at("card_statements"));
+  assert.ok(at("insurance_policies") < at("insurance_health_cards"));
+  assert.ok(at("mailbox_accounts") < at("email_ingestions"));
+});
+
 test("restore defers cyclic and self-referencing foreign keys", () => {
   assert.deepEqual(
     firstPassRow("accounts", { id: "a", goal_id: "g", name: "Bank" }),
@@ -47,8 +112,10 @@ test("restore defers cyclic and self-referencing foreign keys", () => {
     id: "g",
     target_paise: 100,
   });
+  // transactions defer policy_id (insurance_policies restores later) and drop
+  // the database-generated search column.
   assert.deepEqual(
-    firstPassRow("transactions", { id: "t", merchant: "Cafe", search: "'cafe':1" }),
-    { id: "t", merchant: "Cafe" },
+    firstPassRow("transactions", { id: "t", merchant: "Cafe", policy_id: "p", search: "'cafe':1" }),
+    { id: "t", merchant: "Cafe", policy_id: null },
   );
 });
