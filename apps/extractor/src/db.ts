@@ -120,11 +120,54 @@ export async function setStatus(
   );
 }
 
+/** One ledger transaction, for matching statement lines against (signed paise). */
+export interface LedgerTxnRow {
+  id: string;
+  amountPaise: number;
+  date: string;
+  merchant: string;
+}
+
+/**
+ * The card's ledger transactions in a date range — the pool the statement
+ * matcher checks each line against. Range is the lines' own dates padded by the
+ * posting-lag window (see matchLinesToLedger), never the statement period.
+ */
+export async function loadCardLedgerTxns(
+  pool: pg.Pool,
+  userId: string,
+  accountId: string,
+  fromDate: string,
+  toDate: string,
+): Promise<LedgerTxnRow[]> {
+  const res = await pool.query<{ id: string; amount_paise: string; date: string; merchant: string }>(
+    `select id, amount_paise, to_char(date, 'YYYY-MM-DD') as date, merchant
+       from transactions
+      where user_id = $1 and account_id = $2 and deleted_at is null
+        and date between $3 and $4`,
+    [userId, accountId, fromDate, toDate],
+  );
+  return res.rows.map((r) => ({
+    id: r.id,
+    amountPaise: Number(r.amount_paise),
+    date: r.date,
+    merchant: r.merchant,
+  }));
+}
+
+/** An inbox row plus how it should land: a plain pending draft, or a matched duplicate. */
+export interface SaveRow extends InboxRow {
+  status?: "pending" | "duplicate";
+  matchedTransactionId?: string | null;
+}
+
 /**
  * Persist the extraction outcome in one transaction: stamp the ingestion with
  * its class + status, then insert the inbox rows. Duplicate rows (same user +
  * dedupe hash) are skipped, so a replay or an alert-then-statement pair never
- * double-books. Returns how many new rows were actually inserted.
+ * double-books. Rows the matcher tied to an existing ledger transaction are
+ * inserted with status `duplicate` + that link, so they stay out of the pending
+ * queue but remain reversible. Returns how many new rows were actually inserted.
  */
 export async function saveResults(
   pool: pg.Pool,
@@ -132,7 +175,7 @@ export async function saveResults(
     ingestion: IngestionRecord;
     classification: string;
     status: EmailIngestStatus;
-    rows: InboxRow[];
+    rows: SaveRow[];
   },
 ): Promise<number> {
   const client = await pool.connect();
@@ -147,8 +190,9 @@ export async function saveResults(
       const res = await client.query(
         `insert into extracted_transactions
            (user_id, ingestion_id, amount_paise, direction, occurred_at, counterparty,
-            suggested_account_id, suggested_category_id, bank_ref, source_quote, confidence, dedupe_hash)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+            suggested_account_id, suggested_category_id, bank_ref, source_quote, confidence,
+            dedupe_hash, status, matched_transaction_id)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
          on conflict (user_id, dedupe_hash) do nothing`,
         [
           args.ingestion.userId,
@@ -163,6 +207,8 @@ export async function saveResults(
           row.sourceQuote,
           row.confidence,
           row.dedupeHash,
+          row.status ?? "pending",
+          row.matchedTransactionId ?? null,
         ],
       );
       inserted += res.rowCount ?? 0;

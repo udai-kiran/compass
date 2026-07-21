@@ -14,6 +14,7 @@ import {
   countPending,
   listInbox,
   rejectExtracted,
+  unmatchDuplicate,
 } from "../services/inbox.ts";
 
 /**
@@ -68,5 +69,16 @@ export async function inboxRoutes(app: FastifyInstance) {
       },
     },
     async (req) => rejectExtracted(app.db, req.session!.userId, req.params.id),
+  );
+
+  r.post(
+    "/api/inbox/:id/unmatch",
+    {
+      schema: {
+        params: z.object({ id: z.uuid() }),
+        response: { 200: ExtractedTransactionSchema },
+      },
+    },
+    async (req) => unmatchDuplicate(app.db, req.session!.userId, req.params.id),
   );
 }

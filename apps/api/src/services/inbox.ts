@@ -35,6 +35,7 @@ function toDto(row: {
   confidence: number | null;
   status: ExtractedTxnReviewStatus;
   transactionId: string | null;
+  matchedTransactionId: string | null;
   createdAt: Date;
   subject: string;
   fromAddr: string;
@@ -54,6 +55,7 @@ function toDto(row: {
     confidence: row.confidence ?? 0,
     status: row.status,
     transactionId: row.transactionId,
+    matchedTransactionId: row.matchedTransactionId,
     // filled in by listInbox for pending drafts; a plain row has no partner
     transferPartnerId: null,
     createdAt: row.createdAt.toISOString(),
@@ -78,6 +80,7 @@ const INBOX_COLUMNS = {
   confidence: extractedTransactions.confidence,
   status: extractedTransactions.status,
   transactionId: extractedTransactions.transactionId,
+  matchedTransactionId: extractedTransactions.matchedTransactionId,
   createdAt: extractedTransactions.createdAt,
   subject: emailIngestions.subject,
   fromAddr: emailIngestions.fromAddr,
@@ -449,6 +452,25 @@ export async function rejectExtracted(
   await db
     .update(extractedTransactions)
     .set({ status: "rejected", updatedAt: new Date() })
+    .where(and(eq(extractedTransactions.id, id), eq(extractedTransactions.userId, userId)));
+  return reload(db, userId, id);
+}
+
+/**
+ * Un-match a `duplicate` draft back to `pending` — the reviewer says this
+ * statement line isn't actually the same as the ledger transaction it was tied
+ * to, so it should be reviewed and accepted like any other draft. Clears the link.
+ */
+export async function unmatchDuplicate(
+  db: Db,
+  userId: string,
+  id: string,
+): Promise<ExtractedTransaction> {
+  const draft = await loadOne(db, userId, id);
+  if (draft.status !== "duplicate") throw new HttpError(409, "Draft is not a matched duplicate");
+  await db
+    .update(extractedTransactions)
+    .set({ status: "pending", matchedTransactionId: null, updatedAt: new Date() })
     .where(and(eq(extractedTransactions.id, id), eq(extractedTransactions.userId, userId)));
   return reload(db, userId, id);
 }
