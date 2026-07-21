@@ -78,12 +78,19 @@ export interface CreditCardRef {
   statementPasswordEnc: string;
 }
 
-/** Credit-card accounts + their stored statement password, to open a statement PDF. */
+/**
+ * Credit-card accounts + their stored statement password, to open a statement PDF.
+ * The password lives on the account's issuer (`card_issuer_settings`, keyed by
+ * `(user_id, institution)`), shared across that bank's cards — it moved up from
+ * the per-card `card_details` row. A card with no institution matches no issuer
+ * row and gets `""`, so it's simply skipped when trying to open the PDF.
+ */
 export async function loadCreditCards(pool: pg.Pool, userId: string): Promise<CreditCardRef[]> {
   const res = await pool.query<{ id: string; name: string; statement_password_enc: string }>(
-    `select a.id, a.name, coalesce(cd.statement_password_enc, '') as statement_password_enc
+    `select a.id, a.name, coalesce(cis.statement_password_enc, '') as statement_password_enc
        from accounts a
-       left join card_details cd on cd.account_id = a.id
+       left join card_issuer_settings cis
+         on cis.user_id = a.user_id and cis.institution = a.institution
       where a.user_id = $1 and a.type = 'credit_card' and a.archived_at is null`,
     [userId],
   );
