@@ -56,12 +56,16 @@ function coverLabel(kind: InsuranceKind, healthType: HealthType | null): string 
   return healthType && isFixedBenefit(healthType) ? "Sum assured" : "Sum insured";
 }
 
+const KIND_ORDER: InsuranceKind[] = ["health", "life", "vehicle"];
+
 export function InsurancePage() {
   const { data: policies, isLoading } = usePolicies();
   const [adding, setAdding] = useState(false);
+  const [tab, setTab] = useState<InsuranceKind>("health");
 
-  const active = (policies ?? []).filter((p) => !p.archived);
-  const totalCover = active.reduce((s, p) => s + p.sumAssuredPaise, 0);
+  const all = policies ?? [];
+  const inTab = all.filter((p) => p.kind === tab);
+  const countOf = (k: InsuranceKind) => all.filter((p) => p.kind === k).length;
 
   return (
     <div className="mx-auto max-w-4xl">
@@ -80,36 +84,90 @@ export function InsurancePage() {
         </button>
       </header>
 
-      {active.length > 0 && (
-        <div className="mb-4 flex items-center justify-between rounded-lg border border-slate-200 bg-white px-4 py-3">
-          <div>
-            <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Total cover</p>
-            <p className="text-2xl font-semibold tabular-nums text-slate-800">{formatINR(totalCover)}</p>
-          </div>
-          <p className="text-sm text-slate-500">
-            across {active.length} active {active.length === 1 ? "policy" : "policies"}
-          </p>
-        </div>
-      )}
+      <div className="mb-4 flex gap-1 rounded-lg border border-slate-200 bg-white p-1">
+        {KIND_ORDER.map((k) => (
+          <button
+            key={k}
+            onClick={() => setTab(k)}
+            className={`flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium ${
+              tab === k ? "bg-slate-800 text-white" : "text-slate-600 hover:bg-slate-100"
+            }`}
+          >
+            {KIND_LABELS[k]}
+            <span className={`text-xs tabular-nums ${tab === k ? "text-slate-300" : "text-slate-400"}`}>
+              {countOf(k)}
+            </span>
+          </button>
+        ))}
+      </div>
+
+      <KindSummary kind={tab} policies={inTab} />
 
       {adding && (
         <div className="mb-4 rounded-lg border border-slate-200 bg-white">
-          <PolicyForm onDone={() => setAdding(false)} />
+          <PolicyForm defaultKind={tab} onDone={() => setAdding(false)} />
         </div>
       )}
 
       {isLoading && <p className="text-sm text-slate-400">Loading…</p>}
 
-      {policies && policies.length === 0 && !adding && (
+      {!isLoading && inTab.length === 0 && !adding && (
         <div className="rounded-lg border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">
-          No policies yet. Add your first life, health, or vehicle policy to start tracking cover,
+          No {KIND_LABELS[tab].toLowerCase()} policies yet. Add one to start tracking cover,
           renewals, and premiums.
         </div>
       )}
 
       <div className="space-y-4">
-        {policies?.map((p) => <PolicyCard key={p.id} policy={p} />)}
+        {inTab.map((p) => <PolicyCard key={p.id} policy={p} />)}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Per-kind totals for the active tab. Cover only combines within a kind — and
+ * for health, indemnity ceilings (reimbursement up to the sum insured) and
+ * fixed-benefit payouts stay separate figures, per isFixedBenefit: adding a
+ * hospital-cash payout to a hospitalisation ceiling would overstate both.
+ */
+function KindSummary({ kind, policies }: { kind: InsuranceKind; policies: InsurancePolicy[] }) {
+  const active = policies.filter((p) => !p.archived);
+  if (active.length === 0) return null;
+  const sum = (list: InsurancePolicy[]) => list.reduce((s, p) => s + p.sumAssuredPaise, 0);
+
+  let stats: Array<{ label: string; paise: number }>;
+  if (kind === "health") {
+    const fixed = active.filter((p) => p.healthType !== null && isFixedBenefit(p.healthType));
+    const indemnity = active.filter((p) => !(p.healthType !== null && isFixedBenefit(p.healthType)));
+    stats = [
+      { label: "Hospitalisation cover", paise: sum(indemnity) },
+      { label: "Fixed benefits", paise: sum(fixed) },
+    ];
+  } else if (kind === "life") {
+    stats = [
+      { label: "Total life cover", paise: sum(active) },
+      { label: "Bonus accrued", paise: active.reduce((s, p) => s + p.bonusPaise, 0) },
+    ];
+  } else {
+    stats = [{ label: "Combined IDV", paise: sum(active) }];
+  }
+  stats = stats.filter((s) => s.paise > 0);
+  if (stats.length === 0) return null;
+
+  return (
+    <div className="mb-4 flex flex-wrap items-center justify-between gap-4 rounded-lg border border-slate-200 bg-white px-4 py-3">
+      <div className="flex flex-wrap gap-8">
+        {stats.map((s) => (
+          <div key={s.label}>
+            <p className="text-xs font-medium uppercase tracking-wide text-slate-500">{s.label}</p>
+            <p className="text-2xl font-semibold tabular-nums text-slate-800">{formatINR(s.paise)}</p>
+          </div>
+        ))}
+      </div>
+      <p className="text-sm text-slate-500">
+        {active.length} active {active.length === 1 ? "policy" : "policies"}
+      </p>
     </div>
   );
 }
@@ -382,10 +440,19 @@ function Field({ label, children, error }: { label: string; children: ReactNode;
 const toPaise = (v: string) => Math.round((parseFloat(v) || 0) * 100);
 const fromPaise = (p: number) => (p === 0 ? "" : (p / 100).toString());
 
-function PolicyForm({ policy, onDone }: { policy?: InsurancePolicy; onDone: () => void }) {
+function PolicyForm({
+  policy,
+  defaultKind,
+  onDone,
+}: {
+  policy?: InsurancePolicy;
+  /** pre-select the active tab's kind when adding a new policy */
+  defaultKind?: InsuranceKind;
+  onDone: () => void;
+}) {
   const { create, update } = usePolicyMutations();
   const [name, setName] = useState(policy?.name ?? "");
-  const [kind, setKind] = useState<InsuranceKind>(policy?.kind ?? "life");
+  const [kind, setKind] = useState<InsuranceKind>(policy?.kind ?? defaultKind ?? "life");
   const [vehicleType, setVehicleType] = useState<VehicleKind | "">(policy?.vehicleType ?? "");
   const [vehicleRegNo, setVehicleRegNo] = useState(policy?.vehicleRegNo ?? "");
   const [healthType, setHealthType] = useState<HealthType | "">(policy?.healthType ?? "");
