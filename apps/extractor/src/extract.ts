@@ -19,6 +19,8 @@ const ModelTxnSchema = z.object({
   amount: z.number(),
   direction: TxnDirectionSchema,
   date: z.string().nullable().default(null),
+  /** 24-hour "HH:MM" the line prints, or null — sharpens statement↔ledger matching */
+  time: z.string().nullable().default(null),
   counterparty: z.string().default(""),
   accountHint: z.string().default(""),
   /** best-fit category NAME, chosen verbatim from the list we pass in, or "" */
@@ -43,7 +45,8 @@ const EXTRACT_SYSTEM = [
   "",
   "Each <txn> is:",
   '{"amount": number (rupees, positive), "direction": "debit"|"credit",',
-  ' "date": "YYYY-MM-DD" or null, "counterparty": string (merchant/payer/payee),',
+  ' "date": "YYYY-MM-DD" or null, "time": "HH:MM" 24-hour if the mail states a transaction time, else null,',
+  ' "counterparty": string (merchant/payer/payee),',
   ' "accountHint": string (last 4 digits or account/card name the mail names, else ""),',
   ' "category": string (best-fit category NAME for the merchant, chosen VERBATIM from the Categories list in the user message — expense names for a debit, income names for a credit — or "" if none fits),',
   ' "bankRef": string or null (UTR / reference / transaction id), "sourceQuote": string (verbatim snippet the amount came from),',
@@ -86,6 +89,8 @@ export interface InboxRow {
   amountPaise: number;
   direction: TxnDirection;
   occurredAt: string | null;
+  /** ISO instant when the source printed a time (date + time, IST); else null */
+  occurredAtTs: string | null;
   counterparty: string;
   suggestedAccountId: string | null;
   suggestedCategoryId: string | null;
@@ -199,6 +204,26 @@ export function validIsoDate(value: string | null): string | null {
   return ok ? value : null;
 }
 
+/**
+ * Combine a valid ISO date with a printed "HH:MM"[":SS"] into an instant, read as
+ * IST (statements/alerts print wall-clock IST) — both sides of a match are built
+ * the same way, so the same transaction yields the same instant. Null unless both
+ * a valid date and a valid time are present; a date alone carries no precision.
+ */
+export function istTimestamp(isoDate: string | null, time: string | null): string | null {
+  if (!isoDate || !time) return null;
+  const m = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(time.trim());
+  if (!m) return null;
+  const hh = Number(m[1]);
+  const mm = Number(m[2]);
+  const ss = m[3] ? Number(m[3]) : 0;
+  if (hh > 23 || mm > 59 || ss > 59) return null;
+  const p = (n: number) => String(n).padStart(2, "0");
+  // +05:30 = IST; Date normalizes it to a UTC instant for storage/comparison.
+  const dt = new Date(`${isoDate}T${p(hh)}:${p(mm)}:${p(ss)}+05:30`);
+  return Number.isNaN(dt.getTime()) ? null : dt.toISOString();
+}
+
 /** Stable dedupe key: the bank reference when present, else a signature hash. */
 export function dedupeHashFor(row: {
   amountPaise: number;
@@ -227,7 +252,8 @@ function toInboxRow(
 ): InboxRow | null {
   const amountPaise = Math.round(Math.abs(t.amount) * 100);
   if (!Number.isFinite(amountPaise) || amountPaise <= 0) return null;
-  const occurredAt = validIsoDate(t.date) ?? ctx.receivedDate;
+  const validDate = validIsoDate(t.date);
+  const occurredAt = validDate ?? ctx.receivedDate;
   const base = {
     amountPaise,
     direction: t.direction,
@@ -237,6 +263,8 @@ function toInboxRow(
   };
   return {
     ...base,
+    // Precise instant only when the line named both a date and a time.
+    occurredAtTs: istTimestamp(validDate, t.time),
     suggestedAccountId,
     suggestedCategoryId: matchCategory(t.category, t.direction, ctx.categories),
     sourceQuote: t.sourceQuote.trim(),
@@ -306,7 +334,8 @@ const STATEMENT_SYSTEM = [
   "",
   "Each <txn> is:",
   '{"amount": number (rupees, positive), "direction": "debit"|"credit",',
-  ' "date": "YYYY-MM-DD" or null, "counterparty": string (the merchant/description),',
+  ' "date": "YYYY-MM-DD" or null, "time": "HH:MM" 24-hour if the line prints a transaction time, else null,',
+  ' "counterparty": string (the merchant/description),',
   ' "accountHint": "", "category": string (best-fit category NAME chosen verbatim from the list — expense for a debit, income for a credit — or ""),',
   ' "bankRef": string or null, "sourceQuote": string (the verbatim statement line), "confidence": number 0..1}',
   "",
@@ -371,6 +400,8 @@ export interface LedgerTxn {
   id: string;
   amountPaise: number;
   date: string; // YYYY-MM-DD
+  /** ISO instant when the row carries a precise time (from an alert); else null */
+  occurredAtTs: string | null;
   merchant: string;
 }
 
@@ -379,11 +410,21 @@ export interface MatchableLine {
   amountPaise: number;
   direction: TxnDirection;
   occurredAt: string | null;
+  /** ISO instant when the line prints a time; else null */
+  occurredAtTs: string | null;
   counterparty: string;
 }
 
 /** Posting-lag window (days) either side of a line's transaction date. */
 export const STATEMENT_MATCH_WINDOW_DAYS = 4;
+
+/**
+ * How close two printed timestamps must be to be the same authorization. The
+ * alert and the statement both report the transaction time, so a genuine pair is
+ * near-identical; a couple of minutes absorbs rounding without letting distinct
+ * same-amount spends collide.
+ */
+export const STATEMENT_MATCH_TIME_TOLERANCE_MS = 2 * 60 * 1000;
 
 function normalizeName(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, "");
@@ -427,9 +468,19 @@ function bestUnique<T extends { score: number }>(cands: T[]): T | null {
   return top;
 }
 
+/** A timestamp-locked pair outranks any fuzzy (merchant+date) candidate. */
+const TIMESTAMP_LOCK_SCORE = 2;
+
 /**
  * For each line, the id of the ledger transaction it duplicates, or null.
  * Returned array is aligned to `lines`; each ledger txn is claimed at most once.
+ *
+ * Amount is the anchor (exact signed paise). When both the line and a ledger row
+ * carry a printed timestamp, that's the primary key: within tolerance they lock
+ * (and outrank any fuzzy candidate); beyond tolerance they're treated as distinct
+ * spends and never paired — this is what separates two same-amount, same-day
+ * transactions. When either side lacks a timestamp, fall back to the posting-lag
+ * date window with merchant text breaking ties. Matching stays mutual-best 1↔1.
  */
 export function matchLinesToLedger(
   lines: MatchableLine[],
@@ -445,8 +496,16 @@ export function matchLinesToLedger(
       if (t.amountPaise !== signed) return;
       const dd = daysApart(line.occurredAt!, t.date);
       if (dd > windowDays) return;
-      const dateScore = (windowDays - dd) / windowDays;
-      const score = 0.7 * merchantSimilarity(line.counterparty, t.merchant) + 0.3 * dateScore;
+      let score: number;
+      if (line.occurredAtTs && t.occurredAtTs) {
+        const dtMs = Math.abs(Date.parse(line.occurredAtTs) - Date.parse(t.occurredAtTs));
+        // Same amount but a different printed time → a different authorization.
+        if (dtMs > STATEMENT_MATCH_TIME_TOLERANCE_MS) return;
+        score = TIMESTAMP_LOCK_SCORE;
+      } else {
+        const dateScore = (windowDays - dd) / windowDays;
+        score = 0.7 * merchantSimilarity(line.counterparty, t.merchant) + 0.3 * dateScore;
+      }
       perLine[i]!.push({ j, score });
       (perLedger.get(j) ?? perLedger.set(j, []).get(j)!).push({ i, score });
     });

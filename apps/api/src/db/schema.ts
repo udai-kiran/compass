@@ -205,6 +205,13 @@ export const transactions = pgTable(
       .notNull()
       .references(() => accounts.id),
     date: date("date").notNull(),
+    /**
+     * Precise transaction instant when known (a card alert / statement line
+     * prints a time); null for date-only sources (CSV, manual). `date` stays the
+     * authoritative day for ordering/reports — this only sharpens statement↔ledger
+     * matching, where amount + timestamp uniquely ties a line to its ledger row.
+     */
+    occurredAt: timestamp("occurred_at", { withTimezone: true }),
     amountPaise: bigint("amount_paise", { mode: "number" }).notNull(),
     merchant: text("merchant").notNull().default(""),
     categoryId: uuid("category_id").references(() => categories.id),
@@ -1233,6 +1240,12 @@ export const extractedTransactions = pgTable(
     amountPaise: bigint("amount_paise", { mode: "number" }).notNull(),
     direction: txnDirection("direction").notNull(),
     occurredAt: date("occurred_at"),
+    /**
+     * Precise instant the line/alert prints (`occurredAt` keeps the date). Carried
+     * to `transactions.occurred_at` on accept and used as the primary statement↔
+     * ledger match key; null when the source shows only a date.
+     */
+    occurredAtTs: timestamp("occurred_at_ts", { withTimezone: true }),
     counterparty: text("counterparty").notNull().default(""),
     suggestedAccountId: uuid("suggested_account_id").references(() => accounts.id, {
       onDelete: "set null",
