@@ -245,12 +245,18 @@ export async function getPortfolio(db: Db, userId: string): Promise<Portfolio> {
     const dividends = posted
       .filter((e) => e.type === "dividend")
       .reduce((s, e) => s + e.amountPaise, 0);
-    const latest = valuations.find((v) => v.holdingId === h.id && v.date <= today) ?? null;
+    // valuations are date-desc, so the first two posted ones are today's and the
+    // prior day's — their difference is the day's move (naive value delta).
+    const hVals = valuations.filter((v) => v.holdingId === h.id && v.date <= today);
+    const latest = hVals[0] ?? null;
+    const previous = hVals[1] ?? null;
     const value = latest?.valuePaise ?? remainingCostPaise;
+    const dayChangePaise = latest && previous ? latest.valuePaise - previous.valuePaise : null;
     return {
       ...toHolding(h),
       investedPaise: remainingCostPaise,
       currentValuePaise: value,
+      dayChangePaise,
       unrealizedPaise: value - remainingCostPaise,
       realizedPaise,
       dividendsPaise: dividends,
@@ -303,6 +309,7 @@ export async function getPortfolio(db: Db, userId: string): Promise<Portfolio> {
   return {
     totalInvestedPaise: active.reduce((s, p) => s + p.investedPaise, 0),
     totalValuePaise: active.reduce((s, p) => s + p.currentValuePaise, 0),
+    totalDayChangePaise: active.reduce((s, p) => s + (p.dayChangePaise ?? 0), 0),
     totalDividendsPaise: active.reduce((s, p) => s + p.dividendsPaise, 0),
     positions,
     allocation: [...allocationMap.entries()]

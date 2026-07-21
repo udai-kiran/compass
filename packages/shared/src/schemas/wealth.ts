@@ -362,6 +362,8 @@ export const HoldingPositionSchema = HoldingSchema.extend({
   /** Remaining cost basis of still-held units (average-cost), never negative. */
   investedPaise: z.number().int(),
   currentValuePaise: z.number().int(),
+  /** value change from the prior valuation to the latest (the day's move); null with no prior valuation */
+  dayChangePaise: z.number().int().nullable(),
   /** currentValue − remaining cost basis; pure of realized gain. */
   unrealizedPaise: z.number().int(),
   /** Gain/loss booked on sells (proceeds − average cost of units sold). */
@@ -375,6 +377,8 @@ export type HoldingPosition = z.infer<typeof HoldingPositionSchema>;
 export const PortfolioSchema = z.object({
   totalInvestedPaise: z.number().int(),
   totalValuePaise: z.number().int(),
+  /** sum of positions' day change (only those with a prior valuation) */
+  totalDayChangePaise: z.number().int(),
   totalDividendsPaise: z.number().int(),
   positions: z.array(HoldingPositionSchema),
   allocation: z.array(

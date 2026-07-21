@@ -95,7 +95,17 @@ export function PortfolioPage() {
       </header>
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <StatTile label="Portfolio value" value={formatINR(p.totalValuePaise)} />
+        <StatTile
+          label="Portfolio value"
+          value={formatINR(p.totalValuePaise)}
+          sub={
+            visiblePositions.some((h) => h.dayChangePaise !== null) ? (
+              <span className={p.totalDayChangePaise >= 0 ? "text-emerald-600" : "text-red-600"}>
+                {p.totalDayChangePaise >= 0 ? "▲" : "▼"} {formatINR(Math.abs(p.totalDayChangePaise))} today
+              </span>
+            ) : undefined
+          }
+        />
         <StatTile label="Invested" value={formatINR(p.totalInvestedPaise)} />
         <StatTile
           label="Unrealized"
@@ -221,9 +231,14 @@ function HoldingRow({
           </label>
           <div>
             <p className="text-sm font-semibold text-slate-800">{formatINR(h.currentValuePaise)}</p>
+            {h.dayChangePaise !== null && (
+              <p className={`text-xs ${h.dayChangePaise >= 0 ? "text-emerald-600" : "text-red-600"}`}>
+                {h.dayChangePaise >= 0 ? "▲" : "▼"} {formatINR(Math.abs(h.dayChangePaise))} today
+              </p>
+            )}
             <p className={`text-xs ${unrealized >= 0 ? "text-emerald-600" : "text-red-600"}`}>
               {unrealized >= 0 ? "+" : ""}
-              {formatINR(unrealized)}
+              {formatINR(unrealized)} total
             </p>
           </div>
           <button onClick={() => setOpen((v) => !v)} className="rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-500">
