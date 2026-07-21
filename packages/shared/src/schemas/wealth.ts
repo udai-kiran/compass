@@ -5,21 +5,18 @@ import { z } from "zod";
 export const CardNetworkSchema = z.enum(["visa", "mastercard", "amex", "rupay", "diners"]);
 export type CardNetwork = z.infer<typeof CardNetworkSchema>;
 
-/** Issuer and last-4 come from the account (institution/accountLast4), not from here. */
+/**
+ * Per-card fields. Issuer and last-4 come from the account (institution/
+ * accountLast4); anything shared across a bank's cards (limit, statement
+ * password, mobile, alerts) lives on CardIssuerSettings, not here.
+ */
 export const CardDetailsSchema = z.object({
   accountId: z.uuid(),
   network: CardNetworkSchema.nullable(),
   productName: z.string(),
-  /** registered mobile (10 digits) for the bill-payment UPI VPA; "" when unset */
-  billMobile: z.string(),
   cycleDay: z.number().int().min(1).max(28),
   dueDay: z.number().int().min(1).max(28),
-  creditLimitPaise: z.number().int().min(0),
-  utilizationAlertPct: z.number().int().min(1).max(100).nullable(),
-  remindDays: z.number().int().min(0).max(30),
   earnRatePer100: z.number().int().min(0),
-  /** whether a statement-PDF password is stored; the value itself is never sent out */
-  hasStatementPassword: z.boolean(),
 });
 export type CardDetails = z.infer<typeof CardDetailsSchema>;
 
@@ -28,25 +25,45 @@ export const UpsertCardDetailsSchema = z.object({
   productName: z.string().default(""),
   /**
    * Issuing bank; stored on the account (accounts.institution), not card_details.
-   * Omit to leave the issuer unchanged (so an older client that doesn't send this
-   * field can't wipe it); pass "" to clear it, or a name to set it.
+   * It's also the group key that joins a card to its issuer settings. Omit to
+   * leave the issuer unchanged (so an older client that doesn't send this field
+   * can't wipe it); pass "" to clear it, or a name to set it.
    */
   bankName: z.string().optional(),
-  /** registered mobile (10 digits) for the bill-payment UPI VPA */
-  billMobile: z.string().default(""),
   cycleDay: z.number().int().min(1).max(28).default(1),
   dueDay: z.number().int().min(1).max(28).default(15),
+  earnRatePer100: z.number().int().min(0).default(0),
+});
+export type UpsertCardDetails = z.input<typeof UpsertCardDetailsSchema>;
+
+/** Settings shared across every card of one bank/issuer, keyed by institution. */
+export const CardIssuerSettingsSchema = z.object({
+  institution: z.string(),
+  /** combined credit limit shared across all this bank's cards */
+  creditLimitPaise: z.number().int().min(0),
+  utilizationAlertPct: z.number().int().min(1).max(100).nullable(),
+  remindDays: z.number().int().min(0).max(30),
+  /** registered mobile (10 digits) for the bill-payment UPI VPA; "" when unset */
+  billMobile: z.string(),
+  /** whether a statement-PDF password is stored; the value itself is never sent out */
+  hasStatementPassword: z.boolean(),
+});
+export type CardIssuerSettings = z.infer<typeof CardIssuerSettingsSchema>;
+
+export const UpsertCardIssuerSettingsSchema = z.object({
+  /** which issuer these settings belong to; must match a card's bank */
+  institution: z.string().min(1),
   creditLimitPaise: z.number().int().min(0).default(0),
   utilizationAlertPct: z.number().int().min(1).max(100).nullable().default(30),
   remindDays: z.number().int().min(0).max(30).default(3),
-  earnRatePer100: z.number().int().min(0).default(0),
+  billMobile: z.string().default(""),
   /**
-   * Password to open this card's statement PDFs. Omit to leave it unchanged, ""
+   * Password to open this bank's statement PDFs. Omit to leave it unchanged, ""
    * to clear it, a value to set it. Stored encrypted; never returned.
    */
   statementPassword: z.string().max(200).optional(),
 });
-export type UpsertCardDetails = z.input<typeof UpsertCardDetailsSchema>;
+export type UpsertCardIssuerSettings = z.input<typeof UpsertCardIssuerSettingsSchema>;
 
 // ---------- Retirement accounts (PPF / EPF) ----------
 
@@ -89,10 +106,31 @@ export const CardSummarySchema = z.object({
   dueDate: z.iso.date().nullable(),
   /** spend in the running (unclosed) period */
   currentSpendPaise: z.number().int(),
-  utilizationPct: z.number().nullable(),
   rewardPoints: z.number().int(),
 });
 export type CardSummary = z.infer<typeof CardSummarySchema>;
+
+/**
+ * A bank/issuer holder: its shared settings plus every card under it. Credit
+ * limit and utilization are combined across the cards (India's typical shared
+ * limit). `institution` is null for the "unassigned" holder grouping cards with
+ * no bank set — each such card gets its own holder, and `settings` is null.
+ */
+export const CardHolderSummarySchema = z.object({
+  institution: z.string().nullable(),
+  /** display name for the holder; the institution, or the lone card's name when unassigned */
+  bankName: z.string().nullable(),
+  settings: CardIssuerSettingsSchema.nullable(),
+  /** combined limit across the holder's cards (0 when unset) */
+  creditLimitPaise: z.number().int().min(0),
+  /** combined amount owed right now across the holder's cards */
+  totalOwedPaise: z.number().int(),
+  /** combined owed ÷ shared limit; null when no limit is set */
+  utilizationPct: z.number().nullable(),
+  utilizationAlertPct: z.number().int().min(1).max(100).nullable(),
+  cards: z.array(CardSummarySchema),
+});
+export type CardHolderSummary = z.infer<typeof CardHolderSummarySchema>;
 
 /** One line item in a card's activity view. */
 export const CardActivityTxnSchema = z.object({
@@ -129,6 +167,18 @@ export const CardActivitySchema = z.object({
   unbilled: z.array(CardActivityTxnSchema),
 });
 export type CardActivity = z.infer<typeof CardActivitySchema>;
+
+/** An uploaded statement PDF/image for a card (metadata only; blob in storage). */
+export const CardStatementSchema = z.object({
+  id: z.uuid(),
+  accountId: z.uuid(),
+  /** statement close/period date, or null when not tagged */
+  period: z.iso.date().nullable(),
+  fileName: z.string(),
+  mimeType: z.string(),
+  sizeBytes: z.number().int(),
+});
+export type CardStatement = z.infer<typeof CardStatementSchema>;
 
 export const RewardEntrySchema = z.object({
   id: z.uuid(),

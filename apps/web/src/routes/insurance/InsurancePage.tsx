@@ -258,6 +258,8 @@ function PolicyCard({ policy }: { policy: InsurancePolicy }) {
         </div>
       )}
 
+      {!editing && policy.kind === "health" && <HealthCards policy={policy} />}
+
       {policy.policyWordingUrl && !editing && (
         <p className="border-t border-slate-100 px-4 py-3 text-sm">
           <a
@@ -278,6 +280,83 @@ function PolicyCard({ policy }: { policy: InsurancePolicy }) {
       {editing && <PolicyForm policy={policy} onDone={() => setEditing(false)} />}
       {showPremiums && <PremiumsPanel policy={policy} />}
     </section>
+  );
+}
+
+/** Health cards for a family-floater — one per covered member, each with a label. */
+function HealthCards({ policy }: { policy: InsurancePolicy }) {
+  const { uploadHealthCard, removeHealthCard } = usePolicyMutations();
+  const [label, setLabel] = useState("");
+
+  return (
+    <div className="border-t border-slate-100 px-4 py-3">
+      <p className="text-xs text-slate-500">Health cards</p>
+      {policy.healthCards.length > 0 && (
+        <ul className="mt-2 flex flex-col gap-1.5">
+          {policy.healthCards.map((c) => (
+            <li key={c.id} className="flex items-center gap-2 text-sm">
+              <a
+                href={`/api/insurance/health-cards/${c.id}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-slate-700 underline hover:text-slate-900"
+              >
+                🪪 {c.label || c.fileName} ↗
+              </a>
+              {c.label && <span className="text-xs text-slate-400">{c.fileName}</span>}
+              <button
+                type="button"
+                onClick={() =>
+                  removeHealthCard.mutate(
+                    { id: policy.id, cardId: c.id },
+                    { onSuccess: () => toast("Health card removed") },
+                  )
+                }
+                disabled={removeHealthCard.isPending}
+                className="ml-auto text-xs text-red-600 hover:underline disabled:opacity-40"
+              >
+                Remove
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
+        <input
+          value={label}
+          onChange={(e) => setLabel(e.target.value)}
+          placeholder="Member (optional)"
+          className="w-40 rounded-md border border-slate-300 px-2 py-1 text-sm"
+        />
+        <label className="cursor-pointer">
+          <span className="rounded-md border border-slate-300 px-3 py-1.5 text-slate-600 hover:bg-slate-50">
+            ⬆ Add health card
+          </span>
+          <input
+            type="file"
+            accept=".pdf,image/*"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f)
+                uploadHealthCard.mutate(
+                  { id: policy.id, file: f, label: label.trim() },
+                  {
+                    onSuccess: () => {
+                      toast("Health card added", "success");
+                      setLabel("");
+                    },
+                    onError: (err) =>
+                      toast(err instanceof Error ? err.message : "Upload failed", "error"),
+                  },
+                );
+              e.target.value = "";
+            }}
+          />
+        </label>
+        {uploadHealthCard.isPending && <span className="text-xs text-slate-400">Uploading…</span>}
+      </div>
+    </div>
   );
 }
 

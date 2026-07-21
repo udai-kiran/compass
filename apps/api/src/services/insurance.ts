@@ -1,9 +1,7 @@
-import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import type {
   CreateInsurancePolicy,
+  HealthCard,
   InsurancePolicy,
   LogPremium,
   PolicyPremiums,
@@ -15,14 +13,20 @@ import {
   UpdateInsurancePolicySchema,
 } from "@compass/shared";
 import type { Db } from "../db/index.ts";
-import { insurancePolicies, transactions } from "../db/schema.ts";
+import { insuranceHealthCards, insurancePolicies, transactions } from "../db/schema.ts";
 import { HttpError } from "../lib/errors.ts";
-import { ALLOWED_MIME, MAX_ATTACHMENT_BYTES } from "./attachments.ts";
+import type { Storage } from "../lib/storage.ts";
+import { assertUploadable } from "./attachments.ts";
 import { createTransaction } from "./transactions.ts";
 
 type PolicyRow = typeof insurancePolicies.$inferSelect;
+type HealthCardRow = typeof insuranceHealthCards.$inferSelect;
 
-function toPolicy(p: PolicyRow): InsurancePolicy {
+function toHealthCard(c: HealthCardRow): HealthCard {
+  return { id: c.id, label: c.label, fileName: c.fileName, mimeType: c.mimeType, sizeBytes: c.sizeBytes };
+}
+
+function toPolicy(p: PolicyRow, cards: HealthCardRow[] = []): InsurancePolicy {
   return {
     id: p.id,
     name: p.name,
@@ -45,9 +49,20 @@ function toPolicy(p: PolicyRow): InsurancePolicy {
     documentName: p.documentName,
     documentMime: p.documentMime,
     documentSizeBytes: p.documentSizeBytes,
+    healthCards: cards.map(toHealthCard),
     notes: p.notes,
     archived: p.archivedAt !== null,
   };
+}
+
+/** A single policy with its health cards, for endpoints that return one policy. */
+async function getPolicyWithCards(db: Db, userId: string, id: string): Promise<InsurancePolicy> {
+  const row = await ownedPolicy(db, userId, id);
+  const cards = await db.query.insuranceHealthCards.findMany({
+    where: eq(insuranceHealthCards.policyId, id),
+    orderBy: (c, { asc }) => [asc(c.createdAt)],
+  });
+  return toPolicy(row, cards);
 }
 
 async function ownedPolicy(db: Db, userId: string, id: string): Promise<PolicyRow> {
@@ -63,7 +78,22 @@ export async function listPolicies(db: Db, userId: string): Promise<InsurancePol
     where: eq(insurancePolicies.userId, userId),
     orderBy: (p, { asc }) => [asc(p.archivedAt), asc(p.name)],
   });
-  return rows.map(toPolicy);
+  const cards = rows.length
+    ? await db.query.insuranceHealthCards.findMany({
+        where: inArray(
+          insuranceHealthCards.policyId,
+          rows.map((r) => r.id),
+        ),
+        orderBy: (c, { asc }) => [asc(c.createdAt)],
+      })
+    : [];
+  const byPolicy = new Map<string, HealthCardRow[]>();
+  for (const c of cards) {
+    const list = byPolicy.get(c.policyId) ?? [];
+    list.push(c);
+    byPolicy.set(c.policyId, list);
+  }
+  return rows.map((r) => toPolicy(r, byPolicy.get(r.id) ?? []));
 }
 
 export async function createPolicy(
@@ -87,20 +117,24 @@ export async function updatePolicy(
 ): Promise<InsurancePolicy> {
   await ownedPolicy(db, userId, id);
   const { archived, ...fields } = UpdateInsurancePolicySchema.parse(input);
-  const rows = await db
+  await db
     .update(insurancePolicies)
     .set({ ...fields, archivedAt: archived ? new Date() : null, updatedAt: new Date() })
-    .where(and(eq(insurancePolicies.id, id), eq(insurancePolicies.userId, userId)))
-    .returning();
-  return toPolicy(rows[0]!);
+    .where(and(eq(insurancePolicies.id, id), eq(insurancePolicies.userId, userId)));
+  return getPolicyWithCards(db, userId, id);
 }
 
 export async function deletePolicy(
   db: Db,
   userId: string,
   id: string,
-  storageDir: string,
+  storage: Storage,
 ): Promise<void> {
+  // Grab the stored file keys before the row (and its cascaded cards) vanish.
+  const cards = await db.query.insuranceHealthCards.findMany({
+    where: and(eq(insuranceHealthCards.policyId, id), eq(insuranceHealthCards.userId, userId)),
+    columns: { storedPath: true },
+  });
   // Premium transactions FK policy_id with onDelete: set null, so deleting a
   // policy detaches its premiums (they stay in the ledger) rather than failing.
   const rows = await db
@@ -108,34 +142,28 @@ export async function deletePolicy(
     .where(and(eq(insurancePolicies.id, id), eq(insurancePolicies.userId, userId)))
     .returning({ id: insurancePolicies.id, documentPath: insurancePolicies.documentPath });
   if (rows.length === 0) throw new HttpError(404, "Policy not found");
-  // Best-effort cleanup of the uploaded document file.
-  if (rows[0]!.documentPath) await unlink(join(storageDir, rows[0]!.documentPath)).catch(() => {});
+  // Best-effort cleanup of the uploaded files (document + health cards).
+  const keys = [rows[0]!.documentPath, ...cards.map((c) => c.storedPath)].filter(
+    (k): k is string => !!k,
+  );
+  await Promise.all(keys.map((k) => storage.delete(k).catch(() => {})));
 }
 
 // ---------- Policy document (single uploaded file per policy) ----------
 
-/** Upload (or replace) the policy's document. Reuses the attachment storage. */
+/** Upload (or replace) the policy's document. */
 export async function savePolicyDocument(
   db: Db,
-  storageDir: string,
+  storage: Storage,
   userId: string,
   policyId: string,
   file: { fileName: string; mimeType: string; data: Buffer },
 ): Promise<InsurancePolicy> {
   const policy = await ownedPolicy(db, userId, policyId);
-  if (!ALLOWED_MIME.has(file.mimeType)) {
-    throw new HttpError(415, `Unsupported file type ${file.mimeType} — allowed: images, PDF`);
-  }
-  if (file.data.byteLength > MAX_ATTACHMENT_BYTES) {
-    throw new HttpError(413, "File exceeds the 10 MB limit");
-  }
-  const hash = createHash("sha256").update(file.data).digest("hex").slice(0, 8);
-  const storedPath = join(hash.slice(0, 2), `${randomUUID()}-${hash}`);
-  await mkdir(join(storageDir, hash.slice(0, 2)), { recursive: true });
-  await writeFile(join(storageDir, storedPath), file.data);
-  // Drop the previous file (upload replaces).
-  if (policy.documentPath) await unlink(join(storageDir, policy.documentPath)).catch(() => {});
-  const rows = await db
+  assertUploadable(file);
+  const storedPath = await storage.put(file.data, file.mimeType);
+  if (policy.documentPath) await storage.delete(policy.documentPath).catch(() => {}); // replace
+  await db
     .update(insurancePolicies)
     .set({
       documentPath: storedPath,
@@ -144,20 +172,19 @@ export async function savePolicyDocument(
       documentSizeBytes: file.data.byteLength,
       updatedAt: new Date(),
     })
-    .where(and(eq(insurancePolicies.id, policyId), eq(insurancePolicies.userId, userId)))
-    .returning();
-  return toPolicy(rows[0]!);
+    .where(and(eq(insurancePolicies.id, policyId), eq(insurancePolicies.userId, userId)));
+  return getPolicyWithCards(db, userId, policyId);
 }
 
 export async function readPolicyDocument(
   db: Db,
-  storageDir: string,
+  storage: Storage,
   userId: string,
   policyId: string,
 ): Promise<{ fileName: string; mimeType: string; data: Buffer }> {
   const policy = await ownedPolicy(db, userId, policyId);
   if (!policy.documentPath) throw new HttpError(404, "No document uploaded");
-  const data = await readFile(join(storageDir, policy.documentPath));
+  const data = await storage.get(policy.documentPath);
   return {
     fileName: policy.documentName ?? "policy",
     mimeType: policy.documentMime ?? "application/octet-stream",
@@ -167,13 +194,13 @@ export async function readPolicyDocument(
 
 export async function deletePolicyDocument(
   db: Db,
-  storageDir: string,
+  storage: Storage,
   userId: string,
   policyId: string,
 ): Promise<InsurancePolicy> {
   const policy = await ownedPolicy(db, userId, policyId);
-  if (policy.documentPath) await unlink(join(storageDir, policy.documentPath)).catch(() => {});
-  const rows = await db
+  if (policy.documentPath) await storage.delete(policy.documentPath).catch(() => {});
+  await db
     .update(insurancePolicies)
     .set({
       documentPath: null,
@@ -182,9 +209,70 @@ export async function deletePolicyDocument(
       documentSizeBytes: null,
       updatedAt: new Date(),
     })
-    .where(and(eq(insurancePolicies.id, policyId), eq(insurancePolicies.userId, userId)))
-    .returning();
-  return toPolicy(rows[0]!);
+    .where(and(eq(insurancePolicies.id, policyId), eq(insurancePolicies.userId, userId)));
+  return getPolicyWithCards(db, userId, policyId);
+}
+
+// ---------- Health cards (multiple uploaded files per policy) ----------
+
+export async function addHealthCard(
+  db: Db,
+  storage: Storage,
+  userId: string,
+  policyId: string,
+  file: { fileName: string; mimeType: string; data: Buffer },
+  label: string,
+): Promise<InsurancePolicy> {
+  await ownedPolicy(db, userId, policyId);
+  assertUploadable(file);
+  const storedPath = await storage.put(file.data, file.mimeType);
+  await db.insert(insuranceHealthCards).values({
+    policyId,
+    userId,
+    label: label.trim().slice(0, 120),
+    fileName: file.fileName,
+    mimeType: file.mimeType,
+    sizeBytes: file.data.byteLength,
+    storedPath,
+  });
+  return getPolicyWithCards(db, userId, policyId);
+}
+
+export async function readHealthCard(
+  db: Db,
+  storage: Storage,
+  userId: string,
+  cardId: string,
+): Promise<{ fileName: string; mimeType: string; data: Buffer }> {
+  const card = await db.query.insuranceHealthCards.findFirst({
+    where: and(eq(insuranceHealthCards.id, cardId), eq(insuranceHealthCards.userId, userId)),
+  });
+  if (!card) throw new HttpError(404, "Health card not found");
+  const data = await storage.get(card.storedPath);
+  return { fileName: card.fileName, mimeType: card.mimeType, data };
+}
+
+export async function deleteHealthCard(
+  db: Db,
+  storage: Storage,
+  userId: string,
+  policyId: string,
+  cardId: string,
+): Promise<InsurancePolicy> {
+  await ownedPolicy(db, userId, policyId);
+  const rows = await db
+    .delete(insuranceHealthCards)
+    .where(
+      and(
+        eq(insuranceHealthCards.id, cardId),
+        eq(insuranceHealthCards.policyId, policyId),
+        eq(insuranceHealthCards.userId, userId),
+      ),
+    )
+    .returning({ storedPath: insuranceHealthCards.storedPath });
+  if (rows.length === 0) throw new HttpError(404, "Health card not found");
+  await storage.delete(rows[0]!.storedPath).catch(() => {});
+  return getPolicyWithCards(db, userId, policyId);
 }
 
 /** Every premium logged against a policy, newest first, with the total paid. */

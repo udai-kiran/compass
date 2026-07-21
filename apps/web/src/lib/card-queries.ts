@@ -3,10 +3,13 @@ import { z } from "zod";
 import {
   CardActivitySchema,
   CardDetailsSchema,
-  CardSummarySchema,
+  CardHolderSummarySchema,
+  CardIssuerSettingsSchema,
+  CardStatementSchema,
   RewardEntrySchema,
   type CreateRewardEntry,
   type UpsertCardDetails,
+  type UpsertCardIssuerSettings,
 } from "@compass/shared";
 import { apiGet, apiPost } from "./api.ts";
 
@@ -22,10 +25,11 @@ async function send<T>(method: string, path: string, schema: z.ZodType<T>, body?
   return schema.parse(await res.json());
 }
 
-export function useCards() {
+/** Credit cards grouped under their bank/issuer holder (combined limit + utilization). */
+export function useCardHolders() {
   return useQuery({
     queryKey: ["cards"],
-    queryFn: () => apiGet("/api/cards", z.array(CardSummarySchema)),
+    queryFn: () => apiGet("/api/cards", z.array(CardHolderSummarySchema)),
   });
 }
 
@@ -46,6 +50,16 @@ export function useCardDetailsMutation() {
   });
 }
 
+/** Save the settings shared across a bank's cards (combined limit, alert, mobile, password). */
+export function useIssuerSettingsMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: UpsertCardIssuerSettings) =>
+      send("PUT", "/api/card-issuers/settings", CardIssuerSettingsSchema, body),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["cards"] }),
+  });
+}
+
 /** Set ("" to clear) just the statement-PDF password, without touching cycle/limit. */
 export function useStatementPasswordMutation() {
   const qc = useQueryClient();
@@ -59,6 +73,38 @@ export function useStatementPasswordMutation() {
       ),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["cards"] }),
   });
+}
+
+/** Statement PDFs/images uploaded for a card. */
+export function useCardStatements(accountId: string | null) {
+  return useQuery({
+    queryKey: ["card-statements", accountId],
+    queryFn: () => apiGet(`/api/cards/${accountId!}/statements`, z.array(CardStatementSchema)),
+    enabled: accountId !== null,
+  });
+}
+
+export function useStatementMutations(accountId: string) {
+  const qc = useQueryClient();
+  const invalidate = () => void qc.invalidateQueries({ queryKey: ["card-statements", accountId] });
+  const upload = useMutation({
+    mutationFn: async ({ file, period }: { file: File; period: string }) => {
+      const form = new FormData();
+      form.append("file", file);
+      const url = period
+        ? `/api/cards/${accountId}/statements?period=${period}`
+        : `/api/cards/${accountId}/statements`;
+      const res = await fetch(url, { method: "POST", body: form });
+      if (!res.ok) throw new Error(((await res.json()) as { message?: string }).message ?? "Upload failed");
+      return CardStatementSchema.parse(await res.json());
+    },
+    onSuccess: invalidate,
+  });
+  const remove = useMutation({
+    mutationFn: (id: string) => send("DELETE", `/api/cards/${accountId}/statements/${id}`, OkSchema),
+    onSuccess: invalidate,
+  });
+  return { upload, remove };
 }
 
 export function useRewards(accountId: string | null) {

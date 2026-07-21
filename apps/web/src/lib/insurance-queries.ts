@@ -62,7 +62,35 @@ export function usePolicyMutations() {
     onSuccess: invalidate,
   });
 
-  return { create, update, remove, uploadDocument, removeDocument };
+  const uploadHealthCard = useMutation({
+    mutationFn: async ({ id, file, label }: { id: string; file: File; label: string }) => {
+      const form = new FormData();
+      form.append("file", file);
+      const url = `/api/insurance/policies/${id}/health-cards?label=${encodeURIComponent(label)}`;
+      const res = await fetch(url, { method: "POST", body: form });
+      if (!res.ok) {
+        throw new Error(((await res.json()) as { message?: string }).message ?? "Upload failed");
+      }
+      return InsurancePolicySchema.parse(await res.json());
+    },
+    onSuccess: invalidate,
+  });
+
+  const removeHealthCard = useMutation({
+    mutationFn: ({ id, cardId }: { id: string; cardId: string }) =>
+      apiDelete(`/api/insurance/policies/${id}/health-cards/${cardId}`, InsurancePolicySchema),
+    onSuccess: invalidate,
+  });
+
+  return {
+    create,
+    update,
+    remove,
+    uploadDocument,
+    removeDocument,
+    uploadHealthCard,
+    removeHealthCard,
+  };
 }
 
 export function usePolicyPremiums(policyId: string, enabled: boolean) {

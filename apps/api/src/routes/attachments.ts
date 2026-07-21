@@ -27,7 +27,7 @@ export async function attachmentRoutes(app: FastifyInstance) {
     const file = await req.file({ limits: { fileSize: MAX_ATTACHMENT_BYTES, files: 1 } });
     if (!file) throw new HttpError(400, "Expected a multipart file field");
     const data = await file.toBuffer();
-    const attachment = await saveAttachment(app.db, app.config.STORAGE_DIR, req.session!.userId, id, {
+    const attachment = await saveAttachment(app.db, app.storage, req.session!.userId, id, {
       fileName: file.filename,
       mimeType: file.mimetype,
       data,
@@ -39,7 +39,7 @@ export async function attachmentRoutes(app: FastifyInstance) {
     const { id } = IdParams.parse(req.params);
     const { meta, data } = await readAttachment(
       app.db,
-      app.config.STORAGE_DIR,
+      app.storage,
       req.session!.userId,
       id,
     );
@@ -53,7 +53,7 @@ export async function attachmentRoutes(app: FastifyInstance) {
     "/api/attachments/:id",
     { schema: { params: IdParams, response: { 200: z.object({ ok: z.boolean() }) } } },
     async (req) => {
-      await deleteAttachment(app.db, app.config.STORAGE_DIR, req.session!.userId, req.params.id);
+      await deleteAttachment(app.db, app.storage, req.session!.userId, req.params.id);
       return { ok: true };
     },
   );

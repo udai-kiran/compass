@@ -232,6 +232,27 @@
       "when": 1784619936056,
       "tag": "0032_polite_scrambler",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1784621505719,
+      "tag": "0033_loose_cargill",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1784626394416,
+      "tag": "0034_early_bug",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1784627247471,
+      "tag": "0035_parallel_rattler",
+      "breakpoints": true
     }
   ]
 }

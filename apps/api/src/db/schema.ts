@@ -9,6 +9,7 @@ import {
   jsonb,
   pgEnum,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   uniqueIndex,
@@ -590,7 +591,9 @@ export const cardNetwork = pgEnum("card_network", [
 
 /**
  * Issuer and last-4 live on `accounts` (institution/accountLast4) — every
- * account has them. Only genuinely card-specific fields belong here.
+ * account has them. Only genuinely card-specific fields belong here; anything
+ * shared across a bank's cards (limit, statement password, mobile, alerts)
+ * lives on `card_issuer_settings`, keyed by the account's institution.
  */
 export const cardDetails = pgTable("card_details", {
   accountId: uuid("account_id")
@@ -602,31 +605,83 @@ export const cardDetails = pgTable("card_details", {
   network: cardNetwork("network"),
   /** product name, e.g. "Regalia Gold" */
   productName: text("product_name").notNull().default(""),
-  /**
-   * Registered mobile (10 digits, no country code) for building the card's
-   * bill-payment UPI VPA — e.g. Axis `CC.91<mobile><last4>@axisbank`. Empty when
-   * unknown or the issuer has no VPA scheme.
-   */
-  billMobile: text("bill_mobile").notNull().default(""),
-  /**
-   * Password to open this card's statement PDFs, encrypted at rest (secret-box).
-   * "" when unset. Never returned to the client — the API exposes only whether
-   * one is stored (see CardDetails.hasStatementPassword).
-   */
-  statementPasswordEnc: text("statement_password_enc").notNull().default(""),
   /** statement close day of month (1–28) */
   cycleDay: integer("cycle_day").notNull().default(1),
   /** payment due day of month (1–28); first occurrence after the close */
   dueDay: integer("due_day").notNull().default(15),
-  creditLimitPaise: bigint("credit_limit_paise", { mode: "number" }).notNull().default(0),
-  /** alert when utilization crosses this percentage; null disables */
-  utilizationAlertPct: integer("utilization_alert_pct").default(30),
-  remindDays: integer("remind_days").notNull().default(3),
   /** reward points earned per ₹100 spent (0 = no program) */
   earnRatePer100: integer("earn_rate_per_100").notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * Settings shared across every card of one bank/issuer. In India an issuer
+ * typically gives a single combined credit limit spanning all your cards with
+ * them, and the statement password / registered mobile are the same across
+ * those cards — so these live at the issuer level, keyed by (user, institution),
+ * not per card. The `institution` matches `accounts.institution`; cards with no
+ * institution set have no issuer settings (each is its own "unassigned" holder).
+ */
+export const cardIssuerSettings = pgTable(
+  "card_issuer_settings",
+  {
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    /** the group key; matches accounts.institution exactly */
+    institution: text("institution").notNull(),
+    /** combined credit limit shared across all this bank's cards */
+    creditLimitPaise: bigint("credit_limit_paise", { mode: "number" }).notNull().default(0),
+    /** alert when combined utilization crosses this percentage; null disables */
+    utilizationAlertPct: integer("utilization_alert_pct").default(30),
+    /** days before a card's due date to send the payment reminder */
+    remindDays: integer("remind_days").notNull().default(3),
+    /**
+     * Registered mobile (10 digits, no country code) for building the bill-payment
+     * UPI VPA — e.g. Axis `CC.91<mobile><last4>@axisbank`. Empty when unknown or
+     * the issuer has no VPA scheme.
+     */
+    billMobile: text("bill_mobile").notNull().default(""),
+    /**
+     * Password to open this bank's statement PDFs, encrypted at rest (secret-box).
+     * "" when unset. Never returned to the client — the API exposes only whether
+     * one is stored (see CardIssuerSettings.hasStatementPassword).
+     */
+    statementPasswordEnc: text("statement_password_enc").notNull().default(""),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.institution] })],
+);
+
+/**
+ * Statement PDFs (or images) a user uploads for a credit card, stored in object
+ * storage (MinIO) with only the metadata row here. Kept per card — the file is
+ * shown on that card's detail page. `period` tags the statement's close/month so
+ * they sort meaningfully; null when the user didn't say. Mirrors the attachment /
+ * health-card storage pattern (opaque storedPath key, cascade on account delete).
+ */
+export const cardStatements = pgTable(
+  "card_statements",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    /** the statement's close/period date; null when unspecified */
+    period: date("period"),
+    fileName: text("file_name").notNull(),
+    mimeType: text("mime_type").notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    storedPath: text("stored_path").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("card_statements_account_idx").on(t.accountId, t.period)],
+);
 
 /**
  * Extra detail for `ppf`/`epf` accounts. Mirrors the card_details pattern: a
@@ -790,6 +845,32 @@ export const insurancePolicies = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("insurance_policies_user_idx").on(t.userId)],
+);
+
+/**
+ * Health cards for a policy — a family-floater has one per covered member, so a
+ * policy can have several. Files go through the storage layer like attachments;
+ * each card optionally names the member it belongs to.
+ */
+export const insuranceHealthCards = pgTable(
+  "insurance_health_cards",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    policyId: uuid("policy_id")
+      .notNull()
+      .references(() => insurancePolicies.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    /** which member this card is for, e.g. "Spouse"; "" when unlabeled */
+    label: text("label").notNull().default(""),
+    fileName: text("file_name").notNull(),
+    mimeType: text("mime_type").notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    storedPath: text("stored_path").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("insurance_health_cards_policy_idx").on(t.policyId)],
 );
 
 export const rewardEntries = pgTable(
