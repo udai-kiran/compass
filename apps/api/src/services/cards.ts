@@ -1,5 +1,7 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, gt, isNull, lte, sql } from "drizzle-orm";
 import type {
+  CardActivity,
+  CardActivityTxn,
   CardDetails,
   CardSummary,
   CreateRewardEntry,
@@ -8,7 +10,7 @@ import type {
 } from "@compass/shared";
 import { formatINR, UpsertCardDetailsSchema } from "@compass/shared";
 import type { Db } from "../db/index.ts";
-import { accounts, alertLedger, cardDetails, rewardEntries } from "../db/schema.ts";
+import { accounts, alertLedger, cardDetails, rewardEntries, transactions } from "../db/schema.ts";
 import { HttpError } from "../lib/errors.ts";
 import { decryptSecret, encryptSecret } from "../lib/secret-box.ts";
 import { createNotification } from "./notifications.ts";
@@ -224,6 +226,94 @@ export async function listCards(db: Db, userId: string, today?: string): Promise
     });
   }
   return out;
+}
+
+/** Days-shifted ISO date (e.g. 45 days before `iso`). */
+function shiftDays(iso: string, days: number): string {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * A card's CRED-style activity: the last closed statement's amount due with its
+ * line items, and the spends since the close that haven't been billed yet. When
+ * the card has no cycle configured there's no statement window — the last ~45
+ * days show as recent spends and the whole owed balance as "due".
+ */
+export async function getCardActivity(
+  db: Db,
+  userId: string,
+  accountId: string,
+  today?: string,
+): Promise<CardActivity> {
+  const acc = await ownedCardAccount(db, userId, accountId);
+  const ref = today ?? new Date().toISOString().slice(0, 10);
+  const d = await db.query.cardDetails.findFirst({
+    where: and(eq(cardDetails.accountId, accountId), eq(cardDetails.userId, userId)),
+  });
+
+  const lastClose = d ? lastOccurrence(ref, d.cycleDay) : null;
+  const prevClose = d && lastClose ? lastOccurrence(dayBefore(lastClose), d.cycleDay) : null;
+  const dueDate = d && lastClose ? nextOccurrence(lastClose, d.dueDay) : null;
+  const listFrom = prevClose ?? shiftDays(ref, -45);
+
+  // Headline balances: owed now, and owed as of the last statement close.
+  const sums = await db.execute(sql`
+    select
+      coalesce(sum(amount_paise), 0)::bigint as total,
+      coalesce(sum(amount_paise) filter (where date <= ${lastClose ?? ref}), 0)::bigint as at_close
+    from transactions
+    where account_id = ${accountId} and user_id = ${userId} and deleted_at is null and date <= ${ref}
+  `);
+  const agg = sums.rows[0] as { total: string; at_close: string };
+  const balancePaise = acc.openingBalancePaise + Number(agg.total);
+  const owedAtClose = -(acc.openingBalancePaise + Number(agg.at_close));
+  const totalDuePaise = Math.max(0, lastClose ? owedAtClose : -balancePaise);
+
+  const rows = await db.query.transactions.findMany({
+    where: and(
+      eq(transactions.accountId, accountId),
+      eq(transactions.userId, userId),
+      isNull(transactions.deletedAt),
+      gt(transactions.date, listFrom),
+      lte(transactions.date, ref),
+    ),
+    orderBy: [desc(transactions.date), desc(transactions.id)],
+    columns: { id: true, date: true, merchant: true, amountPaise: true, categoryId: true },
+  });
+  const toTxn = (t: (typeof rows)[number]): CardActivityTxn => ({
+    id: t.id,
+    date: t.date,
+    merchant: t.merchant,
+    amountPaise: t.amountPaise,
+    categoryId: t.categoryId,
+  });
+  // Split by the statement close: on/before → billed, after → unbilled.
+  const billed =
+    lastClose && prevClose
+      ? rows.filter((t) => t.date > prevClose && t.date <= lastClose).map(toTxn)
+      : [];
+  const unbilled = rows.filter((t) => (lastClose ? t.date > lastClose : true)).map(toTxn);
+  const unbilledSpendPaise = unbilled.reduce(
+    (s, t) => s + (t.amountPaise < 0 ? -t.amountPaise : 0),
+    0,
+  );
+
+  return {
+    accountId: acc.id,
+    name: acc.name,
+    bankName: acc.institution,
+    last4: acc.accountLast4,
+    statementStart: prevClose,
+    statementEnd: lastClose,
+    dueDate,
+    totalDuePaise,
+    unbilledSpendPaise,
+    balancePaise,
+    billed,
+    unbilled,
+  };
 }
 
 /** Daily job: due-date reminders for every configured card, once per due date. */

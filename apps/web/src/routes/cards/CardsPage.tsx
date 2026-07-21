@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { Link } from "react-router";
 import {
   CardNetworkSchema,
   formatINR,
@@ -86,7 +87,11 @@ function CardRow({ card }: { card: CardSummary }) {
     <section className="rounded-lg border border-slate-200 bg-white">
       <div className="flex items-start justify-between gap-4 border-b border-slate-100 p-4">
         <div className="min-w-0">
-          <h2 className="truncate text-base font-semibold text-slate-800">{card.name}</h2>
+          <h2 className="truncate text-base font-semibold">
+            <Link to={`/cards/${card.accountId}`} className="text-slate-800 hover:underline">
+              {card.name}
+            </Link>
+          </h2>
           {(card.bankName || card.details?.network || card.details?.productName) && (
             <p className="mt-0.5 flex items-center gap-1.5 text-xs text-slate-500">
               <InstitutionIcon institution={card.bankName} />
@@ -126,7 +131,7 @@ function CardRow({ card }: { card: CardSummary }) {
 
       {card.details && (
         <div className="grid grid-cols-2 gap-4 p-4 sm:grid-cols-4">
-          <Stat label="Amount due" value={formatINR(card.amountDuePaise)} />
+          <Stat label="Total due" value={formatINR(card.amountDuePaise)} />
           <Stat label="Due date" value={card.dueDate ?? "—"} />
           <Stat
             label="Statement"
@@ -136,7 +141,7 @@ function CardRow({ card }: { card: CardSummary }) {
                 : "—"
             }
           />
-          <Stat label="Spend this cycle" value={formatINR(card.currentSpendPaise)} />
+          <Stat label="Recent spends" value={formatINR(card.currentSpendPaise)} />
           {card.utilizationPct !== null && (
             <div className="col-span-2 sm:col-span-4">
               <div className="mb-1 flex justify-between text-xs text-slate-500">

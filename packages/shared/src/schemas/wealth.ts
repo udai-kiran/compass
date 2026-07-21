@@ -94,6 +94,42 @@ export const CardSummarySchema = z.object({
 });
 export type CardSummary = z.infer<typeof CardSummarySchema>;
 
+/** One line item in a card's activity view. */
+export const CardActivityTxnSchema = z.object({
+  id: z.uuid(),
+  date: z.iso.date(),
+  merchant: z.string(),
+  /** signed like the ledger: a spend is negative, a payment/refund positive */
+  amountPaise: z.number().int(),
+  categoryId: z.uuid().nullable(),
+});
+export type CardActivityTxn = z.infer<typeof CardActivityTxnSchema>;
+
+/**
+ * A card's CRED-style breakdown: what's due for the last closed statement, and
+ * the spends since then that haven't been billed yet — each with its line items.
+ */
+export const CardActivitySchema = z.object({
+  accountId: z.uuid(),
+  name: z.string(),
+  bankName: z.string().nullable(),
+  last4: z.string().nullable(),
+  statementStart: z.iso.date().nullable(),
+  statementEnd: z.iso.date().nullable(),
+  dueDate: z.iso.date().nullable(),
+  /** total amount due for the last closed statement (carried balance included) */
+  totalDuePaise: z.number().int(),
+  /** spends since the statement closed — not yet billed */
+  unbilledSpendPaise: z.number().int(),
+  /** current signed balance (negative = owed) */
+  balancePaise: z.number().int(),
+  /** transactions in the last closed statement period */
+  billed: z.array(CardActivityTxnSchema),
+  /** transactions since the statement closed */
+  unbilled: z.array(CardActivityTxnSchema),
+});
+export type CardActivity = z.infer<typeof CardActivitySchema>;
+
 export const RewardEntrySchema = z.object({
   id: z.uuid(),
   accountId: z.uuid(),
