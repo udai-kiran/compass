@@ -211,6 +211,13 @@
       "when": 1784559764267,
       "tag": "0029_simple_firebrand",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1784613418256,
+      "tag": "0030_strong_diamondback",
+      "breakpoints": true
     }
   ]
 }

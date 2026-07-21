@@ -46,11 +46,12 @@ export function createOpenAiCompatProvider(config: OpenAiCompatConfig): AiProvid
 
   async function call(
     body: Record<string, unknown>,
-    opts: { timeoutMs?: number } = {},
+    opts: { timeoutMs?: number; retries?: number } = {},
   ): Promise<OpenAiResponse> {
     return (await postJson(url, { model: config.model, ...body }, {
       headers,
       timeoutMs: opts.timeoutMs,
+      retries: opts.retries,
     })) as OpenAiResponse;
   }
 
@@ -110,7 +111,7 @@ export function createOpenAiCompatProvider(config: OpenAiCompatConfig): AiProvid
               }))
             : undefined,
         },
-        { timeoutMs: request.timeoutMs },
+        { timeoutMs: request.timeoutMs, retries: request.retries },
       );
       const msg = messageOf(res);
       const toolCalls: ToolCall[] = (msg.tool_calls ?? [])

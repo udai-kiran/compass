@@ -6,7 +6,9 @@ export type StatementTransaction = {
   notes: string;
 };
 
-export type ExistingTransaction = StatementTransaction;
+/** An existing ledger transaction, plus its source so we never mutate a
+ *  hand-entered (or recurring) row — only previously-imported ones. */
+export type ExistingTransaction = StatementTransaction & { source: string };
 
 export type Reconciliation =
   | { action: "matched"; row: StatementTransaction; transactionId: string }
@@ -24,9 +26,11 @@ function dayNumber(value: string): number {
 
 /**
  * Reconcile statement rows against active transactions from the same card.
- * Exact rows are consumed one-for-one. A mismatch is updated only when there
- * is exactly one unclaimed same-direction, same-merchant candidate within
- * three days; ambiguity is never guessed.
+ * An exact row matches any existing transaction (so a hand-entered one isn't
+ * duplicated) and is consumed one-for-one. A near-mismatch is *updated* only
+ * when there is exactly one unclaimed same-direction, same-merchant candidate
+ * within three days AND that candidate was itself imported — hand-entered or
+ * recurring rows are never mutated. Ambiguity is never guessed.
  */
 export function reconcileStatementTransactions(
   rows: StatementTransaction[],
@@ -48,6 +52,8 @@ export function reconcileStatementTransactions(
 
     const nearby = existing.filter((candidate) => {
       if (claimed.has(candidate.id)) return false;
+      // Only ever correct a previously-imported row; never touch manual/recurring.
+      if (candidate.source !== "import") return false;
       if (Math.sign(candidate.amountPaise) !== Math.sign(row.amountPaise)) return false;
       const sameMerchant = merchantKey(candidate.merchant) === merchantKey(row.merchant);
       const nearbyMerchant =

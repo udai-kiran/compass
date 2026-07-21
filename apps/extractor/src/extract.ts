@@ -293,8 +293,12 @@ export async function runExtraction(
 // Credit-card statement extraction (the PDF's text, once decrypted)
 // ---------------------------------------------------------------------------
 
-/** Statements can run long; cap the text so a big one can't blow the prompt. */
-const MAX_STATEMENT_CHARS = 24_000;
+/**
+ * Cap the statement text fed to the model. Sized to hold a long multi-page
+ * statement's transaction section; the caller warns if the real text exceeds it
+ * (some transactions could then be missing).
+ */
+export const MAX_STATEMENT_CHARS = 60_000;
 
 const STATEMENT_SYSTEM = [
   "You extract EVERY transaction from the text of a CREDIT-CARD STATEMENT.",
@@ -309,7 +313,7 @@ const STATEMENT_SYSTEM = [
   "A transaction line looks like: DATE  DESCRIPTION  AMOUNT  <C|D>.",
   'direction: a "D" (debit) is a purchase/spend on the card → "debit"; a "C" (credit) is a payment received, refund, or cashback → "credit".',
   'A credit that is a BILL PAYMENT to the card — "PAYMENT RECEIVED", "BBPS"/"BPPY", autopay, a NEFT/UPI/cheque payment, "payment thank you" — is a transfer/repayment, NOT income: keep direction "credit" but set its category to "". Only a genuine refund or cashback may take an income category.',
-  "Extract every dated transaction in the statement period. Ignore summary, subtotal, interest-explanation and marketing lines that aren't dated transactions. Never invent figures. Amounts are Indian Rupees; a 2-digit year expands to 20YY.",
+  "Extract every dated transaction in the statement period. Ignore summary, subtotal, interest-explanation and marketing lines that aren't dated transactions. In particular NEVER emit balance/summary lines as transactions: Opening Balance, Previous/Closing Balance, Balance B/F or C/F, Total Amount Due, Minimum Amount Due, and any running-balance figure are NOT transactions. Never invent figures. Amounts are Indian Rupees; a 2-digit year expands to 20YY.",
 ].join("\n");
 
 /**
@@ -331,8 +335,10 @@ export async function extractStatementTxns(
     tools: [],
     maxTokens: 4096,
     // A whole statement is a big prompt; a slow reasoning model needs well over
-    // the default 30s. Give it up to 3 minutes before treating it as unavailable.
+    // the default 30s. Give it up to 3 minutes — but only one retry, so a
+    // genuinely stuck call can't occupy the worker for the full 3×.
     timeoutMs: 180_000,
+    retries: 1,
   });
   const parsed = ModelResultSchema.safeParse(extractJson(turn.text));
   if (!parsed.success) return [];

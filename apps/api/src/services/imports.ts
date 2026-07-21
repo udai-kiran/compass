@@ -562,7 +562,8 @@ export async function commitImport(
   let matchedExisting = 0;
   let updatedFromStatement = 0;
   let reconciliationConflicts = 0;
-  let skippedDuplicates = rows.filter((r) => r.duplicate).length;
+  // Non-card default (card path overrides below): duplicates the user still had checked.
+  let skippedDuplicates = rows.filter((r) => r.duplicate && r.include).length;
   const skippedErrors = rows.filter((r) => r.error !== null).length;
   let skippedExcluded = rows.length - committable.length - skippedDuplicates - skippedErrors;
   let reconciledNetPaise = committable.reduce((sum, row) => sum + row.amountPaise!, 0);
@@ -610,6 +611,7 @@ export async function commitImport(
         amountPaise: number;
         merchant: string;
         notes: string;
+        source: string;
       }> = [];
       if (statementRows.length > 0) {
         const dates = statementRows.map((row) => row.date).sort();
@@ -625,6 +627,7 @@ export async function commitImport(
             amountPaise: transactions.amountPaise,
             merchant: transactions.merchant,
             notes: transactions.notes,
+            source: transactions.source,
           })
           .from(transactions)
           .where(
@@ -639,6 +642,7 @@ export async function commitImport(
           .orderBy(transactions.date, transactions.id);
       }
 
+      const existingById = new Map(existing.map((e) => [e.id, e]));
       const plan = reconcileStatementTransactions(statementRows, existing);
       const updates = plan.filter((item) => item.action === "update");
       for (const item of updates) {
@@ -659,6 +663,14 @@ export async function commitImport(
               eq(transactions.accountId, batch.accountId),
             ),
           );
+        // Snapshot the pre-update values on the import row so rollback can restore them.
+        const before = existingById.get(item.transactionId);
+        if (before) {
+          await t
+            .update(importRows)
+            .set({ reconciledFrom: { transactionId: item.transactionId, ...before } })
+            .where(eq(importRows.id, item.row.id));
+        }
       }
       const updatedIds = updates.map((item) => item.transactionId);
       if (updatedIds.length > 0) {
@@ -753,6 +765,21 @@ export async function rollbackImport(
     .where(and(eq(importRows.importId, importId), sql`${importRows.transactionId} is not null`));
   const ids = rows.map((r) => r.transactionId!).filter(Boolean);
 
+  // Rows that *corrected* a pre-existing transaction: restore its snapshot.
+  type Snapshot = {
+    transactionId: string;
+    date: string;
+    amountPaise: number;
+    merchant: string;
+    notes: string;
+    source: "manual" | "import" | "recurring";
+  };
+  const reconciled = await db
+    .select({ reconciledFrom: importRows.reconciledFrom })
+    .from(importRows)
+    .where(and(eq(importRows.importId, importId), sql`${importRows.reconciledFrom} is not null`));
+  const snapshots = reconciled.map((r) => r.reconciledFrom as Snapshot);
+
   await db.transaction(async (t) => {
     for (let i = 0; i < ids.length; i += BATCH) {
       await t
@@ -761,12 +788,30 @@ export async function rollbackImport(
           and(eq(transactions.userId, userId), inArray(transactions.id, ids.slice(i, i + BATCH))),
         );
     }
+    // Put corrected transactions back exactly as they were before the import.
+    for (const s of snapshots) {
+      await t
+        .update(transactions)
+        .set({
+          date: s.date,
+          amountPaise: s.amountPaise,
+          merchant: s.merchant,
+          notes: s.notes,
+          source: s.source,
+          updatedAt: new Date(),
+        })
+        .where(and(eq(transactions.id, s.transactionId), eq(transactions.userId, userId)));
+    }
     await t
       .update(importRows)
-      .set({ transactionId: null })
+      .set({ transactionId: null, reconciledFrom: null })
       .where(eq(importRows.importId, importId));
     await t.update(imports).set({ status: "rolled_back" }).where(eq(imports.id, importId));
   });
+
+  // Rebuild auto transfer links: restored rows may re-form pairs, and the ones
+  // dropped during reconciliation are gone. Manual links were never touched.
+  if (snapshots.length > 0) await autoLinkTransfers(db, userId);
 
   return { removed: ids.length };
 }
