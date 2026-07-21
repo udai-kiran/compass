@@ -225,6 +225,13 @@
       "when": 1784616444431,
       "tag": "0031_mixed_mother_askani",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1784619936056,
+      "tag": "0032_polite_scrambler",
+      "breakpoints": true
     }
   ]
 }

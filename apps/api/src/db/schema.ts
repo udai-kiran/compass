@@ -774,6 +774,16 @@ export const insurancePolicies = pgTable(
     /** endowment/money-back maturity; null for pure term, health, vehicle */
     maturityDate: date("maturity_date"),
     nominee: text("nominee").notNull().default(""),
+    /** people covered by the policy — e.g. a family-floater's members. */
+    coveredMembers: text("covered_members")
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    /** uploaded policy document (single file, stored like an attachment); null when none. */
+    documentPath: text("document_path"),
+    documentName: text("document_name"),
+    documentMime: text("document_mime"),
+    documentSizeBytes: integer("document_size_bytes"),
     notes: text("notes").notNull().default(""),
     archivedAt: timestamp("archived_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

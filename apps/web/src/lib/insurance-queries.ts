@@ -40,7 +40,29 @@ export function usePolicyMutations() {
     onSuccess: invalidate,
   });
 
-  return { create, update, remove };
+  const uploadDocument = useMutation({
+    mutationFn: async ({ id, file }: { id: string; file: File }) => {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch(`/api/insurance/policies/${id}/document`, {
+        method: "POST",
+        body: form,
+      });
+      if (!res.ok) {
+        throw new Error(((await res.json()) as { message?: string }).message ?? "Upload failed");
+      }
+      return InsurancePolicySchema.parse(await res.json());
+    },
+    onSuccess: invalidate,
+  });
+
+  const removeDocument = useMutation({
+    mutationFn: (id: string) =>
+      apiDelete(`/api/insurance/policies/${id}/document`, InsurancePolicySchema),
+    onSuccess: invalidate,
+  });
+
+  return { create, update, remove, uploadDocument, removeDocument };
 }
 
 export function usePolicyPremiums(policyId: string, enabled: boolean) {
