@@ -63,6 +63,20 @@ function dayBefore(iso: string): string {
   return d.toISOString().slice(0, 10);
 }
 
+/** Days after a cycle closes before the issuer actually generates that bill. */
+const STATEMENT_GEN_LAG_DAYS = 4;
+
+/**
+ * Close date of the last *generated* statement as of `ref`. A cycle that closed
+ * only a day or two ago hasn't been billed yet — until it is, the last statement
+ * is still the prior cycle's, and the just-closed period's spends stay "recent".
+ */
+function lastStatementClose(ref: string, cycleDay: number): string {
+  const close = lastOccurrence(ref, cycleDay);
+  const daysSince = (Date.parse(`${ref}T00:00:00Z`) - Date.parse(`${close}T00:00:00Z`)) / 86_400_000;
+  return daysSince >= STATEMENT_GEN_LAG_DAYS ? close : lastOccurrence(dayBefore(close), cycleDay);
+}
+
 async function ownedCardAccount(db: Db, userId: string, accountId: string) {
   const acc = await db.query.accounts.findFirst({
     where: and(eq(accounts.id, accountId), eq(accounts.userId, userId)),
@@ -167,12 +181,14 @@ export async function listCards(db: Db, userId: string, today?: string): Promise
   for (const acc of cards) {
     if (acc.archivedAt) continue;
     const d = detailsByAccount.get(acc.id);
+    // The last generated statement's close (or today when the card has no cycle).
+    const stmtClose = d ? lastStatementClose(ref, d.cycleDay) : ref;
 
     const sums = await db.execute(sql`
       select
         coalesce(sum(amount_paise), 0)::bigint as total,
-        coalesce(sum(amount_paise) filter (where date <= ${d ? lastOccurrence(ref, d.cycleDay) : ref}), 0)::bigint as at_close,
-        coalesce(sum(amount_paise) filter (where amount_paise < 0 and date > ${d ? lastOccurrence(ref, d.cycleDay) : ref}), 0)::bigint as current_spend
+        coalesce(sum(amount_paise) filter (where date <= ${stmtClose}), 0)::bigint as at_close,
+        coalesce(sum(amount_paise) filter (where amount_paise < 0 and date > ${stmtClose}), 0)::bigint as current_spend
       from transactions
       where account_id = ${acc.id} and user_id = ${userId} and deleted_at is null and date <= ${ref}
     `);
@@ -203,7 +219,7 @@ export async function listCards(db: Db, userId: string, today?: string): Promise
       continue;
     }
 
-    const lastClose = lastOccurrence(ref, d.cycleDay);
+    const lastClose = stmtClose;
     const prevClose = lastOccurrence(dayBefore(lastClose), d.cycleDay);
     const owedAtClose = -(acc.openingBalancePaise + Number(row.at_close));
     out.push({
@@ -253,7 +269,7 @@ export async function getCardActivity(
     where: and(eq(cardDetails.accountId, accountId), eq(cardDetails.userId, userId)),
   });
 
-  const lastClose = d ? lastOccurrence(ref, d.cycleDay) : null;
+  const lastClose = d ? lastStatementClose(ref, d.cycleDay) : null;
   const prevClose = d && lastClose ? lastOccurrence(dayBefore(lastClose), d.cycleDay) : null;
   const dueDate = d && lastClose ? nextOccurrence(lastClose, d.dueDay) : null;
   const listFrom = prevClose ?? shiftDays(ref, -45);
