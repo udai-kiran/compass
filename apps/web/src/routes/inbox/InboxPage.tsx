@@ -8,6 +8,7 @@ const today = () => new Date().toISOString().slice(0, 10);
 
 export function InboxPage() {
   const { data: drafts, isLoading } = useInbox("pending");
+  const { data: duplicates } = useInbox("duplicate");
   const { data: accounts } = useAccounts();
   const { data: categories } = useCategories();
   const openAccounts = (accounts ?? []).filter((a) => a.archivedAt === null);
@@ -36,6 +37,60 @@ export function InboxPage() {
       <div className="space-y-3">
         {drafts ? groupDrafts(drafts, openAccounts, openCategories) : null}
       </div>
+
+      {duplicates && duplicates.length > 0 && <DuplicatesGroup rows={duplicates} />}
+    </div>
+  );
+}
+
+/**
+ * Statement lines the matcher tied to a transaction already in the ledger (from
+ * a real-time alert this cycle). Collapsed by default so they stay out of the
+ * way; "Not a duplicate" sends one back to the pending queue if the match is wrong.
+ */
+function DuplicatesGroup({ rows }: { rows: ExtractedTransaction[] }) {
+  const [open, setOpen] = useState(false);
+  const { unmatch } = useInboxMutations();
+  return (
+    <div className="mt-4 rounded-lg border border-slate-200 bg-white">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between px-4 py-3 text-left text-sm text-slate-600 hover:bg-slate-50"
+      >
+        <span>
+          <span className="font-medium text-slate-700">{rows.length}</span> already in your ledger —
+          matched from earlier alerts, hidden from review
+        </span>
+        <span className="text-slate-400">{open ? "▾" : "▸"}</span>
+      </button>
+      {open && (
+        <ul className="divide-y divide-slate-100 border-t border-slate-100">
+          {rows.map((r) => {
+            const isDebit = r.direction === "debit";
+            return (
+              <li key={r.id} className="flex items-center gap-3 px-4 py-2.5 text-sm">
+                <span className="min-w-0 flex-1 truncate text-slate-700">
+                  {r.counterparty || "Unknown"}
+                  <span className="ml-2 text-xs text-slate-400">{r.occurredAt ?? ""}</span>
+                </span>
+                <span
+                  className={`shrink-0 tabular-nums ${isDebit ? "text-rose-700" : "text-emerald-700"}`}
+                >
+                  {isDebit ? "−" : "+"}
+                  {formatINR(r.amountPaise)}
+                </span>
+                <button
+                  onClick={() => unmatch.mutate(r.id, { onSuccess: () => toast("Moved to review") })}
+                  disabled={unmatch.isPending}
+                  className="shrink-0 text-xs text-slate-500 hover:text-slate-800 hover:underline disabled:opacity-40"
+                >
+                  Not a duplicate
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </div>
   );
 }

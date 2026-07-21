@@ -267,6 +267,13 @@
       "when": 1784645516047,
       "tag": "0037_chemical_ozymandias",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1784648364130,
+      "tag": "0038_small_sleeper",
+      "breakpoints": true
     }
   ]
 }

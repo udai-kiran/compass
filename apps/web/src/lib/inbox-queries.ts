@@ -62,5 +62,11 @@ export function useInboxMutations() {
     onSuccess: invalidate,
   });
 
-  return { accept, acceptTransfer, reject };
+  // "Not a duplicate": a matched statement line goes back to the pending queue.
+  const unmatch = useMutation({
+    mutationFn: (id: string) => apiPost(`/api/inbox/${id}/unmatch`, ExtractedTransactionSchema),
+    onSuccess: invalidate,
+  });
+
+  return { accept, acceptTransfer, reject, unmatch };
 }

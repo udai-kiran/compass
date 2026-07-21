@@ -7,10 +7,14 @@ import {
   extractStatementTxns,
   matchAccount,
   matchCategory,
+  matchLinesToLedger,
+  merchantSimilarity,
   runExtraction,
   validIsoDate,
   type AccountRef,
   type CategoryRef,
+  type LedgerTxn,
+  type MatchableLine,
 } from "./extract.ts";
 import type { ParsedEmail } from "./email.ts";
 
@@ -241,4 +245,69 @@ test("extractStatementTxns: an unparseable model reply yields no rows, not a cra
     accountId: "card-1",
   });
   assert.equal(rows.length, 0);
+});
+
+// ---- statement dedupe matcher ----
+
+const line = (
+  amountPaise: number,
+  direction: "debit" | "credit",
+  occurredAt: string | null,
+  counterparty = "",
+): MatchableLine => ({ amountPaise, direction, occurredAt, counterparty });
+
+const ledgerTxn = (id: string, amountPaise: number, date: string, merchant = ""): LedgerTxn => ({
+  id,
+  amountPaise,
+  date,
+  merchant,
+});
+
+test("merchantSimilarity: exact / substring / unknown / shared-token", () => {
+  assert.equal(merchantSimilarity("Swiggy", "swiggy"), 1);
+  assert.equal(merchantSimilarity("SWIGGY LIMITED", "Swiggy"), 0.9); // substring after normalize
+  assert.equal(merchantSimilarity("", "Swiggy"), 0.5); // unknown → neutral
+  assert.ok(merchantSimilarity("Uber India", "Uber Trips") > 0); // shared token "uber"
+});
+
+test("matchLinesToLedger: exact amount + near date matches, returns the ledger id", () => {
+  const lines = [line(50000, "debit", "2026-07-10", "Swiggy")];
+  const ledger = [ledgerTxn("t1", -50000, "2026-07-11", "SWIGGY LTD")];
+  assert.deepEqual(matchLinesToLedger(lines, ledger), ["t1"]);
+});
+
+test("matchLinesToLedger: straddle — within window matches, beyond window carries forward", () => {
+  const lines = [line(50000, "debit", "2026-07-10", "Swiggy")];
+  assert.deepEqual(matchLinesToLedger(lines, [ledgerTxn("t1", -50000, "2026-07-14", "Swiggy")]), ["t1"]);
+  assert.deepEqual(matchLinesToLedger(lines, [ledgerTxn("t1", -50000, "2026-07-19", "Swiggy")]), [null]);
+});
+
+test("matchLinesToLedger: credit sign matches; a debit never matches a positive ledger row", () => {
+  assert.deepEqual(
+    matchLinesToLedger([line(20000, "credit", "2026-07-10", "Refund")], [ledgerTxn("t1", 20000, "2026-07-10", "Refund")]),
+    ["t1"],
+  );
+  assert.deepEqual(
+    matchLinesToLedger([line(20000, "debit", "2026-07-10")], [ledgerTxn("t1", 20000, "2026-07-10")]),
+    [null],
+  );
+});
+
+test("matchLinesToLedger: ambiguous same-amount/day pair is left unmatched", () => {
+  const lines = [line(30000, "debit", "2026-07-10", "Uber")];
+  const ledger = [ledgerTxn("t1", -30000, "2026-07-10", "Uber"), ledgerTxn("t2", -30000, "2026-07-10", "Uber")];
+  assert.deepEqual(matchLinesToLedger(lines, ledger), [null]); // tie → no guess
+});
+
+test("matchLinesToLedger: two same-amount lines resolve to distinct ledger rows by merchant", () => {
+  const lines = [line(30000, "debit", "2026-07-10", "Uber"), line(30000, "debit", "2026-07-10", "Swiggy")];
+  const ledger = [ledgerTxn("t1", -30000, "2026-07-10", "Swiggy"), ledgerTxn("t2", -30000, "2026-07-10", "Uber")];
+  assert.deepEqual(matchLinesToLedger(lines, ledger), ["t2", "t1"]);
+});
+
+test("matchLinesToLedger: a dateless line never matches", () => {
+  assert.deepEqual(
+    matchLinesToLedger([line(50000, "debit", null, "Swiggy")], [ledgerTxn("t1", -50000, "2026-07-10", "Swiggy")]),
+    [null],
+  );
 });

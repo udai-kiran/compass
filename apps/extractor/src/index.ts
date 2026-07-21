@@ -6,15 +6,23 @@ import {
   createPool,
   loadAccounts,
   loadAiSettings,
+  loadCardLedgerTxns,
   loadCategories,
   loadCreditCards,
   loadIngestion,
   saveResults,
   setStatus,
+  type SaveRow,
 } from "./db.ts";
 import { decryptSecret } from "./crypto.ts";
 import { parseEmail, type ParsedEmail } from "./email.ts";
-import { extractStatementTxns, MAX_STATEMENT_CHARS, runExtraction } from "./extract.ts";
+import {
+  extractStatementTxns,
+  matchLinesToLedger,
+  MAX_STATEMENT_CHARS,
+  runExtraction,
+  STATEMENT_MATCH_WINDOW_DAYS,
+} from "./extract.ts";
 import { extractPdfText } from "./pdf.ts";
 import type { CategoryRef } from "./extract.ts";
 import type { InboxRow } from "./extract.ts";
@@ -144,6 +152,43 @@ async function processStatement(
   return { status: "deferred", rows: [] };
 }
 
+function shiftIso(iso: string, days: number): string {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Flag statement lines that just re-list a spend already in the ledger (recorded
+ * from a real-time alert during the cycle): match each to a ledger transaction
+ * and mark the hits `duplicate` so they stay out of the pending review queue.
+ * Matching runs against the card's ledger over the lines' own date span padded
+ * by the posting-lag window — never the statement period — so a near-close spend
+ * that bills next cycle isn't force-matched here. Non-matches pass through as
+ * ordinary pending drafts.
+ */
+async function annotateStatementDuplicates(rows: InboxRow[], userId: string): Promise<SaveRow[]> {
+  const accountId = rows.find((r) => r.suggestedAccountId)?.suggestedAccountId ?? null;
+  const dates = rows.map((r) => r.occurredAt).filter((d): d is string => d !== null);
+  if (!accountId || dates.length === 0) return rows;
+  const from = shiftIso(dates.reduce((a, b) => (a < b ? a : b)), -STATEMENT_MATCH_WINDOW_DAYS);
+  const to = shiftIso(dates.reduce((a, b) => (a > b ? a : b)), STATEMENT_MATCH_WINDOW_DAYS);
+  const ledger = await loadCardLedgerTxns(pool, userId, accountId, from, to);
+  if (ledger.length === 0) return rows;
+  const matched = matchLinesToLedger(
+    rows.map((r) => ({
+      amountPaise: r.amountPaise,
+      direction: r.direction,
+      occurredAt: r.occurredAt,
+      counterparty: r.counterparty,
+    })),
+    ledger,
+  );
+  return rows.map((r, i) =>
+    matched[i] ? { ...r, status: "duplicate" as const, matchedTransactionId: matched[i]! } : r,
+  );
+}
+
 const worker = new Worker(
   EXTRACT_QUEUE,
   async (job) => {
@@ -174,11 +219,12 @@ const worker = new Worker(
       // A statement email is recognized here but its transactions live in the PDF;
       // process that separately, overriding the (deferred) email-body outcome.
       let status = outcome.status;
-      let rows = outcome.rows;
+      let rows: SaveRow[] = outcome.rows;
       if (outcome.classification === "card_statement") {
         const stmt = await processStatement(email, ai, ingestion.userId, { receivedDate, categories });
         status = stmt.status;
-        rows = stmt.rows;
+        // Suppress lines already in the ledger from real-time alerts this cycle.
+        rows = await annotateStatementDuplicates(stmt.rows, ingestion.userId);
       }
       const inserted = await saveResults(pool, {
         ingestion,
@@ -186,11 +232,13 @@ const worker = new Worker(
         status,
         rows,
       });
+      const duplicates = rows.filter((r) => r.status === "duplicate").length;
       log("info", "extracted", {
         ingestionId: ingestion.id,
         classification: outcome.classification,
         status,
         found: rows.length,
+        duplicates,
         inserted,
       });
     } catch (err) {

@@ -349,3 +349,115 @@ export async function extractStatementTxns(
   }
   return rows;
 }
+
+// ---------------------------------------------------------------------------
+// Statement dedupe: match statement lines to ledger transactions already
+// recorded from real-time alerts during the cycle, so the statement doesn't
+// re-book what's already there.
+//
+// Match is exact signed amount + a date window. The window matters because a
+// spend near the cycle close posts a few days later and can land on the *next*
+// statement — so we never bucket by the statement period; we compare each line
+// to the ledger by the line's own date ± window. Merchant text only breaks
+// ties. Matching is mutual-best 1↔1: a line and a ledger row pair only when
+// each is the other's single best candidate, so two same-amount spends near the
+// same day stay unmatched (left for review) rather than being mis-linked. A
+// near-close spend that isn't on this statement simply doesn't match here and
+// carries forward to the statement that does list it. Pure and testable.
+// ---------------------------------------------------------------------------
+
+/** A ledger transaction, as stored: signed paise (debit negative). */
+export interface LedgerTxn {
+  id: string;
+  amountPaise: number;
+  date: string; // YYYY-MM-DD
+  merchant: string;
+}
+
+/** A statement line to reconcile: positive magnitude + direction, as extracted. */
+export interface MatchableLine {
+  amountPaise: number;
+  direction: TxnDirection;
+  occurredAt: string | null;
+  counterparty: string;
+}
+
+/** Posting-lag window (days) either side of a line's transaction date. */
+export const STATEMENT_MATCH_WINDOW_DAYS = 4;
+
+function normalizeName(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+/** 0..1 merchant closeness; 0.5 (neutral) when either name is unknown/empty. */
+export function merchantSimilarity(a: string, b: string): number {
+  const na = normalizeName(a);
+  const nb = normalizeName(b);
+  if (!na || !nb) return 0.5;
+  if (na === nb) return 1;
+  if (na.includes(nb) || nb.includes(na)) return 0.9;
+  const ta = new Set(a.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length >= 3));
+  const tb = new Set(b.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length >= 3));
+  if (ta.size === 0 || tb.size === 0) return 0.5;
+  let shared = 0;
+  for (const t of ta) if (tb.has(t)) shared += 1;
+  const union = new Set([...ta, ...tb]).size;
+  return shared / union;
+}
+
+function daysApart(a: string, b: string): number {
+  return Math.abs(Date.parse(a) - Date.parse(b)) / 86_400_000;
+}
+
+/** The single highest-scoring candidate, or null when the top two tie (ambiguous). */
+function bestUnique<T extends { score: number }>(cands: T[]): T | null {
+  if (cands.length === 0) return null;
+  let top = cands[0]!;
+  let second: T | null = null;
+  for (let k = 1; k < cands.length; k += 1) {
+    const c = cands[k]!;
+    if (c.score > top.score) {
+      second = top;
+      top = c;
+    } else if (!second || c.score > second.score) {
+      second = c;
+    }
+  }
+  if (second && second.score === top.score) return null;
+  return top;
+}
+
+/**
+ * For each line, the id of the ledger transaction it duplicates, or null.
+ * Returned array is aligned to `lines`; each ledger txn is claimed at most once.
+ */
+export function matchLinesToLedger(
+  lines: MatchableLine[],
+  ledger: LedgerTxn[],
+  windowDays: number = STATEMENT_MATCH_WINDOW_DAYS,
+): (string | null)[] {
+  const perLine: { j: number; score: number }[][] = lines.map(() => []);
+  const perLedger = new Map<number, { i: number; score: number }[]>();
+  lines.forEach((line, i) => {
+    if (line.occurredAt === null) return;
+    const signed = line.direction === "debit" ? -line.amountPaise : line.amountPaise;
+    ledger.forEach((t, j) => {
+      if (t.amountPaise !== signed) return;
+      const dd = daysApart(line.occurredAt!, t.date);
+      if (dd > windowDays) return;
+      const dateScore = (windowDays - dd) / windowDays;
+      const score = 0.7 * merchantSimilarity(line.counterparty, t.merchant) + 0.3 * dateScore;
+      perLine[i]!.push({ j, score });
+      (perLedger.get(j) ?? perLedger.set(j, []).get(j)!).push({ i, score });
+    });
+  });
+
+  return lines.map((_, i) => {
+    const bl = bestUnique(perLine[i]!);
+    if (!bl) return null;
+    const bj = bestUnique(perLedger.get(bl.j) ?? []);
+    // Only when each side is the other's single best — otherwise leave it pending.
+    if (!bj || bj.i !== i) return null;
+    return ledger[bl.j]!.id;
+  });
+}

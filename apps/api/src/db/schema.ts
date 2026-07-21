@@ -1208,6 +1208,9 @@ export const extractedTxnStatus = pgEnum("extracted_txn_status", [
   "pending",
   "accepted",
   "rejected",
+  // A statement line the matcher tied to a transaction already in the ledger —
+  // hidden from the pending queue, kept (linked, reversible) so nothing is lost.
+  "duplicate",
 ]);
 export const txnDirection = pgEnum("txn_direction", ["debit", "credit"]);
 
@@ -1246,6 +1249,14 @@ export const extractedTransactions = pgTable(
     status: extractedTxnStatus("status").notNull().default("pending"),
     /** set once accepted into the ledger */
     transactionId: uuid("transaction_id").references(() => transactions.id, {
+      onDelete: "set null",
+    }),
+    /**
+     * The ledger transaction this draft was matched to (status `duplicate`): the
+     * statement re-listed a spend already recorded from a real-time alert. Set by
+     * the statement matcher; cleared if the reviewer says it isn't a duplicate.
+     */
+    matchedTransactionId: uuid("matched_transaction_id").references(() => transactions.id, {
       onDelete: "set null",
     }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

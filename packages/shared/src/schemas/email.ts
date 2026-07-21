@@ -70,7 +70,14 @@ export type ExtractionResult = z.infer<typeof ExtractionResultSchema>;
 
 // ---------- Persisted review-inbox row (API/UI shape) ----------
 
-export const ExtractedTxnReviewStatusSchema = z.enum(["pending", "accepted", "rejected"]);
+export const ExtractedTxnReviewStatusSchema = z.enum([
+  "pending",
+  "accepted",
+  "rejected",
+  // matched to a ledger transaction already recorded from an alert; hidden from
+  // the pending queue but kept so the reviewer can un-match it if it's wrong
+  "duplicate",
+]);
 export type ExtractedTxnReviewStatus = z.infer<typeof ExtractedTxnReviewStatusSchema>;
 
 export const ExtractedTransactionSchema = z.object({
@@ -90,6 +97,8 @@ export const ExtractedTransactionSchema = z.object({
   status: ExtractedTxnReviewStatusSchema,
   /** set once accepted into the ledger */
   transactionId: z.uuid().nullable(),
+  /** the ledger transaction this was matched to when status is `duplicate` */
+  matchedTransactionId: z.uuid().nullable(),
   /**
    * The other leg when this draft looks like one side of an account-to-account
    * transfer (a debit + a matching credit, ~same day). Computed at read time,
