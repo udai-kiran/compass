@@ -316,6 +316,12 @@ export const importRows = pgTable(
     include: boolean("include").notNull().default(true),
     error: text("error"),
     transactionId: uuid("transaction_id"),
+    /**
+     * When this row reconciled by *correcting* an existing imported transaction,
+     * the pre-update snapshot of that transaction ({ transactionId, date,
+     * amountPaise, merchant, notes, source }) — so rollback can restore it.
+     */
+    reconciledFrom: jsonb("reconciled_from"),
   },
   (t) => [
     index("import_rows_import_idx").on(t.importId),
