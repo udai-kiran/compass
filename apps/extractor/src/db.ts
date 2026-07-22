@@ -1,7 +1,13 @@
 import pg from "pg";
 import type { EmailIngestStatus } from "@compass/shared";
 import { computeStatementRewardEntries } from "./extract.ts";
-import type { AccountRef, CategoryRef, InboxRow, StatementRewards } from "./extract.ts";
+import type {
+  AccountRef,
+  CategoryRef,
+  InboxRow,
+  ReconciliationStats,
+  StatementRewards,
+} from "./extract.ts";
 
 export function createPool(connectionString: string): pg.Pool {
   return new pg.Pool({ connectionString });
@@ -275,6 +281,103 @@ export async function applyStatementRewards(
     }
     await client.query("commit");
     return entries.length;
+  } catch (err) {
+    await client.query("rollback");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/** The statement's summary numbers, as a reconciliation snapshot may store them. */
+export interface ReconciliationTotals {
+  totalDuePaise: number | null;
+  minDuePaise: number | null;
+}
+
+/**
+ * Upsert the statement reconciliation for a cycle and stamp the ledger rows it
+ * cleared. Keyed on `(account_id, period)` — NOT the ingestion — so a mailbox's
+ * duplicate statement emails, or a replay, update the one row instead of piling
+ * up. In a single transaction: upsert the snapshot + stats, clear this cycle's
+ * previous stamps (so a re-run that matches differently leaves none stale), then
+ * stamp the currently-matched ledger transactions. Returns the reconciliation id.
+ */
+export async function upsertReconciliation(
+  pool: pg.Pool,
+  args: {
+    userId: string;
+    accountId: string;
+    period: string; // "YYYY-MM"
+    statementDate: string | null;
+    ingestionId: string;
+    totals: ReconciliationTotals;
+    rewards: StatementRewards;
+    stats: ReconciliationStats;
+  },
+): Promise<string> {
+  const { totals, rewards, stats } = args;
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    const res = await client.query<{ id: string }>(
+      `insert into statement_reconciliations
+         (user_id, account_id, period, statement_date, ingestion_id,
+          total_due_paise, min_due_paise,
+          reward_opening, reward_earned, reward_redeemed, reward_closing,
+          line_count, line_debit_paise, matched_count, matched_paise, unmatched_count,
+          updated_at)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16, now())
+       on conflict (account_id, period) do update set
+         statement_date = excluded.statement_date,
+         ingestion_id = excluded.ingestion_id,
+         total_due_paise = excluded.total_due_paise,
+         min_due_paise = excluded.min_due_paise,
+         reward_opening = excluded.reward_opening,
+         reward_earned = excluded.reward_earned,
+         reward_redeemed = excluded.reward_redeemed,
+         reward_closing = excluded.reward_closing,
+         line_count = excluded.line_count,
+         line_debit_paise = excluded.line_debit_paise,
+         matched_count = excluded.matched_count,
+         matched_paise = excluded.matched_paise,
+         unmatched_count = excluded.unmatched_count,
+         updated_at = now()
+       returning id`,
+      [
+        args.userId,
+        args.accountId,
+        args.period,
+        args.statementDate,
+        args.ingestionId,
+        totals.totalDuePaise,
+        totals.minDuePaise,
+        rewards.opening,
+        rewards.earned,
+        rewards.redeemed,
+        rewards.closing,
+        stats.lineCount,
+        stats.lineDebitPaise,
+        stats.matchedCount,
+        stats.matchedPaise,
+        stats.unmatchedCount,
+      ],
+    );
+    const id = res.rows[0]!.id;
+    // Re-stamp: drop this cycle's prior stamps, then mark the current matches.
+    await client.query(
+      `update transactions set reconciled_statement_id = null where reconciled_statement_id = $1`,
+      [id],
+    );
+    if (stats.matchedTxnIds.length > 0) {
+      await client.query(
+        `update transactions set reconciled_statement_id = $1
+          where user_id = $2 and id = any($3::uuid[]) and deleted_at is null`,
+        [id, args.userId, stats.matchedTxnIds],
+      );
+    }
+    await client.query("commit");
+    return id;
   } catch (err) {
     await client.query("rollback");
     throw err;

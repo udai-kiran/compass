@@ -1,9 +1,15 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router";
-import { formatINR, type CardActivityTxn, type CardStatement } from "@compass/shared";
+import {
+  formatINR,
+  type CardActivityTxn,
+  type CardStatement,
+  type StatementReconciliation,
+} from "@compass/shared";
 import {
   useCardActivity,
   useCardStatements,
+  useReconciliations,
   useStatementMutations,
 } from "../../lib/card-queries.ts";
 import { useCategories } from "../../lib/queries.ts";
@@ -79,6 +85,7 @@ export function CardDetailPage() {
         empty="No transactions in the last statement period."
       />
 
+      <ReconciliationSection accountId={data.accountId} />
       <StatementsSection accountId={data.accountId} />
     </div>
   );
@@ -88,6 +95,91 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** "2026-07" → "Jul 2026"; passes anything unexpected through unchanged. */
+function formatPeriod(period: string): string {
+  const m = /^(\d{4})-(\d{2})$/.exec(period);
+  if (!m) return period;
+  const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, 1));
+  return Number.isNaN(d.getTime())
+    ? period
+    : d.toLocaleString("en-US", { month: "short", year: "numeric", timeZone: "UTC" });
+}
+
+/**
+ * Statement reconciliation history: what the extractor read off each cycle's
+ * statement and how much of that spend is already in the ledger from real-time
+ * alerts. Read-only — clearing happens automatically when a statement is
+ * processed. `deltaPaise` is the listed spend not yet recorded; unmatched lines
+ * are the exceptions worth a look.
+ */
+function ReconciliationSection({ accountId }: { accountId: string }) {
+  const { data: cycles } = useReconciliations(accountId);
+
+  return (
+    <section className="rounded-lg border border-slate-200 bg-white">
+      <div className="flex items-baseline justify-between border-b border-slate-100 px-4 py-2.5">
+        <div>
+          <h2 className="text-sm font-semibold text-slate-700">Reconciliation</h2>
+          <p className="text-xs text-slate-400">
+            Statement cycles matched against your ledger.
+          </p>
+        </div>
+        <span className="text-xs text-slate-400">{cycles?.length ?? 0} cycles</span>
+      </div>
+      {!cycles || cycles.length === 0 ? (
+        <p className="px-4 py-6 text-center text-sm text-slate-400">
+          No statements reconciled yet.
+        </p>
+      ) : (
+        <ul>
+          {cycles.map((c) => (
+            <ReconciliationRow key={c.id} cycle={c} />
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function ReconciliationRow({ cycle }: { cycle: StatementReconciliation }) {
+  const fullyCleared = cycle.lineCount > 0 && cycle.unmatchedCount === 0;
+  return (
+    <li className="border-b border-slate-50 px-4 py-2.5 text-sm last:border-0">
+      <div className="flex items-baseline justify-between gap-3">
+        <p className="font-medium text-slate-800">{formatPeriod(cycle.period)}</p>
+        {cycle.totalDuePaise !== null && (
+          <span className="tabular-nums text-slate-500">
+            {formatINR(cycle.totalDuePaise)} due
+          </span>
+        )}
+      </div>
+      <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
+        <span>
+          <span className="tabular-nums text-slate-700">
+            {cycle.matchedCount}/{cycle.lineCount}
+          </span>{" "}
+          cleared
+        </span>
+        {cycle.deltaPaise > 0 && (
+          <span className="text-amber-700">
+            {formatINR(cycle.deltaPaise)} not yet in ledger
+          </span>
+        )}
+        {cycle.unmatchedCount > 0 && (
+          <span className="text-slate-500">
+            {cycle.unmatchedCount} to review
+          </span>
+        )}
+        {fullyCleared && (
+          <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-emerald-700">
+            ✓ fully cleared
+          </span>
+        )}
+      </div>
+    </li>
+  );
 }
 
 function StatementsSection({ accountId }: { accountId: string }) {
@@ -214,7 +306,17 @@ function TxnSection({
               className="flex items-center justify-between gap-3 border-b border-slate-50 px-4 py-2 text-sm last:border-0"
             >
               <div className="min-w-0">
-                <p className="truncate font-medium text-slate-800">{t.merchant || "—"}</p>
+                <p className="flex items-center gap-1.5 truncate font-medium text-slate-800">
+                  <span className="truncate">{t.merchant || "—"}</span>
+                  {t.reconciledStatementId && (
+                    <span
+                      title="Cleared by a statement"
+                      className="shrink-0 rounded bg-emerald-50 px-1 py-0.5 text-[10px] font-normal text-emerald-700"
+                    >
+                      ✓ cleared
+                    </span>
+                  )}
+                </p>
                 <p className="text-xs text-slate-400">
                   {t.date}
                   {catName(t.categoryId) ? ` · ${catName(t.categoryId)}` : ""}

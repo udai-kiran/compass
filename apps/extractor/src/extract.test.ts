@@ -14,6 +14,8 @@ import {
   matchLinesToLedger,
   merchantSimilarity,
   runExtraction,
+  statementPeriodKey,
+  summarizeMatches,
   validIsoDate,
   type AccountRef,
   type CategoryRef,
@@ -419,4 +421,36 @@ test("extractStatementSummary: parses totals→paise + reward points; null on ju
   assert.equal(s?.statementDate, "2026-07-20");
   assert.deepEqual(s?.rewards, { opening: 400, earned: 250, redeemed: 100, closing: 550 });
   assert.equal(await extractStatementSummary("<statement>", fakeAi("no json here")), null);
+});
+
+test("statementPeriodKey: YYYY-MM from a valid date; null otherwise", () => {
+  assert.equal(statementPeriodKey("2026-07-20"), "2026-07");
+  assert.equal(statementPeriodKey("2026-12-01"), "2026-12");
+  assert.equal(statementPeriodKey("2026-13-40"), null); // impossible date
+  assert.equal(statementPeriodKey("2026/07/20"), null); // wrong shape
+  assert.equal(statementPeriodKey(null), null);
+});
+
+test("summarizeMatches: counts lines, sums debit magnitudes, collects matched ids", () => {
+  const stats = summarizeMatches([
+    { amountPaise: 10000, direction: "debit", status: "duplicate", matchedTransactionId: "t1" },
+    { amountPaise: 5000, direction: "debit", status: "pending" },
+    { amountPaise: 2500, direction: "credit", status: "duplicate", matchedTransactionId: "t2" },
+    { amountPaise: 900, direction: "debit" }, // no status → unmatched
+  ]);
+  assert.equal(stats.lineCount, 4);
+  assert.equal(stats.lineDebitPaise, 15900); // 10000 + 5000 + 900 (credit excluded)
+  assert.equal(stats.matchedCount, 2);
+  assert.equal(stats.matchedPaise, 12500); // 10000 + 2500
+  assert.equal(stats.unmatchedCount, 2);
+  assert.deepEqual(stats.matchedTxnIds, ["t1", "t2"]);
+});
+
+test("summarizeMatches: a duplicate without a matched id is not counted matched", () => {
+  const stats = summarizeMatches([
+    { amountPaise: 10000, direction: "debit", status: "duplicate", matchedTransactionId: null },
+  ]);
+  assert.equal(stats.matchedCount, 0);
+  assert.equal(stats.unmatchedCount, 1);
+  assert.deepEqual(stats.matchedTxnIds, []);
 });

@@ -644,3 +644,69 @@ export function matchLinesToLedger(
     return ledger[bl.j]!.id;
   });
 }
+
+// ---------------------------------------------------------------------------
+// Statement reconciliation: the per-(card, cycle) snapshot. Once the lines are
+// matched to the ledger, summarize the cycle — how many lines the statement
+// listed, how much of that spend is already cleared in the ledger, and which
+// ledger rows to stamp. Pure and testable; the worker persists the result.
+// ---------------------------------------------------------------------------
+
+/** The statement cycle key "YYYY-MM" from a date, or null when the date is unusable. */
+export function statementPeriodKey(isoDate: string | null): string | null {
+  const valid = validIsoDate(isoDate);
+  return valid ? valid.slice(0, 7) : null;
+}
+
+/** Aggregate stats over a statement's lines, plus the ledger rows it cleared. */
+export interface ReconciliationStats {
+  /** statement transaction lines extracted */
+  lineCount: number;
+  /** sum of the debit (spend) lines' magnitudes, in paise */
+  lineDebitPaise: number;
+  /** lines matched to a ledger transaction already recorded this cycle */
+  matchedCount: number;
+  /** sum of the matched lines' magnitudes, in paise */
+  matchedPaise: number;
+  /** lines with no ledger match — new drafts / exceptions to review */
+  unmatchedCount: number;
+  /** ledger transaction ids to stamp as cleared by this cycle */
+  matchedTxnIds: string[];
+}
+
+/**
+ * Fold the annotated statement rows into a reconciliation summary. A row the
+ * matcher tied to the ledger arrives as `status: "duplicate"` with a
+ * `matchedTransactionId`; everything else is an unmatched line (a new pending
+ * draft or an exception). Debit magnitudes feed the "spend listed vs cleared"
+ * delta the review view shows.
+ */
+export function summarizeMatches(
+  rows: Array<{
+    amountPaise: number;
+    direction: TxnDirection;
+    status?: "pending" | "duplicate";
+    matchedTransactionId?: string | null;
+  }>,
+): ReconciliationStats {
+  let lineDebitPaise = 0;
+  let matchedCount = 0;
+  let matchedPaise = 0;
+  const matchedTxnIds: string[] = [];
+  for (const r of rows) {
+    if (r.direction === "debit") lineDebitPaise += r.amountPaise;
+    if (r.status === "duplicate" && r.matchedTransactionId) {
+      matchedCount += 1;
+      matchedPaise += r.amountPaise;
+      matchedTxnIds.push(r.matchedTransactionId);
+    }
+  }
+  return {
+    lineCount: rows.length,
+    lineDebitPaise,
+    matchedCount,
+    matchedPaise,
+    unmatchedCount: rows.length - matchedCount,
+    matchedTxnIds,
+  };
+}
