@@ -126,6 +126,8 @@ export const BankDetailsSchema = z.object({
   ifsc: z.string(),
   branch: z.string(),
   subtype: BankAccountSubtypeSchema.nullable(),
+  /** last 4 of the linked debit card; "" when none recorded */
+  debitCardLast4: z.string(),
 });
 export type BankDetails = z.infer<typeof BankDetailsSchema>;
 
@@ -135,6 +137,9 @@ export const UpsertBankDetailsSchema = z.object({
   ifsc: z.union([IfscSchema, z.literal("")]).default(""),
   branch: z.string().max(120).default(""),
   subtype: BankAccountSubtypeSchema.nullable().default(null),
+  debitCardLast4: z
+    .union([z.string().regex(/^\d{4}$/, "must be exactly 4 digits"), z.literal("")])
+    .default(""),
 });
 /** z.input, not z.infer: IFSC is uppercased on the way through, and fields default. */
 export type UpsertBankDetails = z.input<typeof UpsertBankDetailsSchema>;

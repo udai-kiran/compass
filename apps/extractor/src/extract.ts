@@ -111,6 +111,8 @@ export interface AccountRef {
   name: string;
   /** the account's stored last-4 (e.g. "5739"); the strongest match signal */
   accountLast4: string | null;
+  /** last-4 of the account's linked debit card; matches debit-card alert emails */
+  debitCardLast4: string | null;
   /** issuing bank, used only to break a last-4 tie between two institutions */
   institution: string | null;
 }
@@ -140,9 +142,11 @@ export function decideStatus(classification: EmailClass): {
 
 /**
  * Best-effort account match from the mail's hint. A bank alert names the last 4
- * digits ("A/C XXXXXXX5739"), so we pull the 3–4 digit runs out of the hint and:
- *   1. match a run exactly against an account's stored last-4 (the strong signal);
- *      if two accounts share a last-4, the bank named in the hint breaks the tie;
+ * digits ("A/C XXXXXXX5739") or a debit-card alert names the card's last 4, so we
+ * pull the 3–4 digit runs out of the hint and:
+ *   1. match a run exactly against an account's stored last-4 OR its linked
+ *      debit-card last-4 (the strong signal); if two accounts share a last-4, the
+ *      bank named in the hint breaks the tie;
  *   2. failing that, fall back to a run appearing in exactly one account name
  *      (covers accounts whose last-4 was typed into the label, not the field).
  * Only a unique hit wins — a wrong guess never silently mis-assigns. Null
@@ -153,7 +157,9 @@ export function matchAccount(hint: string, accounts: AccountRef[]): string | nul
   if (!digits || digits.length === 0) return null;
   const lower = hint.toLowerCase();
   for (const run of digits) {
-    const hits = accounts.filter((a) => a.accountLast4 === run);
+    const hits = accounts.filter(
+      (a) => a.accountLast4 === run || a.debitCardLast4 === run,
+    );
     if (hits.length === 1) return hits[0]!.id;
     if (hits.length > 1) {
       const byBank = hits.filter(

@@ -15,6 +15,7 @@ function toDetails(d: DetailsRow): BankDetails {
     ifsc: d.ifsc,
     branch: d.branch,
     subtype: d.subtype,
+    debitCardLast4: d.debitCardLast4,
   };
 }
 

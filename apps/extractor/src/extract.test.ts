@@ -25,10 +25,17 @@ import {
 import type { ParsedEmail } from "./email.ts";
 
 /** Build an AccountRef terse-ly; last-4 and institution default to unset. */
-const acct = (id: string, name: string, last4: string | null = null, institution: string | null = null): AccountRef => ({
+const acct = (
+  id: string,
+  name: string,
+  last4: string | null = null,
+  institution: string | null = null,
+  debitCardLast4: string | null = null,
+): AccountRef => ({
   id,
   name,
   accountLast4: last4,
+  debitCardLast4,
   institution,
 });
 
@@ -99,6 +106,16 @@ test("matchAccount: falls back to a unique digit run in the name when no last-4 
   assert.equal(matchAccount("ending 1234", accounts), "a1");
   // two accounts both containing 012 in the name → ambiguous
   assert.equal(matchAccount("012", [acct("x", "Acct 012"), acct("y", "Card 012")]), null);
+});
+
+test("matchAccount: a debit-card alert resolves to the account its card is linked to", () => {
+  // savings a/c ends 5739; its linked debit card ends 8812. A card alert names 8812.
+  const accounts = [acct("sav", "HDFC Savings", "5739", "HDFC", "8812")];
+  assert.equal(matchAccount("spent on Debit Card ending 8812", accounts), "sav");
+  // the account-number last-4 still matches too
+  assert.equal(matchAccount("A/C XXXXXXX5739 debited", accounts), "sav");
+  // a card last-4 the reviewer hasn't recorded → no silent guess
+  assert.equal(matchAccount("Debit Card ending 0000", accounts), null);
 });
 
 test("matchCategory: verbatim name of the right kind, else null", () => {

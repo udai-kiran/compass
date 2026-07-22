@@ -375,6 +375,7 @@ function BankSection({ account }: { account: AccountWithBalance }) {
   const [ifsc, setIfsc] = useState("");
   const [branch, setBranch] = useState("");
   const [subtype, setSubtype] = useState<BankAccountSubtype | "">("");
+  const [debitCard, setDebitCard] = useState("");
   const [reveal, setReveal] = useState(false);
 
   // The form is uncontrolled until the fetch lands; seed it once it does.
@@ -384,21 +385,24 @@ function BankSection({ account }: { account: AccountWithBalance }) {
     setIfsc(data.ifsc);
     setBranch(data.branch);
     setSubtype(data.subtype ?? "");
+    setDebitCard(data.debitCardLast4);
   }, [data]);
 
   const numberError = errorOf(AccountNumberSchema, number);
   const ifscError = errorOf(IfscSchema, ifsc);
+  const debitCardError = debitCard !== "" && !/^\d{4}$/.test(debitCard) ? "must be 4 digits" : null;
   const dirty =
     number !== (data?.accountNumber ?? "") ||
     ifsc !== (data?.ifsc ?? "") ||
     branch !== (data?.branch ?? "") ||
-    subtype !== (data?.subtype ?? "");
+    subtype !== (data?.subtype ?? "") ||
+    debitCard !== (data?.debitCardLast4 ?? "");
 
   function submit(e: FormEvent) {
     e.preventDefault();
-    if (numberError || ifscError) return;
+    if (numberError || ifscError || debitCardError) return;
     save.mutate(
-      { accountNumber: number, ifsc, branch, subtype: subtype || null },
+      { accountNumber: number, ifsc, branch, subtype: subtype || null, debitCardLast4: debitCard },
       { onSuccess: () => toast("Bank details saved", "success") },
     );
   }
@@ -461,6 +465,19 @@ function BankSection({ account }: { account: AccountWithBalance }) {
             ))}
           </select>
         </Field>
+        <Field label="Debit card (last 4)" error={debitCardError}>
+          <input
+            value={debitCard}
+            onChange={(e) => setDebitCard(e.target.value.replace(/\D/g, "").slice(0, 4))}
+            inputMode="numeric"
+            placeholder="1234"
+            aria-invalid={debitCardError !== null}
+            className={`${inputClass} font-mono ${debitCardError ? "border-red-400" : ""}`}
+          />
+        </Field>
+        <p className="text-xs text-slate-400">
+          Set this so debit-card transaction emails post to this account automatically.
+        </p>
         <p className="text-xs text-slate-400">
           {number === ""
             ? "Without a full number, the last 4 stays editable in the accounts list."
@@ -469,7 +486,7 @@ function BankSection({ account }: { account: AccountWithBalance }) {
         <div className="pt-1">
           <SaveButton
             dirty={dirty}
-            disabled={numberError !== null || ifscError !== null}
+            disabled={numberError !== null || ifscError !== null || debitCardError !== null}
             pending={save.isPending}
           />
         </div>

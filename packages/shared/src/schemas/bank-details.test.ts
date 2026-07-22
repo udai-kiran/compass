@@ -78,7 +78,13 @@ test("a UPI ID can't be listed twice on one account", () => {
 test("empty string clears a bank detail rather than failing validation", () => {
   // The form sends "" for "I don't want this recorded" — that must not 400.
   const cleared = UpsertBankDetailsSchema.parse({});
-  assert.deepEqual(cleared, { accountNumber: "", ifsc: "", branch: "", subtype: null });
+  assert.deepEqual(cleared, {
+    accountNumber: "",
+    ifsc: "",
+    branch: "",
+    subtype: null,
+    debitCardLast4: "",
+  });
   assert.equal(UpsertBankDetailsSchema.safeParse({ ifsc: "" }).success, true);
 });
 
