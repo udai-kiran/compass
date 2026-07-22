@@ -132,6 +132,54 @@ export async function setStatus(
   );
 }
 
+export interface AiEventInput {
+  userId: string;
+  kind: string;
+  status: "ok" | "error";
+  provider: string;
+  model: string;
+  title: string;
+  ingestionId: string | null;
+  accountId: string | null;
+  requestContext: string;
+  responseRaw: string;
+  latencyMs: number | null;
+  error: string | null;
+}
+
+// Match the API's per-field cap so one big statement prompt can't bloat the row.
+const AI_EVENT_MAX_CHARS = 64_000;
+const clampField = (s: string) =>
+  s.length > AI_EVENT_MAX_CHARS ? s.slice(0, AI_EVENT_MAX_CHARS) + "\n…[truncated]" : s;
+
+/** Log one model call to the AI event log. Best-effort — never throws. */
+export async function recordAiEvent(pool: pg.Pool, ev: AiEventInput): Promise<void> {
+  try {
+    await pool.query(
+      `insert into ai_events
+         (user_id, kind, status, provider, model, title, ingestion_id, account_id,
+          request_context, response_raw, latency_ms, error)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+      [
+        ev.userId,
+        ev.kind,
+        ev.status,
+        ev.provider,
+        ev.model,
+        ev.title.slice(0, 300),
+        ev.ingestionId,
+        ev.accountId,
+        clampField(ev.requestContext),
+        clampField(ev.responseRaw),
+        ev.latencyMs,
+        ev.error,
+      ],
+    );
+  } catch {
+    // An event-log write must never fail the extraction it describes.
+  }
+}
+
 /** One ledger transaction, for matching statement lines against (signed paise). */
 export interface LedgerTxnRow {
   id: string;

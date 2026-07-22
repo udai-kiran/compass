@@ -3,6 +3,7 @@ import { categorizationPrompt, summaryPrompt, SUMMARY_SYSTEM } from "./prompts.t
 import {
   AiUnavailableError,
   CategorySuggestionsSchema,
+  type AiObserver,
   type AiProvider,
   type ChatRequest,
   type ChatTurn,
@@ -19,6 +20,7 @@ interface OpenAiCompatConfig {
   model: string;
   /** API root including version — e.g. https://openrouter.ai/api/v1 */
   baseUrl: string;
+  observe?: AiObserver;
 }
 
 interface OpenAiToolCall {
@@ -52,6 +54,7 @@ export function createOpenAiCompatProvider(config: OpenAiCompatConfig): AiProvid
       headers,
       timeoutMs: opts.timeoutMs,
       retries: opts.retries,
+      observe: config.observe,
     })) as OpenAiResponse;
   }
 

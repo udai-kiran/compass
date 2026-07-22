@@ -62,7 +62,10 @@ const NAV_GROUPS: NavGroup[] = [
   },
   {
     heading: "Setup",
-    items: [{ to: "/settings", label: "Settings", icon: "settings" }],
+    items: [
+      { to: "/settings", label: "Settings", icon: "settings" },
+      { to: "/events", label: "Event Log", icon: "activity" },
+    ],
   },
 ];
 

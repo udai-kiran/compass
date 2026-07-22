@@ -12,4 +12,5 @@ export * from "./schemas/insights.ts";
 export * from "./schemas/reports.ts";
 export * from "./schemas/search.ts";
 export * from "./schemas/ai.ts";
+export * from "./schemas/ai-events.ts";
 export * from "./schemas/email.ts";

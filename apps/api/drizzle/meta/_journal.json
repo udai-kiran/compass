@@ -302,6 +302,13 @@
       "when": 1784729347442,
       "tag": "0042_amused_agent_zero",
       "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1784733766684,
+      "tag": "0043_freezing_sprite",
+      "breakpoints": true
     }
   ]
 }

@@ -672,7 +672,12 @@ export interface ReconciliationStats {
   lineDebitPaise: number;
   /** lines matched to a ledger transaction already recorded this cycle */
   matchedCount: number;
-  /** sum of the matched lines' magnitudes, in paise */
+  /**
+   * Sum of the matched *debit* (spend) lines' magnitudes, in paise. Only debits
+   * count here because this offsets `lineDebitPaise` in the "spend listed vs
+   * cleared" delta — a matched refund/credit is not cleared spend and must not
+   * shrink that delta. (`matchedCount` still counts every matched line.)
+   */
   matchedPaise: number;
   /** lines with no ledger match — new drafts / exceptions to review */
   unmatchedCount: number;
@@ -703,7 +708,9 @@ export function summarizeMatches(
     if (r.direction === "debit") lineDebitPaise += r.amountPaise;
     if (r.status === "duplicate" && r.matchedTransactionId) {
       matchedCount += 1;
-      matchedPaise += r.amountPaise;
+      // Only matched debits offset the spend delta; a matched credit (refund) is
+      // not cleared spend, so counting it would understate unmatched spending.
+      if (r.direction === "debit") matchedPaise += r.amountPaise;
       matchedTxnIds.push(r.matchedTransactionId);
     }
   }
