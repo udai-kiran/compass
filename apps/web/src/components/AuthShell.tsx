@@ -8,7 +8,14 @@ import { FEATURES, PRODUCT } from "../lib/product.ts";
  * column on the right. On small screens the hero collapses to a compact brand
  * bar so the form stays front and center.
  */
-export function AuthShell({ children }: { children: ReactNode }) {
+export function AuthShell({
+  children,
+  heroCta,
+}: {
+  children: ReactNode;
+  /** Optional call-to-action rendered on the brand hero (e.g. the demo entry). */
+  heroCta?: ReactNode;
+}) {
   return (
     <div className="flex min-h-screen bg-slate-50">
       {/* Brand hero — lg and up */}
@@ -35,6 +42,7 @@ export function AuthShell({ children }: { children: ReactNode }) {
               </li>
             ))}
           </ul>
+          {heroCta && <div className="mt-8 max-w-xs">{heroCta}</div>}
         </div>
         <p className="text-xs text-white/60">Private · self-hosted · built for Indian finances</p>
       </div>
