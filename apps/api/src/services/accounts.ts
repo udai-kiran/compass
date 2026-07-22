@@ -38,15 +38,18 @@ export async function listAccounts(db: Db, userId: string): Promise<AccountWithB
       // must not move it. computeNetWorth applies the same date <= today cut, so
       // the account list and net worth can never disagree about what's posted.
       txSum: sql<number>`coalesce(sum(${transactions.amountPaise}) filter (where ${transactions.deletedAt} is null and ${transactions.date} <= current_date), 0)::bigint`,
+      subtype: bankDetails.subtype,
     })
     .from(accounts)
     .leftJoin(transactions, eq(transactions.accountId, accounts.id))
+    .leftJoin(bankDetails, eq(bankDetails.accountId, accounts.id))
     .where(eq(accounts.userId, userId))
-    .groupBy(accounts.id)
+    .groupBy(accounts.id, bankDetails.subtype)
     .orderBy(accounts.sortOrder, accounts.createdAt);
-  return rows.map(({ account, txSum }) => ({
+  return rows.map(({ account, txSum, subtype }) => ({
     ...toAccount(account),
     balancePaise: account.openingBalancePaise + Number(txSum),
+    subtype: subtype ?? null,
   }));
 }
 

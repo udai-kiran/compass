@@ -35,6 +35,7 @@ const NAV_GROUPS: NavGroup[] = [
   {
     heading: "Money",
     items: [
+      { to: "/accounts", label: "Accounts", icon: "wallet" },
       { to: "/budgets", label: "Budgets", icon: "budgets" },
       { to: "/cash-flow", label: "Cash Flow", icon: "cashflow" },
       { to: "/bills", label: "Bills & Subscriptions", icon: "bills" },
