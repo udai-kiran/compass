@@ -233,6 +233,7 @@ function GoalProgressBody({ goal, p }: { goal: Goal; p: GoalProgress }) {
       )}
 
       <ProjectionLine p={p} />
+      <GoalPlanBody p={p} />
       <MappedAssets goalId={goal.id} p={p} />
     </>
   );
@@ -273,6 +274,43 @@ function ProjectionLine({ p }: { p: GoalProgress }) {
         <span className="text-slate-400">Map assets or add inflow to project a finish date.</span>
       )}
     </p>
+  );
+}
+
+/**
+ * The prescriptive plan: recommended equity/debt mix (horizon glide-path) and,
+ * when the goal is behind pace, the monthly investment to catch up — split to
+ * that mix. The weekly Autopilot goal review sends the same proposal by notification.
+ */
+function GoalPlanBody({ p }: { p: GoalProgress }) {
+  const { plan } = p;
+  const propose = plan.recommendedMonthlyPaise !== null && plan.recommendedMonthlyPaise > 0;
+
+  return (
+    <div className="mt-3 rounded-md border border-slate-200 bg-slate-50/60 px-3 py-2 text-xs">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-medium text-slate-500">Recommended mix</span>
+        <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-emerald-700">
+          Equity <b className="tabular-nums">{plan.targetEquityPct}%</b>
+        </span>
+        <span className="rounded-full bg-blue-50 px-2 py-0.5 text-blue-700">
+          Debt <b className="tabular-nums">{plan.targetDebtPct}%</b>
+        </span>
+        {plan.allocationDrifted && (
+          <span className="rounded-full bg-amber-50 px-2 py-0.5 text-amber-700">
+            ⚠ drifted — consider rebalancing
+          </span>
+        )}
+      </div>
+      {propose && (
+        <p className="mt-1.5 text-slate-600">
+          To stay on track, invest{" "}
+          <b className="tabular-nums text-slate-800">{formatINR(plan.recommendedMonthlyPaise!)}</b>/mo —{" "}
+          <b className="tabular-nums text-emerald-700">{formatINR(plan.monthlyEquityPaise)}</b> equity +{" "}
+          <b className="tabular-nums text-blue-700">{formatINR(plan.monthlyDebtPaise)}</b> debt.
+        </p>
+      )}
+    </div>
   );
 }
 

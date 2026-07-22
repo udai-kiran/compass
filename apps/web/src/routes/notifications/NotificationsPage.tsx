@@ -13,8 +13,11 @@ const TYPE_LABEL: Record<string, string> = {
   budget: "Budget",
   bill: "Bill",
   goal: "Goal",
+  goal_plan: "Goal plan",
   large_transaction: "Large transaction",
   low_balance: "Low balance",
+  anomaly: "Unusual spending",
+  cash_runway: "Cash flow",
 };
 
 export function NotificationsPage() {

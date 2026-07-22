@@ -14,6 +14,7 @@ import { listAccounts } from "./accounts.ts";
 import { getPortfolio } from "./holdings.ts";
 import { accountReturnBps, assetClassReturnBps } from "./goal-returns.ts";
 import { projectGoal } from "./goal-projection.ts";
+import { buildGoalPlan } from "./goal-plan.ts";
 import { createNotification } from "./notifications.ts";
 import { incomeExpense, periodRange, prevPeriodKey, currentPeriodKey } from "./periods.ts";
 import { prefEnabled } from "./prefs.ts";
@@ -277,6 +278,17 @@ export async function getGoalProgress(db: Db, userId: string, id: string): Promi
 
   await checkGoalMilestones(db, userId, g.id, percent, g.name);
 
+  const plan = buildGoalPlan({
+    goalType: g.type,
+    monthsToTarget,
+    onTrack: proj.onTrack,
+    requiredMonthlyPaise: proj.requiredMonthlyPaise,
+    currentEquityPct: allocation.equityPct,
+    currentDebtPct: allocation.debtPct,
+    currentOtherPct: allocation.otherPct,
+    fundedPaise: funded,
+  });
+
   return {
     ...toGoal(g),
     effectiveTargetPaise: target,
@@ -292,6 +304,7 @@ export async function getGoalProgress(db: Db, userId: string, id: string): Promi
     projectedDate,
     requiredMonthlyPaise: proj.requiredMonthlyPaise,
     onTrack: proj.onTrack,
+    plan,
     assets,
   };
 }
