@@ -12,12 +12,14 @@ import {
   AttachmentSchema,
   BulkResultSchema,
   CategorySchema,
+  PayslipResultSchema,
   TransactionPageSchema,
   TransactionSchema,
   TransferSuggestionSchema,
   type BulkAction,
   type CreateAccount,
   type CreateCategory,
+  type CreatePayslipInput,
   type CreateTransaction,
   type Transaction,
   type TransactionFilter,
@@ -184,6 +186,22 @@ export function useTransactionMutations(filter: TransactionFilter) {
   });
 
   return { create, update, remove, bulk, setSplits };
+}
+
+// ---------- payslips ----------
+
+export function usePayslipMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: CreatePayslipInput) =>
+      apiPost("/api/payslips", PayslipResultSchema, body),
+    // A payslip creates several linked entries and moves EPF into a retirement
+    // account, so refresh transactions and account balances together.
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["transactions"] });
+      void qc.invalidateQueries({ queryKey: ["accounts"] });
+    },
+  });
 }
 
 // ---------- transfers ----------

@@ -11,6 +11,7 @@ import {
 } from "../../lib/queries.ts";
 import { TransactionDrawer } from "./TransactionDrawer.tsx";
 import { AiCategorizePanel } from "./AiCategorizePanel.tsx";
+import { PayslipModal } from "./PayslipModal.tsx";
 import { useCapabilities } from "../../lib/settings-queries.ts";
 
 const FILTER_KEYS = [
@@ -44,6 +45,7 @@ export function TransactionsPage() {
   const [allMatching, setAllMatching] = useState(false);
   const [drawerTx, setDrawerTx] = useState<string | null>(null);
   const [aiCategorize, setAiCategorize] = useState(false);
+  const [showPayslip, setShowPayslip] = useState(false);
   const { data: capabilities } = useCapabilities();
 
   const items = useMemo(() => query.data?.pages.flatMap((p) => p.items) ?? [], [query.data]);
@@ -119,6 +121,12 @@ export function TransactionsPage() {
       <div className="mb-3 flex items-baseline justify-between">
         <h1 className="text-2xl font-semibold text-slate-800">Transactions</h1>
         <div className="flex items-center gap-3">
+          <button
+            onClick={() => setShowPayslip(true)}
+            className="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          >
+            + Add payslip
+          </button>
           {capabilities?.features.categorization && (
             <button
               onClick={() => setAiCategorize(true)}
@@ -314,6 +322,7 @@ export function TransactionsPage() {
           onApply={(id, categoryId) => mutations.update.mutate({ id, categoryId })}
         />
       )}
+      {showPayslip && <PayslipModal onClose={() => setShowPayslip(false)} />}
     </div>
   );
 }
@@ -594,7 +603,8 @@ function QuickAdd({ filter }: { filter: TransactionFilter }) {
         <option value="income">Income</option>
       </select>
       <input
-        placeholder="Merchant"
+        placeholder={kind === "income" ? "Source" : "Merchant"}
+        aria-label={kind === "income" ? "Source" : "Merchant"}
         value={merchant}
         onChange={(e) => setMerchant(e.target.value)}
         className="w-44 rounded-md border border-slate-300 px-2 py-1.5 text-sm"

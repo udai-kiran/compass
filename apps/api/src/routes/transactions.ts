@@ -4,8 +4,10 @@ import { z } from "zod";
 import {
   BulkActionSchema,
   BulkResultSchema,
+  CreatePayslipSchema,
   CreateTransactionSchema,
   ListTransactionsQuerySchema,
+  PayslipResultSchema,
   SetSplitsSchema,
   TransactionPageSchema,
   TransactionSchema,
@@ -20,6 +22,7 @@ import {
   softDeleteTransaction,
   updateTransaction,
 } from "../services/transactions.ts";
+import { createPayslip } from "../services/payroll.ts";
 
 const IdParams = z.object({ id: z.uuid() });
 
@@ -43,6 +46,15 @@ export async function transactionRoutes(app: FastifyInstance) {
     { schema: { body: CreateTransactionSchema, response: { 201: TransactionSchema } } },
     async (req, reply) =>
       reply.code(201).send(await createTransaction(app.db, req.session!.userId, req.body)),
+  );
+
+  // A payslip fans out into several linked transactions (gross income, taxes,
+  // EPF transfer); see services/payroll.ts.
+  r.post(
+    "/api/payslips",
+    { schema: { body: CreatePayslipSchema, response: { 201: PayslipResultSchema } } },
+    async (req, reply) =>
+      reply.code(201).send(await createPayslip(app.db, req.session!.userId, req.body)),
   );
 
   r.patch(

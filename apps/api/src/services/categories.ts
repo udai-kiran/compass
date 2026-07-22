@@ -6,7 +6,7 @@ import type {
   CreateCategory,
   UpdateCategory,
 } from "@compass/shared";
-import type { Db } from "../db/index.ts";
+import type { Db, DbOrTx } from "../db/index.ts";
 import { categories, transactions, transactionSplits } from "../db/schema.ts";
 import { HttpError } from "../lib/errors.ts";
 
@@ -56,6 +56,26 @@ export async function createCategory(
     .insert(categories)
     .values({ ...input, userId })
     .returning();
+  return toCategory(rows[0]!);
+}
+
+/**
+ * Return the user's category with this name+kind, creating it if absent. Used by
+ * flows that must land in a well-known bucket (e.g. a payslip's TDS → "Taxes")
+ * without forcing the user to have set it up first. Matches on exact name.
+ */
+export async function findOrCreateCategory(
+  db: DbOrTx,
+  userId: string,
+  name: string,
+  kind: CategoryKind,
+  icon: string,
+): Promise<Category> {
+  const existing = await db.query.categories.findFirst({
+    where: and(eq(categories.userId, userId), eq(categories.name, name), eq(categories.kind, kind)),
+  });
+  if (existing) return toCategory(existing);
+  const rows = await db.insert(categories).values({ userId, name, kind, icon }).returning();
   return toCategory(rows[0]!);
 }
 
