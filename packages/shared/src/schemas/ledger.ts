@@ -344,6 +344,10 @@ export const TransactionPageSchema = z.object({
   nextCursor: z.string().nullable(),
   totalCount: z.number().int(),
   totalAmountPaise: z.number().int(),
+  /** Sum of inflows (credits), as a positive magnitude. -1 on cursor pages (unchanged). */
+  totalInflowPaise: z.number().int(),
+  /** Sum of outflows (debits), as a positive magnitude. -1 on cursor pages (unchanged). */
+  totalOutflowPaise: z.number().int(),
 });
 export type TransactionPage = z.infer<typeof TransactionPageSchema>;
 

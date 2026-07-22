@@ -37,7 +37,10 @@ export function AccountLedgerPage() {
     ? SUBTYPE_LABELS[account.subtype]
     : ACCOUNT_TYPE_LABELS[account.type];
   const txns = query.data?.pages.flatMap((p) => p.items) ?? [];
-  const totalCount = query.data?.pages[0]?.totalCount ?? 0;
+  const firstPage = query.data?.pages[0];
+  const totalCount = firstPage?.totalCount ?? 0;
+  const totalIn = firstPage?.totalInflowPaise ?? 0;
+  const totalOut = firstPage?.totalOutflowPaise ?? 0;
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
@@ -62,15 +65,29 @@ export function AccountLedgerPage() {
         </Link>
       </header>
 
-      <div className="rounded-lg border border-slate-200 bg-white p-4">
-        <p className="text-xs font-medium text-slate-500">Current balance</p>
-        <p
-          className={`mt-1 text-2xl font-semibold tabular-nums ${
-            account.balancePaise < 0 ? "text-red-600" : "text-slate-800"
-          }`}
-        >
-          {formatINR(account.balancePaise)}
-        </p>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <div className="rounded-lg border border-slate-200 bg-white p-4">
+          <p className="text-xs font-medium text-slate-500">Current balance</p>
+          <p
+            className={`mt-1 text-2xl font-semibold tabular-nums ${
+              account.balancePaise < 0 ? "text-red-600" : "text-slate-800"
+            }`}
+          >
+            {formatINR(account.balancePaise)}
+          </p>
+        </div>
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4">
+          <p className="text-xs font-medium text-emerald-700">Credits (in)</p>
+          <p className="mt-1 text-2xl font-semibold tabular-nums text-emerald-700">
+            {formatINR(totalIn)}
+          </p>
+        </div>
+        <div className="rounded-lg border border-rose-200 bg-rose-50 p-4">
+          <p className="text-xs font-medium text-rose-700">Debits (out)</p>
+          <p className="mt-1 text-2xl font-semibold tabular-nums text-rose-700">
+            {formatINR(totalOut)}
+          </p>
+        </div>
       </div>
 
       <section className="rounded-lg border border-slate-200 bg-white">
@@ -95,6 +112,11 @@ export function AccountLedgerPage() {
           </p>
         ) : (
           <>
+            <div className="flex items-center gap-3 border-b border-slate-100 px-4 py-1.5 text-[11px] font-medium uppercase tracking-wide text-slate-400">
+              <span className="min-w-0 flex-1">Description</span>
+              <span className="w-24 shrink-0 text-right">Debit</span>
+              <span className="w-24 shrink-0 text-right">Credit</span>
+            </div>
             <ul>
               {txns.map((t) => (
                 <TxnRow key={t.id} txn={t} categoryName={catName(t.categoryId)} />
@@ -124,9 +146,11 @@ export function AccountLedgerPage() {
 
 function TxnRow({ txn, categoryName }: { txn: Transaction; categoryName: string | null }) {
   const isTransfer = txn.transferLinkId !== null;
+  const isCredit = txn.amountPaise >= 0;
+  const amount = formatINR(Math.abs(txn.amountPaise));
   return (
-    <li className="flex items-center justify-between gap-3 border-b border-slate-50 px-4 py-2 text-sm last:border-0">
-      <div className="min-w-0">
+    <li className="flex items-center gap-3 border-b border-slate-50 px-4 py-2 text-sm last:border-0">
+      <div className="min-w-0 flex-1">
         <p className="flex items-center gap-1.5 truncate font-medium text-slate-800">
           <span className="truncate">{txn.merchant || "—"}</span>
           {isTransfer && (
@@ -140,11 +164,11 @@ function TxnRow({ txn, categoryName }: { txn: Transaction; categoryName: string 
           {categoryName ? ` · ${categoryName}` : ""}
         </p>
       </div>
-      <span
-        className={`shrink-0 tabular-nums ${txn.amountPaise >= 0 ? "text-emerald-600" : "text-slate-800"}`}
-      >
-        {txn.amountPaise >= 0 ? "+" : "−"}
-        {formatINR(Math.abs(txn.amountPaise))}
+      <span className="w-24 shrink-0 text-right tabular-nums text-slate-700">
+        {isCredit ? "" : amount}
+      </span>
+      <span className="w-24 shrink-0 text-right tabular-nums text-emerald-600">
+        {isCredit ? amount : ""}
       </span>
     </li>
   );
