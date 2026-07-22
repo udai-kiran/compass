@@ -46,7 +46,9 @@ export function Login() {
   }
 
   return (
-    <AuthShell>
+    <AuthShell
+      heroCta={bootstrap?.demoAvailable ? <DemoButton variant="hero" /> : undefined}
+    >
       <form onSubmit={onSubmit}>
         <h2 className="text-2xl font-semibold text-slate-900">Welcome back</h2>
         <p className="mt-1 text-sm text-slate-500">Sign in to your Compass account.</p>
@@ -88,15 +90,17 @@ export function Login() {
           </p>
         )}
 
+        {/* The hero carries the demo CTA at lg+; show it in-card only below lg,
+            where the hero is hidden. */}
         {bootstrap?.demoAvailable && (
-          <>
+          <div className="lg:hidden">
             <div className="my-6 flex items-center gap-3 text-xs text-slate-400">
               <span className="h-px flex-1 bg-slate-200" />
               or
               <span className="h-px flex-1 bg-slate-200" />
             </div>
             <DemoButton />
-          </>
+          </div>
         )}
       </form>
     </AuthShell>
