@@ -1,6 +1,6 @@
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import type { Notification } from "@compass/shared";
-import type { Db } from "../db/index.ts";
+import type { Db, DbOrTx } from "../db/index.ts";
 import { budgetAlerts, categories, notifications } from "../db/schema.ts";
 import { formatINR } from "@compass/shared";
 import { currentPeriodKey } from "./periods.ts";
@@ -64,7 +64,7 @@ export async function archiveNotification(db: Db, userId: string, id: string): P
 }
 
 export async function createNotification(
-  db: Db,
+  db: DbOrTx,
   userId: string,
   input: { type: string; title: string; body?: string; data?: unknown },
 ): Promise<void> {

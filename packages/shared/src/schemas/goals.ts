@@ -82,6 +82,28 @@ export const GoalAssetProgressSchema = z.object({
 });
 export type GoalAssetProgress = z.infer<typeof GoalAssetProgressSchema>;
 
+/**
+ * Prescriptive plan for a goal: the recommended equity/debt mix (derived from the
+ * goal's time horizon — longer to target = more equity) and the monthly
+ * contribution to stay on track, split to that mix. Distinct from the descriptive
+ * `equityPct`/`debtPct` on GoalProgress, which report the *current* holdings.
+ */
+export const GoalPlanSchema = z.object({
+  /** on_track / behind (has a target date), or no_target (undated goal) */
+  status: z.enum(["on_track", "behind", "no_target"]),
+  /** recommended allocation; equity + debt = 100 */
+  targetEquityPct: z.number().min(0).max(100),
+  targetDebtPct: z.number().min(0).max(100),
+  /** true when the current equity mix drifts from target beyond the rebalance band */
+  allocationDrifted: z.boolean(),
+  /** monthly contribution to hit the target by its date; null without a target date */
+  recommendedMonthlyPaise: z.number().int().nullable(),
+  /** the recommended monthly amount split to the target mix (0 when none recommended) */
+  monthlyEquityPaise: z.number().int(),
+  monthlyDebtPaise: z.number().int(),
+});
+export type GoalPlan = z.infer<typeof GoalPlanSchema>;
+
 export const GoalProgressSchema = GoalSchema.extend({
   /** resolved target (emergency fund: months × trailing avg expenses) */
   effectiveTargetPaise: z.number().int(),
@@ -108,6 +130,8 @@ export const GoalProgressSchema = GoalSchema.extend({
   /** required monthly inflow to hit targetDate given growth; null without a target date */
   requiredMonthlyPaise: z.number().int().nullable(),
   onTrack: z.boolean().nullable(),
+  /** recommended allocation + monthly investment proposal (see GoalPlanSchema) */
+  plan: GoalPlanSchema,
   assets: z.array(GoalAssetProgressSchema),
 });
 export type GoalProgress = z.infer<typeof GoalProgressSchema>;
@@ -175,6 +199,11 @@ export const NotificationTypeSchema = z.enum([
   "large_transaction",
   "low_balance",
   "anomaly",
+  // Autopilot: forward-looking cash-flow shortfall (projected, not reactive).
+  "cash_runway",
+  // Autopilot: weekly goal contribution / rebalance advice (distinct from the
+  // "goal" milestone alerts, so it can be muted independently).
+  "goal_plan",
 ]);
 
 /** Anomaly detector sensitivity → z-score threshold (higher = fires more readily). */

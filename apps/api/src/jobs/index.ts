@@ -5,6 +5,7 @@ import { evaluateBudgetAlerts } from "../services/notifications.ts";
 import { evaluateBillReminders } from "../services/bills.ts";
 import { evaluateCardDueReminders, evaluateCardUtilization } from "../services/cards.ts";
 import { evaluateAnomalies } from "../services/anomaly.ts";
+import { runAutopilotReview, runGoalReview } from "../services/autopilot.ts";
 import { snapshotAllUsers } from "../services/networth.ts";
 import { createEncryptedBackup } from "../services/backup.ts";
 import { evaluateLargeTransactions, evaluateLowBalance, prefEnabled } from "../services/prefs.ts";
@@ -98,6 +99,19 @@ export async function startJobs(app: FastifyInstance): Promise<void> {
     { pattern: "0 3 * * 0" },
     { name: "backup.weekly" },
   );
+  // Autopilot review: forward-looking heads-ups (cash-flow shortfall), after the
+  // net-worth snapshot has refreshed today's balances
+  await system.upsertJobScheduler(
+    "autopilot.review",
+    { pattern: "40 0 * * *" },
+    { name: "autopilot.review" },
+  );
+  // Weekly goal review: asset-allocation + contribution proposals (Mondays 06:00)
+  await system.upsertJobScheduler(
+    "autopilot.goals",
+    { pattern: "0 6 * * 1" },
+    { name: "autopilot.goals" },
+  );
 
   const alerts = new Queue("alerts", { connection });
   alerts.on("error", (err) => app.log.error({ err }, "bullmq alerts queue error"));
@@ -142,6 +156,30 @@ export async function startJobs(app: FastifyInstance): Promise<void> {
         case "backup.weekly": {
           const res = await createEncryptedBackup(app.db, app.config);
           app.log.info(res, "encrypted backup written");
+          return;
+        }
+        case "autopilot.review": {
+          const res = await runAutopilotReview(app.db, app.redis);
+          for (const e of res.errors) {
+            app.log.error({ userId: e.userId, err: e.error }, "autopilot: cash-runway failed for user");
+          }
+          if (res.fired > 0) app.log.info({ fired: res.fired }, "autopilot: cash-flow heads-ups sent");
+          // Every user failing is systemic (schema drift, forecast dep down) — fail
+          // the job so it shows red, rather than logging a silent "success".
+          if (res.processed > 0 && res.errors.length === res.processed) {
+            throw new Error(`autopilot review failed for all ${res.processed} users`);
+          }
+          return;
+        }
+        case "autopilot.goals": {
+          const res = await runGoalReview(app.db);
+          for (const e of res.errors) {
+            app.log.error({ userId: e.userId, err: e.error }, "autopilot: goal review failed for user");
+          }
+          if (res.fired > 0) app.log.info({ fired: res.fired }, "autopilot: goal proposals sent");
+          if (res.processed > 0 && res.errors.length === res.processed) {
+            throw new Error(`autopilot goal review failed for all ${res.processed} users`);
+          }
           return;
         }
         default:

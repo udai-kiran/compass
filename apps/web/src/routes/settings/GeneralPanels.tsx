@@ -133,6 +133,8 @@ const PREF_TYPES: Array<{ type: NotificationType; label: string; hasThreshold: b
   { type: "large_transaction", label: "Large transactions", hasThreshold: true },
   { type: "low_balance", label: "Low account balance", hasThreshold: true },
   { type: "anomaly", label: "Unusual spending", hasThreshold: false },
+  { type: "cash_runway", label: "Cash-flow shortfall (Autopilot)", hasThreshold: false },
+  { type: "goal_plan", label: "Goal investment advice (Autopilot)", hasThreshold: false },
 ];
 
 export function NotificationsPanel() {
