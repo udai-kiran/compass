@@ -170,6 +170,8 @@ export async function listTransactions(
           .select({
             count: sql<number>`count(*)::int`,
             sum: sql<number>`coalesce(sum(${transactions.amountPaise}), 0)::bigint`,
+            inflow: sql<number>`coalesce(sum(${transactions.amountPaise}) filter (where ${transactions.amountPaise} > 0), 0)::bigint`,
+            outflow: sql<number>`coalesce(-sum(${transactions.amountPaise}) filter (where ${transactions.amountPaise} < 0), 0)::bigint`,
           })
           .from(transactions)
           .where(where)
@@ -184,6 +186,8 @@ export async function listTransactions(
     nextCursor: hasMore && last && !query.q ? encodeCursor(last.date, last.id) : null,
     totalCount: totals ? totals[0]!.count : -1,
     totalAmountPaise: totals ? Number(totals[0]!.sum) : -1,
+    totalInflowPaise: totals ? Number(totals[0]!.inflow) : -1,
+    totalOutflowPaise: totals ? Number(totals[0]!.outflow) : -1,
   };
 }
 
