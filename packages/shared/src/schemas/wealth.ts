@@ -136,6 +136,8 @@ export const CardActivityTxnSchema = z.object({
   /** signed like the ledger: a spend is negative, a payment/refund positive */
   amountPaise: z.number().int(),
   categoryId: z.uuid().nullable(),
+  /** the statement cycle that cleared this txn (a statement line matched it), else null */
+  reconciledStatementId: z.uuid().nullable(),
 });
 export type CardActivityTxn = z.infer<typeof CardActivityTxnSchema>;
 
@@ -194,6 +196,32 @@ export const CreateRewardEntrySchema = z.object({
   note: z.string().default(""),
 });
 export type CreateRewardEntry = z.input<typeof CreateRewardEntrySchema>;
+
+/**
+ * A statement cycle the extractor reconciled: the totals it read and how many of
+ * the cycle's lines were already in the ledger from real-time alerts. `deltaPaise`
+ * is the listed spend not yet cleared (lineDebit − matched) — what a review should
+ * look at. One row per (card, period).
+ */
+export const StatementReconciliationSchema = z.object({
+  id: z.uuid(),
+  accountId: z.uuid(),
+  /** the statement cycle, "YYYY-MM" */
+  period: z.string(),
+  statementDate: z.iso.date().nullable(),
+  totalDuePaise: z.number().int().nullable(),
+  minDuePaise: z.number().int().nullable(),
+  rewardClosing: z.number().int().nullable(),
+  lineCount: z.number().int(),
+  lineDebitPaise: z.number().int(),
+  matchedCount: z.number().int(),
+  matchedPaise: z.number().int(),
+  unmatchedCount: z.number().int(),
+  /** listed spend not yet in the ledger: max(0, lineDebitPaise − matchedPaise) */
+  deltaPaise: z.number().int(),
+  updatedAt: z.string(),
+});
+export type StatementReconciliation = z.infer<typeof StatementReconciliationSchema>;
 
 // ---------- EMIs ----------
 

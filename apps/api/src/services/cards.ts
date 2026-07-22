@@ -8,6 +8,7 @@ import type {
   CardSummary,
   CreateRewardEntry,
   RewardEntry,
+  StatementReconciliation,
   UpsertCardDetails,
   UpsertCardIssuerSettings,
 } from "@compass/shared";
@@ -19,6 +20,7 @@ import {
   cardDetails,
   cardIssuerSettings,
   rewardEntries,
+  statementReconciliations,
   transactions,
 } from "../db/schema.ts";
 import { HttpError } from "../lib/errors.ts";
@@ -395,7 +397,14 @@ export async function getCardActivity(
       lte(transactions.date, ref),
     ),
     orderBy: [desc(transactions.date), desc(transactions.id)],
-    columns: { id: true, date: true, merchant: true, amountPaise: true, categoryId: true },
+    columns: {
+      id: true,
+      date: true,
+      merchant: true,
+      amountPaise: true,
+      categoryId: true,
+      reconciledStatementId: true,
+    },
   });
   const toTxn = (t: (typeof rows)[number]): CardActivityTxn => ({
     id: t.id,
@@ -403,6 +412,7 @@ export async function getCardActivity(
     merchant: t.merchant,
     amountPaise: t.amountPaise,
     categoryId: t.categoryId,
+    reconciledStatementId: t.reconciledStatementId,
   });
   // Split by the statement close: on/before → billed, after → unbilled.
   const billed =
@@ -500,6 +510,44 @@ export async function listRewards(db: Db, userId: string, accountId: string): Pr
     limit: 100,
   });
   return rows.map((r) => ({ id: r.id, accountId: r.accountId, date: r.date, points: r.points, note: r.note }));
+}
+
+/**
+ * A card's statement reconciliations, newest cycle first. `deltaPaise` — the
+ * listed spend not yet cleared in the ledger — is derived here so the client
+ * doesn't have to. Read-only; the extractor writes these when it processes a
+ * statement (see apps/extractor: upsertReconciliation).
+ */
+export async function listReconciliations(
+  db: Db,
+  userId: string,
+  accountId: string,
+): Promise<StatementReconciliation[]> {
+  await ownedCardAccount(db, userId, accountId);
+  const rows = await db.query.statementReconciliations.findMany({
+    where: and(
+      eq(statementReconciliations.userId, userId),
+      eq(statementReconciliations.accountId, accountId),
+    ),
+    orderBy: [desc(statementReconciliations.period)],
+    limit: 24,
+  });
+  return rows.map((r) => ({
+    id: r.id,
+    accountId: r.accountId,
+    period: r.period,
+    statementDate: r.statementDate,
+    totalDuePaise: r.totalDuePaise,
+    minDuePaise: r.minDuePaise,
+    rewardClosing: r.rewardClosing,
+    lineCount: r.lineCount,
+    lineDebitPaise: r.lineDebitPaise,
+    matchedCount: r.matchedCount,
+    matchedPaise: r.matchedPaise,
+    unmatchedCount: r.unmatchedCount,
+    deltaPaise: Math.max(0, r.lineDebitPaise - r.matchedPaise),
+    updatedAt: r.updatedAt.toISOString(),
+  }));
 }
 
 export async function addRewardEntry(

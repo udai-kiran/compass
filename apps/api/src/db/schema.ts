@@ -230,6 +230,16 @@ export const transactions = pgTable(
     policyId: uuid("policy_id").references((): AnyPgColumn => insurancePolicies.id, {
       onDelete: "set null",
     }),
+    /**
+     * The statement cycle that cleared this transaction — set when a statement
+     * line matched it (see statement_reconciliations). A set-once-per-cycle stamp:
+     * the reconciler clears and re-applies it on replay, so it always reflects the
+     * latest processing of that cycle. Null for anything a statement hasn't cleared.
+     */
+    reconciledStatementId: uuid("reconciled_statement_id").references(
+      (): AnyPgColumn => statementReconciliations.id,
+      { onDelete: "set null" },
+    ),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -239,6 +249,7 @@ export const transactions = pgTable(
     index("transactions_account_idx").on(t.accountId),
     index("transactions_category_idx").on(t.categoryId),
     index("transactions_policy_idx").on(t.policyId),
+    index("transactions_reconciled_idx").on(t.reconciledStatementId),
   ],
 );
 
@@ -912,6 +923,60 @@ export const rewardEntries = pgTable(
   (t) => [
     index("reward_entries_account_idx").on(t.accountId, t.date),
     index("reward_entries_ingestion_idx").on(t.ingestionId),
+  ],
+);
+
+/**
+ * One row per card per statement cycle — the reconciliation snapshot. Written by
+ * the extractor when it processes a statement: it matches the statement's lines to
+ * ledger transactions already recorded from real-time alerts, stamps those ledger
+ * rows (`transactions.reconciled_statement_id`), and records the cycle's totals +
+ * match stats here. Keyed on `(account_id, period)` — NOT the ingestion — so a
+ * mailbox's duplicate statement emails collapse to one record and a replay updates
+ * in place instead of piling up. `period` is the statement/received month "YYYY-MM".
+ */
+export const statementReconciliations = pgTable(
+  "statement_reconciliations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    /** the statement cycle, "YYYY-MM"; the idempotency key with account_id */
+    period: text("period").notNull(),
+    /** the statement's close date, when it stated one */
+    statementDate: date("statement_date"),
+    /** the last statement email that produced this row — informational, not the key */
+    ingestionId: uuid("ingestion_id").references(() => emailIngestions.id, {
+      onDelete: "set null",
+    }),
+    // Summary snapshot (from the statement's totals block; null when not stated).
+    totalDuePaise: bigint("total_due_paise", { mode: "number" }),
+    minDuePaise: bigint("min_due_paise", { mode: "number" }),
+    rewardOpening: integer("reward_opening"),
+    rewardEarned: integer("reward_earned"),
+    rewardRedeemed: integer("reward_redeemed"),
+    rewardClosing: integer("reward_closing"),
+    // Match stats over the statement's own transaction lines.
+    /** statement transaction lines extracted */
+    lineCount: integer("line_count").notNull().default(0),
+    /** sum of the debit (spend) lines' magnitudes, in paise */
+    lineDebitPaise: bigint("line_debit_paise", { mode: "number" }).notNull().default(0),
+    /** lines matched to a ledger transaction already recorded this cycle */
+    matchedCount: integer("matched_count").notNull().default(0),
+    /** sum of the matched lines' magnitudes, in paise */
+    matchedPaise: bigint("matched_paise", { mode: "number" }).notNull().default(0),
+    /** lines with no ledger match — new drafts / exceptions to review */
+    unmatchedCount: integer("unmatched_count").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("statement_reconciliations_cycle_idx").on(t.accountId, t.period),
+    index("statement_reconciliations_user_idx").on(t.userId, t.accountId),
   ],
 );
 

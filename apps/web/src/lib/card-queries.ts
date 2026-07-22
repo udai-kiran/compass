@@ -7,6 +7,7 @@ import {
   CardIssuerSettingsSchema,
   CardStatementSchema,
   RewardEntrySchema,
+  StatementReconciliationSchema,
   type CreateRewardEntry,
   type UpsertCardDetails,
   type UpsertCardIssuerSettings,
@@ -111,6 +112,16 @@ export function useRewards(accountId: string | null) {
   return useQuery({
     queryKey: ["rewards", accountId],
     queryFn: () => apiGet(`/api/cards/${accountId!}/rewards`, z.array(RewardEntrySchema)),
+    enabled: accountId !== null,
+  });
+}
+
+/** Statement reconciliations for a card, newest cycle first (read-only). */
+export function useReconciliations(accountId: string | null) {
+  return useQuery({
+    queryKey: ["reconciliations", accountId],
+    queryFn: () =>
+      apiGet(`/api/cards/${accountId!}/reconciliations`, z.array(StatementReconciliationSchema)),
     enabled: accountId !== null,
   });
 }

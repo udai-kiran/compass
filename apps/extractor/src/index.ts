@@ -13,6 +13,7 @@ import {
   loadIngestion,
   saveResults,
   setStatus,
+  upsertReconciliation,
   type SaveRow,
 } from "./db.ts";
 import { decryptSecret } from "./crypto.ts";
@@ -24,7 +25,9 @@ import {
   matchLinesToLedger,
   MAX_STATEMENT_CHARS,
   runExtraction,
+  statementPeriodKey,
   STATEMENT_MATCH_WINDOW_DAYS,
+  summarizeMatches,
   type StatementSummary,
 } from "./extract.ts";
 import { extractPdfText } from "./pdf.ts";
@@ -289,6 +292,48 @@ const worker = new Worker(
             accountId: stmt.accountId,
             err: e instanceof Error ? e.message : String(e),
           });
+        }
+      }
+
+      // Reconciliation snapshot for the cycle — records the cycle's totals + match
+      // stats and stamps the ledger rows the statement cleared. Keyed on (card,
+      // period), so a duplicate statement email or a replay updates in place.
+      // Best-effort: a failure here never fails the extraction.
+      if (stmt?.accountId && rows.length > 0) {
+        const period = statementPeriodKey(stmt.summary?.statementDate ?? receivedDate);
+        if (period) {
+          try {
+            const stats = summarizeMatches(rows);
+            await upsertReconciliation(pool, {
+              userId: ingestion.userId,
+              accountId: stmt.accountId,
+              period,
+              statementDate: stmt.summary?.statementDate ?? null,
+              ingestionId: ingestion.id,
+              totals: {
+                totalDuePaise: stmt.summary?.totalDuePaise ?? null,
+                minDuePaise: stmt.summary?.minDuePaise ?? null,
+              },
+              rewards: stmt.summary?.rewards ?? {
+                opening: null,
+                earned: null,
+                redeemed: null,
+                closing: null,
+              },
+              stats,
+            });
+            log("info", "statement reconciled", {
+              accountId: stmt.accountId,
+              period,
+              matched: stats.matchedCount,
+              lines: stats.lineCount,
+            });
+          } catch (e) {
+            log("warn", "statement reconciliation failed", {
+              accountId: stmt.accountId,
+              err: e instanceof Error ? e.message : String(e),
+            });
+          }
         }
       }
     } catch (err) {

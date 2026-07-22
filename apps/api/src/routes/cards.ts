@@ -9,6 +9,7 @@ import {
   CardStatementSchema,
   CreateRewardEntrySchema,
   RewardEntrySchema,
+  StatementReconciliationSchema,
   UpsertCardDetailsSchema,
   UpsertCardIssuerSettingsSchema,
 } from "@compass/shared";
@@ -18,6 +19,7 @@ import {
   deleteRewardEntry,
   getCardActivity,
   listCardHolders,
+  listReconciliations,
   listRewards,
   setCardStatementPassword,
   upsertCardDetails,
@@ -96,6 +98,12 @@ export async function cardRoutes(app: FastifyInstance) {
     "/api/cards/:accountId/rewards",
     { schema: { params: AccountParams, response: { 200: z.array(RewardEntrySchema) } } },
     async (req) => listRewards(app.db, req.session!.userId, req.params.accountId),
+  );
+
+  r.get(
+    "/api/cards/:accountId/reconciliations",
+    { schema: { params: AccountParams, response: { 200: z.array(StatementReconciliationSchema) } } },
+    async (req) => listReconciliations(app.db, req.session!.userId, req.params.accountId),
   );
 
   r.post(
