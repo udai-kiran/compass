@@ -46,6 +46,12 @@ const CashFlowPage = lazy(() =>
 const BillsPage = lazy(() =>
   import("./routes/bills/BillsPage.tsx").then((m) => ({ default: m.BillsPage })),
 );
+const AccountsPage = lazy(() =>
+  import("./routes/accounts/AccountsPage.tsx").then((m) => ({ default: m.AccountsPage })),
+);
+const AccountLedgerPage = lazy(() =>
+  import("./routes/accounts/AccountLedgerPage.tsx").then((m) => ({ default: m.AccountLedgerPage })),
+);
 const CardsPage = lazy(() =>
   import("./routes/cards/CardsPage.tsx").then((m) => ({ default: m.CardsPage })),
 );
@@ -126,6 +132,8 @@ const router = createBrowserRouter([
       { path: "investments/import", element: <MfImportPage /> },
       { path: "investments/capital-gains", element: <CapitalGainsPage /> },
       { path: "net-worth", element: <NetWorthPage /> },
+      { path: "accounts", element: <AccountsPage /> },
+      { path: "accounts/:id", element: <AccountLedgerPage /> },
       { path: "cards", element: <CardsPage /> },
       { path: "cards/:accountId", element: <CardDetailPage /> },
       { path: "emis", element: <EMIsPage /> },
