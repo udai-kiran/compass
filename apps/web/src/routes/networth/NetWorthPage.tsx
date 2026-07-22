@@ -2,12 +2,10 @@ import { formatINR, type GoalGroup } from "@compass/shared";
 import { LineChart, SERIES, StatTile } from "../../lib/viz.tsx";
 import { toast } from "../../lib/toast.tsx";
 import {
-  useAssetGoalMutation,
   useNetWorth,
   useNetWorthByGoal,
   useNetWorthBackfill,
 } from "../../lib/wealth-queries.ts";
-import { useGoals } from "../../lib/goal-queries.ts";
 
 export function NetWorthPage() {
   const { data: nw, isLoading } = useNetWorth();
@@ -105,11 +103,8 @@ export function NetWorthPage() {
 
 function ByGoalSection() {
   const { data, isLoading } = useNetWorthByGoal();
-  const { data: goals } = useGoals();
-  const setGoal = useAssetGoalMutation();
 
   if (isLoading || !data) return null;
-  const options = (goals ?? []).filter((g) => !g.archived);
   // A zero-value holding is usually a fully redeemed MF folio. Keep zero-balance
   // accounts visible (they can still be useful containers), but do not clutter
   // the goal breakdown with closed/empty folios.
@@ -125,33 +120,18 @@ function ByGoalSection() {
     <div className="rounded-lg border border-slate-200 bg-white p-4">
       <div className="mb-1 flex items-baseline justify-between">
         <h2 className="text-sm font-semibold text-slate-700">By goal</h2>
-        <span className="text-xs text-slate-400">Pick a goal per row to earmark it</span>
+        <span className="text-xs text-slate-400">Assets earmarked to each goal</span>
       </div>
       <div className="divide-y divide-slate-100">
         {groups.map((group) => (
-          <GoalGroupBlock
-            key={group.goalId ?? group.goalName}
-            group={group}
-            options={options.map((g) => ({ id: g.id, name: g.name }))}
-            onSet={(kind, id, goalId) =>
-              setGoal.mutate({ kind, id, goalId }, { onError: () => toast("Couldn't update the tag") })
-            }
-          />
+          <GoalGroupBlock key={group.goalId ?? group.goalName} group={group} />
         ))}
       </div>
     </div>
   );
 }
 
-function GoalGroupBlock({
-  group,
-  options,
-  onSet,
-}: {
-  group: GoalGroup;
-  options: Array<{ id: string; name: string }>;
-  onSet: (kind: "account" | "holding", id: string, goalId: string | null) => void;
-}) {
+function GoalGroupBlock({ group }: { group: GoalGroup }) {
   const pct =
     group.targetPaise && group.targetPaise > 0
       ? Math.min(100, Math.round((group.netPaise / group.targetPaise) * 100))
@@ -189,21 +169,6 @@ function GoalGroupBlock({
               <span className={`w-28 shrink-0 text-right tabular-nums ${it.valuePaise < 0 ? "text-red-600" : "text-slate-700"}`}>
                 {formatINR(it.valuePaise)}
               </span>
-              {group.assignable ? (
-                <select
-                  value={it.goalId ?? ""}
-                  aria-label={`Goal for ${it.name}`}
-                  onChange={(e) => onSet(it.kind, it.id, e.target.value || null)}
-                  className="w-36 shrink-0 rounded border border-slate-200 bg-slate-50 px-1.5 py-1 text-xs text-slate-600"
-                >
-                  <option value="">Unassigned</option>
-                  {options.map((o) => (
-                    <option key={o.id} value={o.id}>{o.name}</option>
-                  ))}
-                </select>
-              ) : (
-                <span className="w-36 shrink-0" aria-hidden="true" />
-              )}
             </li>
           ))}
         </ul>
