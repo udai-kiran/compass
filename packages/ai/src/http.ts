@@ -10,8 +10,14 @@ function stringifyBody(body: unknown): string {
 
 /**
  * Report one model round-trip to the observer. Fired exactly once per
- * {@link postJson} call (not per retry). Never throws — observing must not break
- * the model call it describes.
+ * {@link postJson} call (not per retry). Never throws.
+ *
+ * Callers invoke this fire-and-forget (`void report(...)`) — the event-log write
+ * runs in the background so a slow or failing observer can never add latency to,
+ * or break, the model call it describes. That matters most for the streaming
+ * assistant, which makes several model calls per answer. The outcome (latency,
+ * ok/error, raw response) is captured at call time and passed in, so the logged
+ * event is still accurate even though persistence is deferred.
  */
 async function report(
   observe: AiObserver | undefined,
@@ -77,7 +83,7 @@ export async function postJson(
         lastResponse = text;
         try {
           const parsed = JSON.parse(text);
-          await report(observe, request, startedAt, { response: text, ok: true });
+          void report(observe, request, startedAt, { response: text, ok: true });
           return parsed;
         } catch {
           lastErr = new AiUnavailableError("AI response was not valid JSON");
@@ -87,7 +93,7 @@ export async function postJson(
       lastErr = err;
       // 4xx is a permanent config error (bad key etc.) — surface it, don't retry.
       if (err instanceof AiUnavailableError && /\(4\d\d\)/.test(err.message)) {
-        await report(observe, request, startedAt, { response: lastResponse, ok: false, error: err.message });
+        void report(observe, request, startedAt, { response: lastResponse, ok: false, error: err.message });
         throw err;
       }
     } finally {
@@ -99,7 +105,7 @@ export async function postJson(
   // body) to AiUnavailableError with a user-safe message — the upstream detail is
   // not leaked to the client (it only reaches server logs via the thrown stack).
   const finalErr = lastErr instanceof AiUnavailableError ? lastErr : new AiUnavailableError();
-  await report(observe, request, startedAt, { response: lastResponse, ok: false, error: finalErr.message });
+  void report(observe, request, startedAt, { response: lastResponse, ok: false, error: finalErr.message });
   throw finalErr;
 }
 

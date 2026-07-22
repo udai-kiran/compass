@@ -72,6 +72,24 @@ test("postJson emits one error observation for a permanent 4xx, keeping the raw 
   assert.match(obs[0]!.response, /invalid api key/);
 });
 
+test("postJson does not wait on a slow observer — logging is off the model-call path", async () => {
+  const restore = stubFetch([{ status: 200, body: '{"x":1}' }]);
+  let observerDone = false;
+  const slowObserve = async () => {
+    await new Promise((r) => setTimeout(r, 200));
+    observerDone = true;
+  };
+  try {
+    const out = await postJson("http://x", { a: 1 }, { observe: slowObserve, retries: 0 });
+    assert.deepEqual(out, { x: 1 });
+    // The call returned before the 200ms event-log write finished — a slow or
+    // stuck ai_events insert can never delay (or break) a model request.
+    assert.equal(observerDone, false);
+  } finally {
+    restore();
+  }
+});
+
 test("postJson captures the body of an exhausted 5xx failure", async () => {
   const restore = stubFetch([{ status: 503, body: "upstream overloaded" }]);
   const obs: AiCallObservation[] = [];

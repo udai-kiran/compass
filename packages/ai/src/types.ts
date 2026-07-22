@@ -127,5 +127,10 @@ export interface AiCallObservation {
   latencyMs: number;
   error?: string;
 }
-/** Best-effort sink for {@link AiCallObservation}. Awaited, but must never throw. */
+/**
+ * Best-effort sink for {@link AiCallObservation}. Invoked fire-and-forget from the
+ * model-call path — it must never throw, and it must not be relied on to complete
+ * before the call returns (the AI event log is best-effort, never a gate on a
+ * model request).
+ */
 export type AiObserver = (obs: AiCallObservation) => void | Promise<void>;
