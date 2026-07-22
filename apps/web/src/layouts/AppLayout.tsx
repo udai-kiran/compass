@@ -9,6 +9,7 @@ import { useInboxCount } from "../lib/inbox-queries.ts";
 import { NotificationBell } from "../components/NotificationBell.tsx";
 import { CommandPalette } from "../components/CommandPalette.tsx";
 import { Assistant } from "../components/Assistant.tsx";
+import { ThemeSelect } from "../components/ThemeSelect.tsx";
 import { Icon, type IconName } from "../components/icons.tsx";
 
 interface NavItem {
@@ -248,6 +249,9 @@ export function AppLayout() {
             </button>
           </div>
           <div className="flex items-center gap-3 sm:gap-4">
+            <div className="hidden sm:block">
+              <ThemeSelect variant="header" />
+            </div>
             <NotificationBell />
             <span className="hidden text-sm text-slate-600 sm:inline">{me.displayName}</span>
             <button

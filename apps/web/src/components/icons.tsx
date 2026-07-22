@@ -27,6 +27,7 @@ export type IconName =
   | "shield"
   | "bell"
   | "compass"
+  | "palette"
   | "check";
 
 /** SVG inner markup per icon (paths use fill=none + stroke via the <svg>). */
@@ -164,6 +165,15 @@ const PATHS: Record<IconName, React.ReactNode> = {
     <>
       <circle cx="12" cy="12" r="10" />
       <path d="m16.24 7.76-2.12 6.36-6.36 2.12 2.12-6.36 6.36-2.12z" />
+    </>
+  ),
+  palette: (
+    <>
+      <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.93 0 1.68-.75 1.68-1.69 0-.44-.18-.83-.44-1.12-.28-.29-.44-.65-.44-1.13a1.64 1.64 0 0 1 1.67-1.67h1.97c3.06 0 5.56-2.5 5.56-5.56C22 6 17.5 2 12 2z" />
+      <circle cx="6.5" cy="11.5" r=".6" fill="currentColor" stroke="none" />
+      <circle cx="9.5" cy="7.5" r=".6" fill="currentColor" stroke="none" />
+      <circle cx="14.5" cy="7.5" r=".6" fill="currentColor" stroke="none" />
+      <circle cx="17.5" cy="11.5" r=".6" fill="currentColor" stroke="none" />
     </>
   ),
   check: <path d="M20 6 9 17l-5-5" />,
