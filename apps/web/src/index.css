@@ -28,6 +28,94 @@
   --color-warning: #d97706;
 }
 
+/* -------------------------------------------------------------------------
+ * Selectable color themes. Emerald is the default (the @theme block above);
+ * each `data-theme` re-tints only the brand + accent scales, so every
+ * `bg-brand-*` / `text-accent-*` utility follows without editing pages. The
+ * neutral slate scale and the semantic money colors (positive / negative /
+ * warning) stay fixed on purpose so amounts read the same across themes.
+ * `apps/web/src/lib/theme.ts` writes the attribute; keep the ids in sync.
+ * ------------------------------------------------------------------------- */
+:root[data-theme="ocean"] {
+  --color-brand-50: #eff6ff;
+  --color-brand-100: #dbeafe;
+  --color-brand-200: #bfdbfe;
+  --color-brand-300: #93c5fd;
+  --color-brand-400: #60a5fa;
+  --color-brand-500: #3b82f6;
+  --color-brand-600: #2563eb;
+  --color-brand-700: #1d4ed8;
+  --color-brand-800: #1e40af;
+  --color-brand-900: #1e3a8a;
+  --color-accent-400: #38bdf8;
+  --color-accent-500: #0ea5e9;
+  --color-accent-600: #0284c7;
+}
+
+:root[data-theme="indigo"] {
+  --color-brand-50: #eef2ff;
+  --color-brand-100: #e0e7ff;
+  --color-brand-200: #c7d2fe;
+  --color-brand-300: #a5b4fc;
+  --color-brand-400: #818cf8;
+  --color-brand-500: #6366f1;
+  --color-brand-600: #4f46e5;
+  --color-brand-700: #4338ca;
+  --color-brand-800: #3730a3;
+  --color-brand-900: #312e81;
+  --color-accent-400: #60a5fa;
+  --color-accent-500: #3b82f6;
+  --color-accent-600: #2563eb;
+}
+
+:root[data-theme="violet"] {
+  --color-brand-50: #f5f3ff;
+  --color-brand-100: #ede9fe;
+  --color-brand-200: #ddd6fe;
+  --color-brand-300: #c4b5fd;
+  --color-brand-400: #a78bfa;
+  --color-brand-500: #8b5cf6;
+  --color-brand-600: #7c3aed;
+  --color-brand-700: #6d28d9;
+  --color-brand-800: #5b21b6;
+  --color-brand-900: #4c1d95;
+  --color-accent-400: #e879f9;
+  --color-accent-500: #d946ef;
+  --color-accent-600: #c026d3;
+}
+
+:root[data-theme="rose"] {
+  --color-brand-50: #fff1f2;
+  --color-brand-100: #ffe4e6;
+  --color-brand-200: #fecdd3;
+  --color-brand-300: #fda4af;
+  --color-brand-400: #fb7185;
+  --color-brand-500: #f43f5e;
+  --color-brand-600: #e11d48;
+  --color-brand-700: #be123c;
+  --color-brand-800: #9f1239;
+  --color-brand-900: #881337;
+  --color-accent-400: #f472b6;
+  --color-accent-500: #ec4899;
+  --color-accent-600: #db2777;
+}
+
+:root[data-theme="amber"] {
+  --color-brand-50: #fffbeb;
+  --color-brand-100: #fef3c7;
+  --color-brand-200: #fde68a;
+  --color-brand-300: #fcd34d;
+  --color-brand-400: #fbbf24;
+  --color-brand-500: #f59e0b;
+  --color-brand-600: #d97706;
+  --color-brand-700: #b45309;
+  --color-brand-800: #92400e;
+  --color-brand-900: #78350f;
+  --color-accent-400: #fb923c;
+  --color-accent-500: #f97316;
+  --color-accent-600: #ea580c;
+}
+
 /* ---- reusable component classes (adopted across pages to stay consistent) ---- */
 
 @utility input {

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { formatINR, type NotificationType } from "@compass/shared";
 import { toast } from "../../lib/toast.tsx";
 import { useMe } from "../../lib/auth.ts";
+import { ThemeSelect } from "../../components/ThemeSelect.tsx";
 import {
   useCapabilities,
   useNotificationPrefs,
@@ -111,6 +112,14 @@ export function ProfilePanel() {
           >
             Update password
           </button>
+        </div>
+      </section>
+
+      <section className="rounded-lg border border-slate-200 bg-white p-4">
+        <h2 className="text-sm font-semibold text-slate-700">Appearance</h2>
+        <p className="mt-1 text-xs text-slate-400">Pick the accent color used across the app.</p>
+        <div className="mt-3">
+          <ThemeSelect variant="settings" />
         </div>
       </section>
     </div>

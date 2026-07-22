@@ -8,7 +8,11 @@ import { AppLayout } from "./layouts/AppLayout.tsx";
 import { Login } from "./routes/Login.tsx";
 import { Signup } from "./routes/Signup.tsx";
 import { ErrorPage, NotFound } from "./routes/ErrorPage.tsx";
+import { initTheme } from "./lib/theme.ts";
 import "./index.css";
+
+// Apply the saved color theme before the first paint (landing included).
+initTheme();
 
 // Authenticated pages are code-split: each becomes its own chunk loaded on first
 // visit, keeping the initial bundle (and the charting lib) out of the login path.
