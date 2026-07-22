@@ -29,6 +29,7 @@ export type IconName =
   | "compass"
   | "palette"
   | "wallet"
+  | "activity"
   | "check";
 
 /** SVG inner markup per icon (paths use fill=none + stroke via the <svg>). */
@@ -184,6 +185,7 @@ const PATHS: Record<IconName, React.ReactNode> = {
       <path d="M16 12.5h.01" />
     </>
   ),
+  activity: <path d="M3 12h4l3 8 4-16 3 8h4" />,
   check: <path d="M20 6 9 17l-5-5" />,
 };
 

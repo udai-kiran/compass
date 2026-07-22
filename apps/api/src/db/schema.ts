@@ -1359,3 +1359,48 @@ export const extractedTransactions = pgTable(
     uniqueIndex("extracted_transactions_dedupe_idx").on(t.userId, t.dedupeHash),
   ],
 );
+
+// ---------- AI event log ----------
+
+export const aiEventKind = pgEnum("ai_event_kind", [
+  "email_extract", // an ingested email classified/extracted by the model
+  "statement_parse", // a credit-card statement PDF's lines parsed
+  "statement_summary", // a statement's rewards/summary parsed
+  "categorize", // in-app "Suggest categories"
+  "summary", // the monthly narrative summary
+  "assistant", // an assistant chat turn
+]);
+export const aiEventStatus = pgEnum("ai_event_status", ["ok", "error"]);
+
+/**
+ * One model call, logged for transparency: what context was sent to the LLM and
+ * what came back, plus provider/model/latency. Both the API and the extractor
+ * write here. `requestContext`/`responseRaw` are the exact strings exchanged, so
+ * the event log can show precisely what left the app (only subject/from/body of a
+ * mail is ever sent — never the raw headers).
+ */
+export const aiEvents = pgTable(
+  "ai_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    kind: aiEventKind("kind").notNull(),
+    status: aiEventStatus("status").notNull(),
+    provider: text("provider").notNull().default(""),
+    model: text("model").notNull().default(""),
+    /** short label for the list row (email subject, "12 transactions", …) */
+    title: text("title").notNull().default(""),
+    ingestionId: uuid("ingestion_id").references(() => emailIngestions.id, { onDelete: "set null" }),
+    accountId: uuid("account_id").references(() => accounts.id, { onDelete: "set null" }),
+    /** exactly what was sent to the model (system + user context), as text */
+    requestContext: text("request_context").notNull().default(""),
+    /** raw text the model returned */
+    responseRaw: text("response_raw").notNull().default(""),
+    latencyMs: integer("latency_ms"),
+    error: text("error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("ai_events_user_created_idx").on(t.userId, t.createdAt.desc())],
+);

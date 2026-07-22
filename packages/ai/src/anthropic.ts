@@ -3,6 +3,7 @@ import { categorizationPrompt, summaryPrompt, SUMMARY_SYSTEM } from "./prompts.t
 import {
   AiUnavailableError,
   CategorySuggestionsSchema,
+  type AiObserver,
   type AiProvider,
   type ChatRequest,
   type ChatTurn,
@@ -18,6 +19,7 @@ const API_VERSION = "2023-06-01";
 interface AnthropicConfig {
   apiKey: string;
   model: string;
+  observe?: AiObserver;
 }
 
 interface AnthropicContentBlock {
@@ -40,7 +42,10 @@ export function createAnthropicProvider(config: AnthropicConfig): AiProvider {
   };
 
   async function call(body: Record<string, unknown>): Promise<AnthropicResponse> {
-    return (await postJson(ENDPOINT, { model: config.model, ...body }, { headers })) as AnthropicResponse;
+    return (await postJson(ENDPOINT, { model: config.model, ...body }, {
+      headers,
+      observe: config.observe,
+    })) as AnthropicResponse;
   }
 
   function textOf(res: AnthropicResponse): string {

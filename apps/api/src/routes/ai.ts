@@ -9,11 +9,13 @@ import {
   AiSummarySchema,
   UpdateAiSettingsSchema,
 } from "@compass/shared";
-import { AiUnavailableError } from "@compass/ai";
+import { AiUnavailableError, effectiveModel, type AiObserver } from "@compass/ai";
+import type { AiEventKind } from "@compass/shared";
 import { HttpError } from "../lib/errors.ts";
 import { suggestCategoriesFor } from "../services/ai/categorize.ts";
 import { getMonthlySummary } from "../services/ai/summary.ts";
 import { runAssistant } from "../services/ai/assistant.ts";
+import { recordAiEvent } from "../services/ai/events.ts";
 import { getAiSettings, getUserAiProvider, upsertAiSettings } from "../services/ai-settings.ts";
 import { mailboxSecret } from "../services/mailboxes.ts";
 
@@ -25,8 +27,32 @@ import { mailboxSecret } from "../services/mailboxes.ts";
 export async function aiRoutes(app: FastifyInstance) {
   const r = app.withTypeProvider<ZodTypeProvider>();
 
-  const providerFor = (userId: string) =>
-    getUserAiProvider(app.db, userId, mailboxSecret(app.config), app.config.AI_ALLOWED_BASE_URLS);
+  // Build a per-user provider that logs every model round-trip to the AI event
+  // log at the HTTP boundary — the exact request body and raw response, one event
+  // per call (so a multi-turn assistant answer records each turn).
+  const providerFor = async (userId: string, kind: AiEventKind, title: string) => {
+    const meta = await getAiSettings(app.db, userId);
+    const model = effectiveModel(meta.provider, meta.model);
+    const observe: AiObserver = (obs) =>
+      recordAiEvent(app.db, userId, {
+        kind,
+        status: obs.ok ? "ok" : "error",
+        provider: meta.provider,
+        model,
+        title,
+        requestContext: obs.request,
+        responseRaw: obs.response,
+        latencyMs: obs.latencyMs,
+        error: obs.error ?? null,
+      });
+    return getUserAiProvider(
+      app.db,
+      userId,
+      mailboxSecret(app.config),
+      app.config.AI_ALLOWED_BASE_URLS,
+      observe,
+    );
+  };
 
   // A provider outage must read as a soft notice, never a masked 500 error page.
   const degrade = (err: unknown): never => {
@@ -55,7 +81,7 @@ export async function aiRoutes(app: FastifyInstance) {
     "/api/ai/categorize",
     { schema: { body: AiCategorizeRequestSchema, response: { 200: AiCategorizeResponseSchema } } },
     async (req) => {
-      const ai = await providerFor(req.session!.userId);
+      const ai = await providerFor(req.session!.userId, "categorize", "Suggest categories");
       if (!ai.enabled) throw new HttpError(404, "AI features are not enabled");
       const suggestions = await suggestCategoriesFor(
         app.db,
@@ -71,7 +97,11 @@ export async function aiRoutes(app: FastifyInstance) {
     "/api/ai/summary",
     { schema: { body: AiSummaryRequestSchema, response: { 200: AiSummarySchema } } },
     async (req) => {
-      const ai = await providerFor(req.session!.userId);
+      const ai = await providerFor(
+        req.session!.userId,
+        "summary",
+        `Monthly summary · ${req.body.period}`,
+      );
       if (!ai.enabled) throw new HttpError(404, "AI features are not enabled");
       return getMonthlySummary(
         app.db,
@@ -86,7 +116,12 @@ export async function aiRoutes(app: FastifyInstance) {
 
   // Streaming chat over Server-Sent Events.
   r.post("/api/ai/chat", { schema: { body: AiChatRequestSchema } }, async (req, reply) => {
-    const ai = await providerFor(req.session!.userId);
+    const lastUser = [...req.body.messages].reverse().find((m) => m.role === "user");
+    const ai = await providerFor(
+      req.session!.userId,
+      "assistant",
+      lastUser?.content.slice(0, 120) || "Assistant chat",
+    );
     if (!ai.enabled) throw new HttpError(404, "AI features are not enabled");
     reply.raw.writeHead(200, {
       "content-type": "text/event-stream",

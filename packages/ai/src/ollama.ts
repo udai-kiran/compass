@@ -3,6 +3,7 @@ import { categorizationPrompt, summaryPrompt, SUMMARY_SYSTEM } from "./prompts.t
 import {
   AiUnavailableError,
   CategorySuggestionsSchema,
+  type AiObserver,
   type AiProvider,
   type ChatRequest,
   type ChatTurn,
@@ -15,6 +16,7 @@ import {
 interface OllamaConfig {
   baseUrl: string;
   model: string;
+  observe?: AiObserver;
 }
 
 interface OllamaMessage {
@@ -34,7 +36,7 @@ export function createOllamaProvider(config: OllamaConfig): AiProvider {
     return (await postJson(
       url,
       { model: config.model, stream: false, ...body },
-      { timeoutMs: 60_000 },
+      { timeoutMs: 60_000, observe: config.observe },
     )) as OllamaResponse;
   }
 

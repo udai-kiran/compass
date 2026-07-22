@@ -30,20 +30,26 @@ export async function registerUser(
   input: { email: string; password: string; displayName: string },
 ): Promise<User> {
   const passwordHash = await argon2.hash(input.password, { type: argon2.argon2id });
+  // Insert and seeding share one transaction: if category seeding fails, the user
+  // row is rolled back too, so registration never leaves a half-created account
+  // (which would then 409 on retry and never get default categories).
   let row: UserRow;
   try {
-    const inserted = await db
-      .insert(users)
-      .values({ email: input.email.toLowerCase(), passwordHash, displayName: input.displayName })
-      .returning();
-    row = inserted[0]!;
+    row = await db.transaction(async (tx) => {
+      const inserted = await tx
+        .insert(users)
+        .values({ email: input.email.toLowerCase(), passwordHash, displayName: input.displayName })
+        .returning();
+      const created = inserted[0]!;
+      await seedDefaultCategories(tx, created.id);
+      return created;
+    });
   } catch (err) {
     if (isUniqueViolation(err)) {
       throw new HttpError(409, "An account with this email already exists — log in instead");
     }
     throw err;
   }
-  await seedDefaultCategories(db, row.id);
   return toUser(row);
 }
 

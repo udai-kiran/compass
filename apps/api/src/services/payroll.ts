@@ -1,12 +1,22 @@
 import { and, eq } from "drizzle-orm";
-import type { CreatePayslip, PayslipDeduction, PayslipResult } from "@compass/shared";
+import type { AccountType, CreatePayslip, PayslipDeduction, PayslipResult } from "@compass/shared";
+import { isRetirementAccount } from "@compass/shared";
 import type { Db } from "../db/index.ts";
-import { categories } from "../db/schema.ts";
+import { accounts, categories } from "../db/schema.ts";
 import { HttpError } from "../lib/errors.ts";
 import { findOrCreateCategory } from "./categories.ts";
-import { assertOwnedAccount } from "./ownership.ts";
 import { createTransaction } from "./transactions.ts";
 import { linkTransfer } from "./transfers.ts";
+
+/** Fetch an owned account's type, or 404. Enforces both ownership and existence. */
+async function ownedAccountType(db: Db, userId: string, accountId: string): Promise<AccountType> {
+  const row = await db.query.accounts.findFirst({
+    where: and(eq(accounts.id, accountId), eq(accounts.userId, userId)),
+    columns: { type: true },
+  });
+  if (!row) throw new HttpError(404, "Account not found");
+  return row.type;
+}
 
 const PAYSLIP_TAG = "payslip";
 
@@ -48,9 +58,19 @@ export async function createPayslip(
   userId: string,
   input: CreatePayslip,
 ): Promise<PayslipResult> {
-  await assertOwnedAccount(db, userId, input.bankAccountId);
+  // Enforce the account-type invariants the UI relies on — a direct API call must
+  // not credit gross salary to a card/investment or route EPF to a non-retirement
+  // account. Salary lands in a spendable account; EPF lands in a retirement one.
+  const bankType = await ownedAccountType(db, userId, input.bankAccountId);
+  if (bankType !== "bank" && bankType !== "cash") {
+    throw new HttpError(400, "Salary must be credited to a bank or cash account");
+  }
   for (const d of input.deductions) {
-    if (d.kind === "epf") await assertOwnedAccount(db, userId, d.toAccountId!);
+    if (d.kind !== "epf") continue;
+    const destType = await ownedAccountType(db, userId, d.toAccountId!);
+    if (!isRetirementAccount(destType)) {
+      throw new HttpError(400, "EPF must go to a PPF, EPF or SSY account");
+    }
   }
 
   // A caller-supplied income category must actually be income — otherwise the

@@ -45,6 +45,7 @@ import { reportRoutes } from "./routes/reports.ts";
 import { searchRoutes } from "./routes/search.ts";
 import { backupRoutes } from "./routes/backup.ts";
 import { aiRoutes } from "./routes/ai.ts";
+import { aiEventRoutes } from "./routes/ai-events.ts";
 import { projectionSettingsRoutes } from "./routes/projection-settings.ts";
 import { inboxRoutes } from "./routes/inbox.ts";
 import { mailboxRoutes } from "./routes/mailboxes.ts";
@@ -166,6 +167,7 @@ export async function buildApp(config: Config): Promise<FastifyInstance> {
   await app.register(searchRoutes);
   await app.register(backupRoutes);
   await app.register(aiRoutes);
+  await app.register(aiEventRoutes);
   await app.register(projectionSettingsRoutes);
   await app.register(inboxRoutes);
   await app.register(mailboxRoutes);

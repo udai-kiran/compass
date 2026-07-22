@@ -448,7 +448,7 @@ test("statementPeriodKey: YYYY-MM from a valid date; null otherwise", () => {
   assert.equal(statementPeriodKey(null), null);
 });
 
-test("summarizeMatches: counts lines, sums debit magnitudes, collects matched ids", () => {
+test("summarizeMatches: matchedPaise sums only matched debits, so the spend delta is right", () => {
   const stats = summarizeMatches([
     { amountPaise: 10000, direction: "debit", status: "duplicate", matchedTransactionId: "t1" },
     { amountPaise: 5000, direction: "debit", status: "pending" },
@@ -457,10 +457,15 @@ test("summarizeMatches: counts lines, sums debit magnitudes, collects matched id
   ]);
   assert.equal(stats.lineCount, 4);
   assert.equal(stats.lineDebitPaise, 15900); // 10000 + 5000 + 900 (credit excluded)
+  // The matched credit (t2) is still counted and stamped, but must NOT reduce the
+  // spend delta — only the matched debit (t1) counts toward matchedPaise.
   assert.equal(stats.matchedCount, 2);
-  assert.equal(stats.matchedPaise, 12500); // 10000 + 2500
+  assert.equal(stats.matchedPaise, 10000); // debit t1 only, not the 2500 credit
   assert.equal(stats.unmatchedCount, 2);
   assert.deepEqual(stats.matchedTxnIds, ["t1", "t2"]);
+  // delta = listed spend not yet cleared = 15900 − 10000 = 5900 (the 5000 + 900
+  // unmatched debits); the old all-matched sum wrongly gave 15900 − 12500 = 3400.
+  assert.equal(Math.max(0, stats.lineDebitPaise - stats.matchedPaise), 5900);
 });
 
 test("summarizeMatches: a duplicate without a matched id is not counted matched", () => {

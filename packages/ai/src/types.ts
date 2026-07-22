@@ -113,3 +113,19 @@ export interface AiProvider {
   generateSummary(input: SummaryInput): Promise<string>;
   chat(request: ChatRequest): Promise<ChatTurn>;
 }
+
+/**
+ * One model round-trip, observed at the HTTP boundary — the exact request body
+ * sent to the provider and the raw response received. Used to build the AI event
+ * log faithfully (not reconstructed from call-site inputs). Fired once per
+ * `postJson` call regardless of retries; `ok` is false on an exhausted failure.
+ */
+export interface AiCallObservation {
+  request: string;
+  response: string;
+  ok: boolean;
+  latencyMs: number;
+  error?: string;
+}
+/** Best-effort sink for {@link AiCallObservation}. Awaited, but must never throw. */
+export type AiObserver = (obs: AiCallObservation) => void | Promise<void>;

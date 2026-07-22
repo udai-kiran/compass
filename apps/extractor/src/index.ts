@@ -1,5 +1,5 @@
 import { Worker } from "bullmq";
-import { createAiProvider, type AiProvider } from "@compass/ai";
+import { createAiProvider, effectiveModel, type AiObserver, type AiProvider } from "@compass/ai";
 import { EXTRACT_QUEUE, ExtractJobSchema } from "@compass/shared";
 import { loadConfig } from "./config.ts";
 import {
@@ -11,6 +11,7 @@ import {
   loadCategories,
   loadCreditCards,
   loadIngestion,
+  recordAiEvent,
   saveResults,
   setStatus,
   upsertReconciliation,
@@ -55,7 +56,14 @@ function log(
  * Returns null when they have none configured, so the caller can fail the
  * ingestion with a clear message instead of silently doing nothing.
  */
-async function aiForUser(userId: string): Promise<AiProvider | null> {
+interface ResolvedAi {
+  providerName: string;
+  model: string;
+  /** Build a provider whose every model round-trip is reported to `observe`. */
+  build: (observe: AiObserver) => AiProvider;
+}
+
+async function aiForUser(userId: string): Promise<ResolvedAi | null> {
   const s = await loadAiSettings(pool, userId);
   if (!s || s.provider === "none") return null;
   if ((s.provider === "ollama" || s.provider === "custom") && !baseUrlAllowed(s.baseUrl)) {
@@ -63,13 +71,12 @@ async function aiForUser(userId: string): Promise<AiProvider | null> {
     return null;
   }
   const apiKey = s.apiKeyEnc ? decryptSecret(s.apiKeyEnc, secret) : "";
-  const provider = createAiProvider({
-    provider: s.provider,
-    apiKey,
-    baseUrl: s.baseUrl,
-    model: s.model,
-  });
-  return provider.enabled ? provider : null;
+  const build = (observe: AiObserver): AiProvider =>
+    createAiProvider({ provider: s.provider, apiKey, baseUrl: s.baseUrl, model: s.model, observe });
+  // A mis-configured provider resolves to the (disabled) NullProvider.
+  if (!build(() => {}).enabled) return null;
+  // Log the effective model (the factory substitutes a default when blank).
+  return { providerName: s.provider, model: effectiveModel(s.provider, s.model), build };
 }
 
 function baseUrlAllowed(value: string): boolean {
@@ -108,7 +115,7 @@ interface StatementOutcome {
 
 async function processStatement(
   email: ParsedEmail,
-  ai: AiProvider,
+  providerFor: (kind: string, accountId: string | null, title: string) => AiProvider,
   userId: string,
   ctx: { receivedDate: string | null; categories: CategoryRef[] },
 ): Promise<StatementOutcome> {
@@ -135,8 +142,16 @@ async function processStatement(
     }
     // Transaction lines and the summary (totals + rewards) are separate passes:
     // the summary is best-effort, so its failure never costs us the transactions.
-    const rows = await extractStatementTxns(text, ai, { ...ctx, accountId });
-    const summary = await extractStatementSummary(text, ai).catch(() => null);
+    const subject = email.subject || "(no subject)";
+    const rows = await extractStatementTxns(
+      text,
+      providerFor("statement_parse", accountId, `Statement · ${subject}`),
+      { ...ctx, accountId },
+    );
+    const summary = await extractStatementSummary(
+      text,
+      providerFor("statement_summary", accountId, `Statement summary · ${subject}`),
+    ).catch(() => null);
     return { rows, summary };
   };
 
@@ -228,13 +243,32 @@ const worker = new Worker(
       log("warn", "ingestion not found — nothing to extract", { ingestionId });
       return;
     }
-    const ai = await aiForUser(ingestion.userId);
-    if (!ai) {
+    const resolved = await aiForUser(ingestion.userId);
+    if (!resolved) {
       const message = "no AI provider configured — set one in Settings → AI";
       await setStatus(pool, ingestion.id, "failed", message).catch(() => {});
       log("warn", "extraction skipped", { ingestionId: ingestion.id, err: message });
       return;
     }
+    const { providerName, model, build } = resolved;
+    // A provider whose every model round-trip is logged to the AI event log at
+    // the HTTP boundary (exact request body + raw response), tagged per kind.
+    const providerFor = (kind: string, accountId: string | null, title: string): AiProvider =>
+      build((obs) =>
+        recordAiEvent(pool, {
+          userId: ingestion.userId,
+          kind,
+          status: obs.ok ? "ok" : "error",
+          provider: providerName,
+          model,
+          title,
+          ingestionId: ingestion.id,
+          accountId,
+          requestContext: obs.request,
+          responseRaw: obs.response,
+          latencyMs: obs.latencyMs,
+          error: obs.error ?? null,
+        }));
     await setStatus(pool, ingestion.id, "processing");
     try {
       const email = await parseEmail(ingestion.raw);
@@ -245,14 +279,24 @@ const worker = new Worker(
       const receivedDate = ingestion.receivedAt
         ? ingestion.receivedAt.toISOString().slice(0, 10)
         : null;
-      const outcome = await runExtraction(email, ai, { receivedDate, accounts, categories });
+      const emailTitle = ingestion.subject || "(no subject)";
+      const outcome = await runExtraction(
+        email,
+        providerFor("email_extract", null, emailTitle),
+        { receivedDate, accounts, categories },
+      );
       // A statement email is recognized here but its transactions live in the PDF;
       // process that separately, overriding the (deferred) email-body outcome.
       let status = outcome.status;
       let rows: SaveRow[] = outcome.rows;
       let stmt: StatementOutcome | null = null;
       if (outcome.classification === "card_statement") {
-        stmt = await processStatement(email, ai, ingestion.userId, { receivedDate, categories });
+        stmt = await processStatement(
+          email,
+          providerFor,
+          ingestion.userId,
+          { receivedDate, categories },
+        );
         status = stmt.status;
         // Suppress lines already in the ledger from real-time alerts this cycle.
         rows = await annotateStatementDuplicates(stmt.rows, ingestion.userId);

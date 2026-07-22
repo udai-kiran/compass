@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import { createAiProvider, NullProvider, type AiProvider } from "@compass/ai";
+import { createAiProvider, NullProvider, type AiObserver, type AiProvider } from "@compass/ai";
 import type { AiSettings, UpdateAiSettings } from "@compass/shared";
 import { UpdateAiSettingsSchema } from "@compass/shared";
 import type { Db } from "../db/index.ts";
@@ -80,6 +80,7 @@ export async function getUserAiProvider(
   userId: string,
   secret: string,
   allowedBaseUrls: string,
+  observe?: AiObserver,
 ): Promise<AiProvider> {
   const row = await db.query.aiSettings.findFirst({ where: eq(aiSettings.userId, userId) });
   if (!row || row.provider === "none") return NullProvider;
@@ -94,6 +95,7 @@ export async function getUserAiProvider(
     apiKey,
     baseUrl: row.baseUrl,
     model: row.model,
+    observe,
   });
 }
 

@@ -174,7 +174,7 @@ const DEFAULT_TREE: Array<{ name: string; kind: CategoryKind; icon: string; chil
   ];
 
 /** Idempotent: creates the default tree only if the user has no categories. */
-export async function seedDefaultCategories(db: Db, userId: string): Promise<void> {
+export async function seedDefaultCategories(db: DbOrTx, userId: string): Promise<void> {
   const existing = await db.query.categories.findFirst({ where: eq(categories.userId, userId) });
   if (existing) return;
   let order = 0;
