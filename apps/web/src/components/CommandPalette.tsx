@@ -137,7 +137,7 @@ export function CommandPalette() {
                     key={item.key}
                     onMouseEnter={() => setSel(items.indexOf(item))}
                     onClick={() => go(item)}
-                    className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-sm ${active ? "bg-slate-800 text-white" : "text-slate-700 hover:bg-slate-100"}`}
+                    className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-sm ${active ? "bg-brand-600 text-white" : "text-slate-700 hover:bg-slate-100"}`}
                   >
                     <span className="truncate">{item.label}</span>
                     {item.hint && <span className={`ml-2 shrink-0 text-xs ${active ? "text-slate-300" : "text-slate-400"}`}>{item.hint}</span>}

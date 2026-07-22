@@ -87,7 +87,7 @@ export function PortfolioPage() {
           </Link>
           <Link
             to="/investments/import"
-            className="rounded-md bg-slate-800 px-3 py-1.5 text-sm text-white"
+            className="rounded-md bg-brand-600 px-3 py-1.5 text-sm text-white"
           >
             Import transactions
           </Link>
@@ -341,7 +341,7 @@ function ValuationForm({ onSubmit }: { onSubmit: (b: { date: string; valuePaise:
       <span className="text-xs font-medium text-slate-600">Update value:</span>
       <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="input" />
       <input inputMode="decimal" value={value} onChange={(e) => setValue(e.target.value)} placeholder="current ₹" className="input w-32" />
-      <button type="submit" className="rounded-md bg-slate-800 px-3 py-1.5 text-white">Save</button>
+      <button type="submit" className="rounded-md bg-brand-600 px-3 py-1.5 text-white">Save</button>
     </form>
   );
 }
@@ -373,7 +373,7 @@ function EventForm({ onSubmit }: { onSubmit: (b: CreateHoldingEvent) => void }) 
       <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="input" />
       <input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="₹ amount" className="input w-28" />
       <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="note" className="input w-36" />
-      <button type="submit" className="rounded-md bg-slate-800 px-3 py-1.5 text-white">Add</button>
+      <button type="submit" className="rounded-md bg-brand-600 px-3 py-1.5 text-white">Add</button>
     </form>
   );
 }
@@ -444,7 +444,7 @@ function TaxTreatmentForm({
           className="input w-40"
         />
       )}
-      <button type="submit" className="rounded-md bg-slate-800 px-3 py-1.5 text-white">
+      <button type="submit" className="rounded-md bg-brand-600 px-3 py-1.5 text-white">
         Save
       </button>
     </form>
@@ -482,7 +482,7 @@ function NewHoldingForm() {
         Target %
         <input type="number" min={0} max={100} value={targetPct} onChange={(e) => setTargetPct(e.target.value)} className="input w-20" />
       </label>
-      <button type="submit" disabled={create.isPending || !name} className="rounded-md bg-slate-800 px-4 py-1.5 text-white disabled:opacity-40">
+      <button type="submit" disabled={create.isPending || !name} className="rounded-md bg-brand-600 px-4 py-1.5 text-white disabled:opacity-40">
         Add holding
       </button>
     </form>

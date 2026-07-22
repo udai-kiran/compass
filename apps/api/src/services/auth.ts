@@ -1,56 +1,48 @@
 import argon2 from "argon2";
-import { eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import type { User } from "@compass/shared";
 import type { Db } from "../db/index.ts";
 import { users } from "../db/schema.ts";
 import { HttpError } from "../lib/errors.ts";
-import { countUsers, findUserByEmail, findUserById, type UserRow } from "../repositories/users.ts";
+import { findUserByEmail, findUserById, type UserRow } from "../repositories/users.ts";
 import { seedDefaultCategories } from "./categories.ts";
 
 function toUser(row: UserRow): User {
   return { id: row.id, email: row.email, displayName: row.displayName, isDemo: row.isDemo };
 }
 
-/**
- * A fixed key for the transaction-scoped advisory lock that serializes owner
- * bootstrap. Any constant works; it only has to be the same across callers.
- */
-const OWNER_BOOTSTRAP_LOCK = 0x50656e6e79; // "Penny"
+/** True when an error is a Postgres unique-violation (SQLSTATE 23505). */
+function isUniqueViolation(err: unknown): boolean {
+  return typeof err === "object" && err !== null && (err as { code?: string }).code === "23505";
+}
 
 /**
- * First-run bootstrap: registration is only open while no user exists.
+ * Self-service registration: create a new user and seed their default categories.
  *
- * The count-then-insert is a check-then-act race — two concurrent first-run
- * requests could both see zero users and both create an owner. A transaction-
- * scoped advisory lock serializes them: the loser re-reads the count under the
- * lock, now sees the owner, and is rejected. The lock releases at commit. The
- * password hash is computed before the lock so argon2 (hundreds of ms) never
- * holds it; on the rare lost race that hash is simply discarded.
+ * Open to anyone by default (gated by config.SIGNUP_ENABLED at the route). Email
+ * uniqueness is enforced by the `users.email` UNIQUE constraint, which also makes
+ * two concurrent registrations of the same address safe — one wins, the other
+ * hits the unique violation and is rejected as a 409. Data isolation is by
+ * user_id across every table, so a new account only ever sees its own rows.
  */
-export async function registerOwner(
+export async function registerUser(
   db: Db,
   input: { email: string; password: string; displayName: string },
 ): Promise<User> {
-  if ((await countUsers(db)) > 0) {
-    throw new HttpError(403, "An owner account already exists — log in instead");
-  }
   const passwordHash = await argon2.hash(input.password, { type: argon2.argon2id });
-  // The count + insert run on one connection under the advisory lock so the
-  // check-then-act is atomic against a concurrent first-run request. Default
-  // categories are seeded after commit (best-effort, as before) — the invariant
-  // that must hold under contention is "exactly one owner row", nothing else.
-  const row = await db.transaction(async (tx) => {
-    await tx.execute(sql`select pg_advisory_xact_lock(${OWNER_BOOTSTRAP_LOCK})`);
-    const [existing] = await tx.select({ count: sql<number>`count(*)::int` }).from(users);
-    if ((existing?.count ?? 0) > 0) {
-      throw new HttpError(403, "An owner account already exists — log in instead");
-    }
-    const inserted = await tx
+  let row: UserRow;
+  try {
+    const inserted = await db
       .insert(users)
       .values({ email: input.email.toLowerCase(), passwordHash, displayName: input.displayName })
       .returning();
-    return inserted[0]!;
-  });
+    row = inserted[0]!;
+  } catch (err) {
+    if (isUniqueViolation(err)) {
+      throw new HttpError(409, "An account with this email already exists — log in instead");
+    }
+    throw err;
+  }
   await seedDefaultCategories(db, row.id);
   return toUser(row);
 }

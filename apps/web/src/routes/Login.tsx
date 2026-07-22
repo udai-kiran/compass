@@ -1,9 +1,10 @@
 import { useState, type FormEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Navigate, useNavigate } from "react-router";
+import { Link, Navigate, useNavigate } from "react-router";
 import { LoginRequestSchema, UserSchema } from "@compass/shared";
 import { ApiError, apiPost } from "../lib/api.ts";
 import { meQuery, useBootstrapStatus } from "../lib/auth.ts";
+import { AuthField, AuthShell } from "../components/AuthShell.tsx";
 import { DemoButton } from "../components/DemoButton.tsx";
 
 export function Login() {
@@ -34,8 +35,9 @@ export function Login() {
     },
   });
 
+  // First run (no users yet) → send them straight to account creation.
   if (bootstrap?.needsBootstrap) {
-    return <Navigate to="/welcome" replace />;
+    return <Navigate to="/signup" replace />;
   }
 
   function onSubmit(e: FormEvent) {
@@ -44,45 +46,59 @@ export function Login() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-100">
-      <form onSubmit={onSubmit} className="w-full max-w-sm rounded-xl bg-white p-8 shadow">
-        <h1 className="text-xl font-semibold text-slate-800">🧭 Compass</h1>
-        <p className="mt-1 text-sm text-slate-500">Sign in to your finances</p>
-        <label className="mt-6 block text-sm font-medium text-slate-700">
-          Email
-          <input
-            type="email"
-            required
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-          />
-        </label>
-        <label className="mt-4 block text-sm font-medium text-slate-700">
-          Password
-          <input
-            type="password"
-            required
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-          />
-        </label>
+    <AuthShell>
+      <form onSubmit={onSubmit}>
+        <h2 className="text-2xl font-semibold text-slate-900">Welcome back</h2>
+        <p className="mt-1 text-sm text-slate-500">Sign in to your Compass account.</p>
+
+        <AuthField
+          label="Email"
+          type="email"
+          required
+          autoComplete="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+        />
+        <AuthField
+          label="Password"
+          type="password"
+          required
+          autoComplete="current-password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+        />
+
         {/* 401s are deliberately not toasted (see onApiError), so surface them here. */}
         {login.isError && (
-          <p role="alert" className="mt-4 text-sm text-red-600">
+          <p role="alert" className="mt-4 text-sm text-negative">
             {login.error.message}
           </p>
         )}
-        <button
-          type="submit"
-          disabled={login.isPending}
-          className="mt-6 w-full rounded-md bg-slate-800 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50"
-        >
+
+        <button type="submit" disabled={login.isPending} className="btn-primary mt-6 w-full">
           {login.isPending ? "Signing in…" : "Sign in"}
         </button>
-        {bootstrap?.demoAvailable && <DemoButton />}
+
+        {bootstrap?.signupEnabled !== false && (
+          <p className="mt-4 text-center text-sm text-slate-500">
+            New to Compass?{" "}
+            <Link to="/signup" className="font-medium text-brand-700 hover:text-brand-800">
+              Create an account
+            </Link>
+          </p>
+        )}
+
+        {bootstrap?.demoAvailable && (
+          <>
+            <div className="my-6 flex items-center gap-3 text-xs text-slate-400">
+              <span className="h-px flex-1 bg-slate-200" />
+              or
+              <span className="h-px flex-1 bg-slate-200" />
+            </div>
+            <DemoButton />
+          </>
+        )}
       </form>
-    </div>
+    </AuthShell>
   );
 }

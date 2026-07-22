@@ -24,6 +24,8 @@ export const BootstrapStatusSchema = z.object({
   needsBootstrap: z.boolean(),
   /** whether the public demo entry (/api/auth/demo) is available */
   demoAvailable: z.boolean().default(false),
+  /** whether open self-service registration (/api/auth/register) is accepted */
+  signupEnabled: z.boolean().default(true),
 });
 
 export const UpdateProfileSchema = z.object({ displayName: z.string().min(1) });

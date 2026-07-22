@@ -42,7 +42,7 @@ export function RulesPanel() {
             <input type="checkbox" checked={applyToAll} onChange={(e) => setApplyToAll(e.target.checked)} />
             apply to existing
           </label>
-          <button type="submit" disabled={!from || !to} className="rounded-md bg-slate-800 px-3 py-1.5 text-white disabled:opacity-40">
+          <button type="submit" disabled={!from || !to} className="rounded-md bg-brand-600 px-3 py-1.5 text-white disabled:opacity-40">
             Save
           </button>
         </form>

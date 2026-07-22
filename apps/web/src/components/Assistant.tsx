@@ -68,7 +68,7 @@ export function Assistant() {
       <button
         onClick={() => setOpen((o) => !o)}
         aria-label="Open AI assistant"
-        className="fixed bottom-5 right-5 z-40 flex h-12 w-12 items-center justify-center rounded-full bg-slate-800 text-lg text-white shadow-lg hover:bg-slate-700"
+        className="fixed bottom-5 right-5 z-40 flex h-12 w-12 items-center justify-center rounded-full bg-brand-600 text-lg text-white shadow-lg hover:bg-brand-700"
       >
         ✨
       </button>
@@ -109,7 +109,7 @@ export function Assistant() {
                 {(t.content || t.role === "user") && (
                   <span
                     className={`inline-block whitespace-pre-wrap rounded-2xl px-3 py-2 text-sm ${
-                      t.role === "user" ? "bg-slate-800 text-white" : "bg-slate-100 text-slate-700"
+                      t.role === "user" ? "bg-brand-600 text-white" : "bg-slate-100 text-slate-700"
                     }`}
                   >
                     {t.content || (busy ? "…" : "")}
@@ -133,7 +133,7 @@ export function Assistant() {
             <button
               type="submit"
               disabled={busy || !input.trim()}
-              className="rounded-md bg-slate-800 px-3 py-1.5 text-sm text-white disabled:opacity-40"
+              className="rounded-md bg-brand-600 px-3 py-1.5 text-sm text-white disabled:opacity-40"
             >
               Send
             </button>

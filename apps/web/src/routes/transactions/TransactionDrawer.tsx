@@ -173,7 +173,7 @@ export function TransactionDrawer({
                 { onSuccess: () => toast("Splits saved", "success") },
               )
             }
-            className="mt-2 rounded-md bg-slate-800 px-3 py-1.5 text-sm text-white disabled:opacity-40"
+            className="mt-2 rounded-md bg-brand-600 px-3 py-1.5 text-sm text-white disabled:opacity-40"
           >
             Save splits
           </button>

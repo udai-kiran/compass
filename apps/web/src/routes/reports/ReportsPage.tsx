@@ -89,7 +89,7 @@ export function ReportsPage() {
           )}
           <button
             onClick={() => window.print()}
-            className="rounded-md bg-slate-800 px-3 py-1.5 text-white"
+            className="rounded-md bg-brand-600 px-3 py-1.5 text-white"
           >
             Print
           </button>

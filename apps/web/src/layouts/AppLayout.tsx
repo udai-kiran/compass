@@ -9,26 +9,71 @@ import { useInboxCount } from "../lib/inbox-queries.ts";
 import { NotificationBell } from "../components/NotificationBell.tsx";
 import { CommandPalette } from "../components/CommandPalette.tsx";
 import { Assistant } from "../components/Assistant.tsx";
+import { Icon, type IconName } from "../components/icons.tsx";
 
-const NAV_SECTIONS = [
-  { to: "/", label: "Dashboard" },
-  { to: "/transactions", label: "Transactions" },
-  { to: "/inbox", label: "Inbox" },
-  { to: "/import", label: "Import" },
-  { to: "/budgets", label: "Budgets" },
-  { to: "/trends", label: "Trends" },
-  { to: "/goals", label: "Goals" },
-  { to: "/cash-flow", label: "Cash Flow" },
-  { to: "/investments", label: "Investments" },
-  { to: "/net-worth", label: "Net Worth" },
-  { to: "/cards", label: "Credit Cards" },
-  { to: "/emis", label: "EMIs & Loans" },
-  { to: "/bills", label: "Bills & Subscriptions" },
-  { to: "/insurance", label: "Insurance" },
-  { to: "/insights", label: "Insights" },
-  { to: "/reports", label: "Reports" },
-  { to: "/settings", label: "Settings" },
+interface NavItem {
+  to: string;
+  label: string;
+  icon: IconName;
+}
+interface NavGroup {
+  heading: string;
+  items: NavItem[];
+}
+
+const NAV_GROUPS: NavGroup[] = [
+  {
+    heading: "Overview",
+    items: [
+      { to: "/", label: "Dashboard", icon: "dashboard" },
+      { to: "/inbox", label: "Inbox", icon: "inbox" },
+      { to: "/transactions", label: "Transactions", icon: "transactions" },
+      { to: "/import", label: "Import", icon: "import" },
+    ],
+  },
+  {
+    heading: "Money",
+    items: [
+      { to: "/budgets", label: "Budgets", icon: "budgets" },
+      { to: "/cash-flow", label: "Cash Flow", icon: "cashflow" },
+      { to: "/bills", label: "Bills & Subscriptions", icon: "bills" },
+      { to: "/cards", label: "Credit Cards", icon: "cards" },
+      { to: "/emis", label: "EMIs & Loans", icon: "loans" },
+    ],
+  },
+  {
+    heading: "Wealth",
+    items: [
+      { to: "/investments", label: "Investments", icon: "investments" },
+      { to: "/net-worth", label: "Net Worth", icon: "networth" },
+      { to: "/insurance", label: "Insurance", icon: "insurance" },
+    ],
+  },
+  {
+    heading: "Plan",
+    items: [
+      { to: "/goals", label: "Goals", icon: "goals" },
+      { to: "/trends", label: "Trends", icon: "trends" },
+      { to: "/insights", label: "Insights", icon: "insights" },
+      { to: "/reports", label: "Reports", icon: "reports" },
+    ],
+  },
+  {
+    heading: "Setup",
+    items: [{ to: "/settings", label: "Settings", icon: "settings" }],
+  },
 ];
+
+function BrandMark() {
+  return (
+    <div className="flex h-14 items-center gap-2 border-b border-slate-200 px-4 text-lg font-semibold text-slate-800">
+      <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-brand-600 to-accent-600 text-white">
+        <Icon name="compass" className="h-5 w-5" />
+      </span>
+      Compass
+    </div>
+  );
+}
 
 function VersionFooter({ onNavigate }: { onNavigate?: () => void }) {
   const sha = shortSha(buildInfo.gitSha);
@@ -54,30 +99,53 @@ function VersionFooter({ onNavigate }: { onNavigate?: () => void }) {
   );
 }
 
+function NavRow({ item, pending, onNavigate }: { item: NavItem; pending: number; onNavigate?: () => void }) {
+  return (
+    <NavLink
+      to={item.to}
+      end={item.to === "/"}
+      onClick={onNavigate}
+      className={({ isActive }) =>
+        `group relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition ${
+          isActive
+            ? "bg-brand-50 font-medium text-brand-800"
+            : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+        }`
+      }
+    >
+      {({ isActive }) => (
+        <>
+          {isActive && (
+            <span className="absolute inset-y-1.5 left-0 w-1 rounded-r bg-brand-600" aria-hidden="true" />
+          )}
+          <Icon
+            name={item.icon}
+            className={`h-5 w-5 shrink-0 ${isActive ? "text-brand-600" : "text-slate-400 group-hover:text-slate-500"}`}
+          />
+          <span className="flex-1">{item.label}</span>
+          {item.to === "/inbox" && pending > 0 && (
+            <span className="badge bg-rose-600 text-white">{pending}</span>
+          )}
+        </>
+      )}
+    </NavLink>
+  );
+}
+
 function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
   const { data: inbox } = useInboxCount();
   const pending = inbox?.pending ?? 0;
   return (
-    <nav aria-label="Primary" className="flex-1 space-y-0.5 overflow-y-auto p-2">
-      {NAV_SECTIONS.map((s) => (
-        <NavLink
-          key={s.to}
-          to={s.to}
-          end={s.to === "/"}
-          onClick={onNavigate}
-          className={({ isActive }) =>
-            `flex items-center justify-between rounded-md px-3 py-2 text-sm ${
-              isActive ? "bg-slate-800 font-medium text-white" : "text-slate-600 hover:bg-slate-100"
-            }`
-          }
-        >
-          <span>{s.label}</span>
-          {s.to === "/inbox" && pending > 0 && (
-            <span className="ml-2 shrink-0 rounded-full bg-rose-600 px-1.5 py-0.5 text-xs font-medium text-white">
-              {pending}
-            </span>
-          )}
-        </NavLink>
+    <nav aria-label="Primary" className="flex-1 space-y-5 overflow-y-auto p-3">
+      {NAV_GROUPS.map((group) => (
+        <div key={group.heading} className="space-y-0.5">
+          <p className="px-3 pb-1 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+            {group.heading}
+          </p>
+          {group.items.map((item) => (
+            <NavRow key={item.to} item={item} pending={pending} onNavigate={onNavigate} />
+          ))}
+        </div>
       ))}
     </nav>
   );
@@ -108,17 +176,15 @@ export function AppLayout() {
     <div className="flex h-screen bg-slate-100">
       <a
         href="#main-content"
-        className="sr-only focus:not-sr-only focus:absolute focus:left-2 focus:top-2 focus:z-50 focus:rounded-md focus:bg-slate-800 focus:px-3 focus:py-2 focus:text-sm focus:text-white"
+        className="sr-only focus:not-sr-only focus:absolute focus:left-2 focus:top-2 focus:z-50 focus:rounded-md focus:bg-brand-700 focus:px-3 focus:py-2 focus:text-sm focus:text-white"
       >
         Skip to content
       </a>
       <CommandPalette />
       <Assistant />
       {/* Desktop sidebar — persistent from md up */}
-      <aside className="hidden w-60 flex-col border-r border-slate-200 bg-white md:flex">
-        <div className="flex h-14 items-center border-b border-slate-200 px-4 text-lg font-semibold text-slate-800">
-          🧭 Compass
-        </div>
+      <aside className="hidden w-64 flex-col border-r border-slate-200 bg-white md:flex">
+        <BrandMark />
         <SidebarNav />
         <VersionFooter />
       </aside>
@@ -131,12 +197,12 @@ export function AppLayout() {
             onClick={() => setMobileNavOpen(false)}
           />
           <aside className="absolute inset-y-0 left-0 flex w-64 flex-col border-r border-slate-200 bg-white shadow-xl">
-            <div className="flex h-14 items-center justify-between border-b border-slate-200 px-4 text-lg font-semibold text-slate-800">
-              <span>🧭 Compass</span>
+            <div className="flex items-center justify-between border-b border-slate-200 pr-2">
+              <BrandMark />
               <button
                 onClick={() => setMobileNavOpen(false)}
                 aria-label="Close navigation"
-                className="rounded-md p-1 text-slate-400 hover:bg-slate-100"
+                className="rounded-md p-1.5 text-slate-400 hover:bg-slate-100"
               >
                 ✕
               </button>
@@ -173,7 +239,7 @@ export function AppLayout() {
               onClick={() =>
                 window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true }))
               }
-              className="flex items-center gap-2 rounded-md border border-slate-200 px-3 py-1.5 text-sm text-slate-400 hover:bg-slate-50"
+              className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-1.5 text-sm text-slate-400 hover:border-slate-300 hover:bg-slate-50"
             >
               <span>Search…</span>
               <kbd className="hidden rounded bg-slate-100 px-1.5 text-xs text-slate-500 sm:inline">
@@ -181,13 +247,13 @@ export function AppLayout() {
               </kbd>
             </button>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3 sm:gap-4">
             <NotificationBell />
             <span className="hidden text-sm text-slate-600 sm:inline">{me.displayName}</span>
             <button
               onClick={() => logout.mutate()}
               disabled={logout.isPending}
-              className="rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-50"
+              className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
             >
               {me.isDemo ? "Exit demo" : "Log out"}
             </button>

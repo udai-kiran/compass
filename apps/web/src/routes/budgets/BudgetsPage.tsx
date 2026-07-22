@@ -41,7 +41,7 @@ export function BudgetsPage() {
           <button
             key={t}
             onClick={() => setTab(t)}
-            className={`px-3 py-2 text-sm capitalize ${tab === t ? "border-b-2 border-slate-800 font-medium text-slate-800" : "text-slate-500"}`}
+            className={`px-3 py-2 text-sm capitalize ${tab === t ? "border-b-2 border-brand-600 font-medium text-brand-700" : "text-slate-500"}`}
           >
             {t}
           </button>
@@ -124,7 +124,7 @@ function Wizard({ periodKey }: { periodKey: string }) {
       <button
         onClick={save}
         disabled={saveAll.isPending}
-        className="mt-4 rounded-md bg-slate-800 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+        className="mt-4 rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
       >
         Create budget
       </button>
@@ -234,7 +234,7 @@ function UtilizationView({
               ))}
             </select>
             <input value={newAmt} onChange={(e) => setNewAmt(e.target.value)} placeholder="₹" inputMode="decimal" className="w-24 rounded-md border border-slate-300 px-2 py-1 text-right" />
-            <button type="submit" className="rounded-md bg-slate-800 px-3 py-1 text-white">Add</button>
+            <button type="submit" className="rounded-md bg-brand-600 px-3 py-1 text-white">Add</button>
             <button type="button" className="text-slate-400 underline" onClick={() => setAdding(false)}>cancel</button>
           </form>
         ) : (

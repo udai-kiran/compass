@@ -203,7 +203,7 @@ export function TransactionsPage() {
 
       {/* Bulk bar */}
       {selectedCount > 0 && (
-        <div className="mb-2 flex flex-wrap items-center gap-2 rounded-md bg-slate-800 px-3 py-2 text-sm text-white">
+        <div className="mb-2 flex flex-wrap items-center gap-2 rounded-md bg-brand-600 px-3 py-2 text-sm text-white">
           <span>{selectedCount} selected</span>
           {!allMatching && selected.size === items.length && totalCount > items.length && (
             <button className="underline" onClick={() => setAllMatching(true)}>
@@ -211,7 +211,7 @@ export function TransactionsPage() {
             </button>
           )}
           <select
-            className="rounded bg-slate-700 px-2 py-1"
+            className="rounded bg-brand-700 px-2 py-1"
             defaultValue=""
             onChange={(e) => {
               if (e.target.value) {
@@ -233,7 +233,7 @@ export function TransactionsPage() {
               ))}
           </select>
           <button
-            className="rounded bg-slate-700 px-2 py-1"
+            className="rounded bg-brand-700 px-2 py-1"
             onClick={() => {
               const tag = prompt("Tag to add:");
               if (tag) runBulk({ action: "addTag", tag, ...bulkTarget() }, `Tagged “${tag}”`);
@@ -640,7 +640,7 @@ function QuickAdd({ filter }: { filter: TransactionFilter }) {
       <button
         type="submit"
         disabled={create.isPending}
-        className="rounded-md bg-slate-800 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50"
+        className="rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
       >
         Add
       </button>

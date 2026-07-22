@@ -197,7 +197,7 @@ function NewEmiForm() {
         <button
           type="submit"
           disabled={create.isPending || !accountId || !name || principalPaise <= 0 || months <= 0}
-          className="rounded-md bg-slate-800 px-4 py-1.5 text-sm text-white disabled:opacity-40"
+          className="rounded-md bg-brand-600 px-4 py-1.5 text-sm text-white disabled:opacity-40"
         >
           {create.isPending ? "Creating…" : "Create EMI"}
         </button>

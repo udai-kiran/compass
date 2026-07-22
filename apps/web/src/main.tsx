@@ -1,12 +1,12 @@
 import { lazy, StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { MutationCache, QueryCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { createBrowserRouter, RouterProvider } from "react-router";
+import { createBrowserRouter, Navigate, RouterProvider } from "react-router";
 import { ApiError } from "./lib/api.ts";
 import { toast, ToastProvider } from "./lib/toast.tsx";
 import { AppLayout } from "./layouts/AppLayout.tsx";
 import { Login } from "./routes/Login.tsx";
-import { Welcome } from "./routes/Welcome.tsx";
+import { Signup } from "./routes/Signup.tsx";
 import { ErrorPage, NotFound } from "./routes/ErrorPage.tsx";
 import "./index.css";
 
@@ -101,7 +101,9 @@ const queryClient = new QueryClient({
 
 const router = createBrowserRouter([
   { path: "/login", element: <Login />, errorElement: <ErrorPage /> },
-  { path: "/welcome", element: <Welcome />, errorElement: <ErrorPage /> },
+  { path: "/signup", element: <Signup />, errorElement: <ErrorPage /> },
+  // Legacy first-run path — folded into the unified signup page.
+  { path: "/welcome", element: <Navigate to="/signup" replace /> },
   {
     path: "/",
     element: <AppLayout />,

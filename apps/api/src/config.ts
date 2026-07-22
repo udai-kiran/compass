@@ -51,6 +51,14 @@ const EnvSchema = z.object({
    * demo session is rejected, so the demo data can never be altered.
    */
   DEMO_ENABLED: z.stringbool().default(false),
+  /**
+   * Allow open self-service registration. When true, anyone who can reach the
+   * instance may create their own account (`POST /api/auth/register`); every
+   * account's data stays isolated by user_id and registration is rate-limited.
+   * Set false to lock the instance to its existing users (the register route then
+   * 403s and the UI hides the "Create account" call to action).
+   */
+  SIGNUP_ENABLED: z.stringbool().default(true),
   /** Login for the seeded demo user; kept out of the owner-bootstrap count. */
   DEMO_EMAIL: z.email().default("demo@compass.app"),
   /**

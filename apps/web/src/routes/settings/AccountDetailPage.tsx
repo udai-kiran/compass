@@ -153,7 +153,7 @@ function StatementPasswordSection({ account }: { account: AccountWithBalance }) 
           <button
             type="submit"
             disabled={!dirty || mutation.isPending}
-            className="rounded-md bg-slate-800 px-3 py-1.5 text-sm text-white disabled:opacity-40"
+            className="rounded-md bg-brand-600 px-3 py-1.5 text-sm text-white disabled:opacity-40"
           >
             {mutation.isPending ? "Saving…" : "Save"}
           </button>
@@ -202,7 +202,7 @@ function SaveButton({ dirty, disabled, pending }: { dirty: boolean; disabled: bo
     <button
       type="submit"
       disabled={!dirty || disabled || pending}
-      className="rounded-md bg-slate-800 px-3 py-1.5 text-sm text-white disabled:opacity-40"
+      className="rounded-md bg-brand-600 px-3 py-1.5 text-sm text-white disabled:opacity-40"
     >
       {pending ? "Saving…" : dirty ? "Save" : "Saved"}
     </button>

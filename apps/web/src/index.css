@@ -1,7 +1,62 @@
 @import "tailwindcss";
 
+/* -------------------------------------------------------------------------
+ * Brand theme. `brand` (emerald) is the primary accent; `accent` (teal) is a
+ * secondary highlight. Slate stays the neutral scale. Defining these under
+ * @theme generates the usual utilities (bg-brand-600, text-brand-700, …), so a
+ * future re-tint only touches this block. Semantic aliases keep money colors
+ * consistent: positive=emerald, negative=rose, warning=amber.
+ * ------------------------------------------------------------------------- */
+@theme {
+  --color-brand-50: #ecfdf5;
+  --color-brand-100: #d1fae5;
+  --color-brand-200: #a7f3d0;
+  --color-brand-300: #6ee7b7;
+  --color-brand-400: #34d399;
+  --color-brand-500: #10b981;
+  --color-brand-600: #059669;
+  --color-brand-700: #047857;
+  --color-brand-800: #065f46;
+  --color-brand-900: #064e3b;
+
+  --color-accent-400: #2dd4bf;
+  --color-accent-500: #14b8a6;
+  --color-accent-600: #0d9488;
+
+  --color-positive: #059669;
+  --color-negative: #e11d48;
+  --color-warning: #d97706;
+}
+
+/* ---- reusable component classes (adopted across pages to stay consistent) ---- */
+
 @utility input {
-  @apply rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-800 focus:border-slate-500 focus:outline-none;
+  @apply rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-800 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20;
+}
+
+/* Primary call to action — the brand-colored button. */
+@utility btn-primary {
+  @apply inline-flex items-center justify-center gap-1.5 rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-500/40 disabled:cursor-not-allowed disabled:opacity-50;
+}
+
+/* Secondary / neutral button. */
+@utility btn-secondary {
+  @apply inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-300 disabled:cursor-not-allowed disabled:opacity-50;
+}
+
+/* A standard surface panel. */
+@utility card {
+  @apply rounded-xl border border-slate-200 bg-white shadow-sm;
+}
+
+/* A small pill/badge. */
+@utility badge {
+  @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium;
+}
+
+/* A section heading used above grouped content. */
+@utility section-title {
+  @apply text-sm font-semibold text-slate-800;
 }
 
 /* Print: drop the app chrome and non-printable controls, produce clean A4 */

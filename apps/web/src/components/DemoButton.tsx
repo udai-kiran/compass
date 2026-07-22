@@ -5,10 +5,10 @@ import { apiPost } from "../lib/api.ts";
 import { meQuery } from "../lib/auth.ts";
 
 /**
- * "Explore the demo" entry, shown on Login/Welcome when the server advertises
- * `demoAvailable`. Starts a read-only demo session, primes the /me cache off a
- * real round trip (so a dropped cookie surfaces here, not on every later page),
- * then enters the app.
+ * "Explore the demo" entry, shown on the login/signup pages when the server
+ * advertises `demoAvailable`. Starts a read-only demo session, primes the /me
+ * cache off a real round trip (so a dropped cookie surfaces here, not on every
+ * later page), then enters the app.
  */
 export function DemoButton() {
   const queryClient = useQueryClient();
@@ -26,12 +26,12 @@ export function DemoButton() {
   });
 
   return (
-    <div className="mt-6 border-t border-slate-200 pt-4">
+    <div>
       <button
         type="button"
         onClick={() => demo.mutate()}
         disabled={demo.isPending}
-        className="w-full rounded-md border border-slate-300 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+        className="btn-secondary w-full"
       >
         {demo.isPending ? "Loading demo…" : "Explore the demo — no sign-up"}
       </button>
@@ -39,7 +39,7 @@ export function DemoButton() {
         A read-only tour with sample data. Nothing you click changes anything.
       </p>
       {demo.isError && (
-        <p role="alert" className="mt-2 text-center text-sm text-red-600">
+        <p role="alert" className="mt-2 text-center text-sm text-negative">
           {demo.error.message}
         </p>
       )}

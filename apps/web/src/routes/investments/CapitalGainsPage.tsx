@@ -108,7 +108,7 @@ export function CapitalGainsPage() {
           {stmt && stmt.holdings.length > 0 && (
             <button
               onClick={() => downloadCsv(stmt)}
-              className="rounded-md bg-slate-800 px-3 py-1.5 text-sm text-white"
+              className="rounded-md bg-brand-600 px-3 py-1.5 text-sm text-white"
             >
               Download CSV
             </button>

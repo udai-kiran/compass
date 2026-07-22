@@ -82,7 +82,7 @@ export function RecurringPanel() {
             <option key={c.id} value={c.id}>{c.name}</option>
           ))}
         </select>
-        <button type="submit" disabled={create.isPending} className="rounded-md bg-slate-800 px-3 py-1.5 text-white disabled:opacity-50">
+        <button type="submit" disabled={create.isPending} className="rounded-md bg-brand-600 px-3 py-1.5 text-white disabled:opacity-50">
           Add
         </button>
       </form>

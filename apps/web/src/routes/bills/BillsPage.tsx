@@ -66,7 +66,7 @@ export function BillsPage() {
             <button
               key={d}
               onClick={() => setDays(d)}
-              className={`rounded-md px-2.5 py-1 ${days === d ? "bg-slate-800 text-white" : "border border-slate-300 text-slate-600"}`}
+              className={`rounded-md px-2.5 py-1 ${days === d ? "bg-brand-600 text-white" : "border border-slate-300 text-slate-600"}`}
             >
               {d}d
             </button>
@@ -76,7 +76,7 @@ export function BillsPage() {
             <button
               key={v}
               onClick={() => setView(v)}
-              className={`rounded-md px-2.5 py-1 capitalize ${view === v ? "bg-slate-800 text-white" : "border border-slate-300 text-slate-600"}`}
+              className={`rounded-md px-2.5 py-1 capitalize ${view === v ? "bg-brand-600 text-white" : "border border-slate-300 text-slate-600"}`}
             >
               {v}
             </button>
@@ -228,7 +228,7 @@ function SuggestionsPanel({ suggestions }: { suggestions: SubscriptionSuggestion
             <span className="text-xs text-slate-400">next ~{s.nextExpectedDate}</span>
             <button
               onClick={() => convert(s)}
-              className="rounded-md bg-slate-800 px-2.5 py-1 text-xs text-white"
+              className="rounded-md bg-brand-600 px-2.5 py-1 text-xs text-white"
             >
               Track
             </button>
