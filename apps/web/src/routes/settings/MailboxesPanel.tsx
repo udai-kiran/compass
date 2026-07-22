@@ -81,7 +81,7 @@ export function MailboxesPanel() {
           <button
             onClick={submit}
             disabled={!bundle.trim() || add.isPending}
-            className="rounded-md bg-slate-800 px-3 py-1.5 text-sm text-white disabled:opacity-50"
+            className="rounded-md bg-brand-600 px-3 py-1.5 text-sm text-white disabled:opacity-50"
           >
             Add mailbox
           </button>

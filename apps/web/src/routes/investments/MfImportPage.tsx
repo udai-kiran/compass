@@ -73,7 +73,7 @@ export function MfImportPage() {
             <button
               onClick={doCommit}
               disabled={commitM.isPending || preview.totalRows === 0}
-              className="rounded-md bg-slate-800 px-3 py-1.5 text-sm text-white disabled:opacity-50"
+              className="rounded-md bg-brand-600 px-3 py-1.5 text-sm text-white disabled:opacity-50"
             >
               {commitM.isPending ? "Importing…" : `Import ${preview.totalRows} transactions`}
             </button>

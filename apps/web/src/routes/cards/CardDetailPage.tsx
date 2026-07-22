@@ -212,7 +212,7 @@ function StatementsSection({ accountId }: { accountId: string }) {
           className="rounded border border-slate-200 px-2 py-1 text-xs text-slate-600"
           aria-label="Statement period (optional)"
         />
-        <label className="cursor-pointer rounded bg-slate-800 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-700">
+        <label className="cursor-pointer rounded bg-brand-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-brand-700">
           {upload.isPending ? "Uploading…" : "Upload statement"}
           <input
             type="file"

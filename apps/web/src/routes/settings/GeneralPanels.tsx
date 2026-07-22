@@ -56,7 +56,7 @@ export function ProjectionsPanel() {
                   { onSuccess: () => toast("Projection assumptions updated", "success") },
                 )
               }
-              className="rounded-md bg-slate-800 px-4 py-1.5 text-sm text-white disabled:opacity-40"
+              className="rounded-md bg-brand-600 px-4 py-1.5 text-sm text-white disabled:opacity-40"
             >
               Save
             </button>
@@ -87,7 +87,7 @@ export function ProfilePanel() {
           </label>
           <button
             onClick={() => updateProfile.mutate(name || me?.displayName || "", { onSuccess: () => toast("Profile updated", "success") })}
-            className="rounded-md bg-slate-800 px-4 py-1.5 text-sm text-white"
+            className="rounded-md bg-brand-600 px-4 py-1.5 text-sm text-white"
           >
             Save
           </button>
@@ -107,7 +107,7 @@ export function ProfilePanel() {
                 { onSuccess: () => { setCur(""); setNext(""); toast("Password changed", "success"); } },
               )
             }
-            className="rounded-md bg-slate-800 px-4 py-1.5 text-sm text-white disabled:opacity-40"
+            className="rounded-md bg-brand-600 px-4 py-1.5 text-sm text-white disabled:opacity-40"
           >
             Update password
           </button>
@@ -306,7 +306,7 @@ function BackupSection() {
         <button
           onClick={() => void download()}
           disabled={busy || passphrase.length < 8}
-          className="rounded-md bg-slate-800 px-4 py-1.5 text-sm text-white hover:bg-slate-700 disabled:opacity-40"
+          className="rounded-md bg-brand-600 px-4 py-1.5 text-sm text-white hover:bg-brand-700 disabled:opacity-40"
         >
           {busy ? "Preparing…" : "Download backup"}
         </button>
@@ -364,7 +364,7 @@ function RestoreSection() {
         <button
           onClick={() => void restore()}
           disabled={busy || !file || passphrase.length < 8}
-          className="rounded-md bg-slate-800 px-4 py-1.5 text-sm text-white hover:bg-slate-700 disabled:opacity-40"
+          className="rounded-md bg-brand-600 px-4 py-1.5 text-sm text-white hover:bg-brand-700 disabled:opacity-40"
         >
           {busy ? "Restoring…" : "Restore"}
         </button>

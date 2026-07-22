@@ -12,7 +12,7 @@ import {
   UserSchema,
 } from "@compass/shared";
 import { HttpError } from "../lib/errors.ts";
-import { changePassword, registerOwner, updateProfile, verifyLogin } from "../services/auth.ts";
+import { changePassword, registerUser, updateProfile, verifyLogin } from "../services/auth.ts";
 import { createSession, destroySession, listSessions } from "../services/session.ts";
 import { ensureDemoData } from "../services/demo.ts";
 import { countUsers, findUserById } from "../repositories/users.ts";
@@ -32,6 +32,7 @@ export async function authRoutes(app: FastifyInstance) {
     async () => ({
       needsBootstrap: (await countUsers(app.db)) === 0,
       demoAvailable: app.config.DEMO_ENABLED,
+      signupEnabled: app.config.SIGNUP_ENABLED,
     }),
   );
 
@@ -57,7 +58,10 @@ export async function authRoutes(app: FastifyInstance) {
       schema: { body: RegisterRequestSchema, response: { 201: UserSchema } },
     },
     async (req, reply) => {
-      const user = await registerOwner(app.db, req.body);
+      if (!app.config.SIGNUP_ENABLED) {
+        throw new HttpError(403, "Registration is closed on this instance");
+      }
+      const user = await registerUser(app.db, req.body);
       setSessionCookie(reply, await createSession(app.redis, user.id));
       return reply.code(201).send(user);
     },

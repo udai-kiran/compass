@@ -78,7 +78,7 @@ export function InsurancePage() {
         </div>
         <button
           onClick={() => setAdding((v) => !v)}
-          className="shrink-0 rounded-md bg-slate-800 px-4 py-1.5 text-sm text-white hover:bg-slate-700"
+          className="shrink-0 rounded-md bg-brand-600 px-4 py-1.5 text-sm text-white hover:bg-brand-700"
         >
           {adding ? "Close" : "Add policy"}
         </button>
@@ -90,7 +90,7 @@ export function InsurancePage() {
             key={k}
             onClick={() => setTab(k)}
             className={`flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium ${
-              tab === k ? "bg-slate-800 text-white" : "text-slate-600 hover:bg-slate-100"
+              tab === k ? "bg-brand-600 text-white" : "text-slate-600 hover:bg-slate-100"
             }`}
           >
             {KIND_LABELS[k]}
@@ -635,7 +635,7 @@ function PolicyForm({
         <input value={notes} onChange={(e) => setNotes(e.target.value)} className="input" placeholder="Optional" />
       </Field>
       <div className="col-span-2 flex gap-2 sm:col-span-3">
-        <button type="submit" disabled={pending || name.trim() === ""} className="rounded-md bg-slate-800 px-4 py-1.5 text-sm text-white disabled:opacity-40">
+        <button type="submit" disabled={pending || name.trim() === ""} className="rounded-md bg-brand-600 px-4 py-1.5 text-sm text-white disabled:opacity-40">
           {pending ? "Saving…" : policy ? "Save changes" : "Add policy"}
         </button>
         <button type="button" onClick={onDone} className="rounded-md border border-slate-300 px-4 py-1.5 text-sm text-slate-600">

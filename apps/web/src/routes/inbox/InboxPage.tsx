@@ -244,7 +244,7 @@ function DraftCard({
         <button
           onClick={onAccept}
           disabled={busy}
-          className="rounded-md bg-slate-800 px-4 py-1.5 text-sm text-white disabled:opacity-40"
+          className="rounded-md bg-brand-600 px-4 py-1.5 text-sm text-white disabled:opacity-40"
         >
           {accept.isPending ? "Adding…" : "Accept"}
         </button>
@@ -372,7 +372,7 @@ function TransferGroup({
         <button
           onClick={onRecord}
           disabled={busy}
-          className="rounded-md bg-slate-800 px-4 py-1.5 text-sm text-white disabled:opacity-40"
+          className="rounded-md bg-brand-600 px-4 py-1.5 text-sm text-white disabled:opacity-40"
         >
           {busy ? "Recording…" : "Record transfer"}
         </button>

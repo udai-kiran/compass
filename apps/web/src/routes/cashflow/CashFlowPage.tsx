@@ -23,7 +23,7 @@ export function CashFlowPage() {
             <button
               key={m}
               onClick={() => setMonths(m)}
-              className={`rounded-md px-2.5 py-1 ${months === m ? "bg-slate-800 text-white" : "border border-slate-300 text-slate-600"}`}
+              className={`rounded-md px-2.5 py-1 ${months === m ? "bg-brand-600 text-white" : "border border-slate-300 text-slate-600"}`}
             >
               {m}mo
             </button>

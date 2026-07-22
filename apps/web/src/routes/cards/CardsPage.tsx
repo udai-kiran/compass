@@ -382,7 +382,7 @@ function BankSettingsForm({ holder, onDone }: { holder: CardHolderSummary; onDon
         <button
           type="submit"
           disabled={mutation.isPending}
-          className="rounded-md bg-slate-800 px-4 py-1.5 text-sm text-white disabled:opacity-40"
+          className="rounded-md bg-brand-600 px-4 py-1.5 text-sm text-white disabled:opacity-40"
         >
           {mutation.isPending ? "Saving…" : "Save bank settings"}
         </button>
@@ -550,7 +550,7 @@ function DetailsForm({ card, onDone }: { card: CardSummary; onDone: () => void }
         <button
           type="submit"
           disabled={mutation.isPending}
-          className="rounded-md bg-slate-800 px-4 py-1.5 text-sm text-white disabled:opacity-40"
+          className="rounded-md bg-brand-600 px-4 py-1.5 text-sm text-white disabled:opacity-40"
         >
           {mutation.isPending ? "Saving…" : "Save card"}
         </button>
@@ -618,7 +618,7 @@ function RewardsPanel({ accountId, earnRate }: { accountId: string; earnRate: nu
         <button
           type="submit"
           disabled={add.isPending}
-          className="rounded-md bg-slate-800 px-3 py-1.5 text-white disabled:opacity-40"
+          className="rounded-md bg-brand-600 px-3 py-1.5 text-white disabled:opacity-40"
         >
           Add
         </button>

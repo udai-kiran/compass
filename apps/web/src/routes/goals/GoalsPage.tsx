@@ -37,7 +37,7 @@ export function GoalsPage() {
         <h1 className="text-xl font-semibold text-slate-800">Goals</h1>
         <button
           onClick={() => setShowForm((v) => !v)}
-          className="rounded-md bg-slate-800 px-3 py-1.5 text-sm text-white"
+          className="rounded-md bg-brand-600 px-3 py-1.5 text-sm text-white"
         >
           {showForm ? "Close" : "New goal"}
         </button>
@@ -144,7 +144,7 @@ function GoalForm({ goal, onDone }: { goal?: Goal; onDone: () => void }) {
         <input type="date" value={targetDate} onChange={(e) => setTargetDate(e.target.value)} className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5" />
       </label>
       <div className="flex items-center gap-3 sm:col-span-2">
-        <button type="submit" disabled={pending || !name} className="rounded-md bg-slate-800 px-4 py-1.5 text-white disabled:opacity-40">
+        <button type="submit" disabled={pending || !name} className="rounded-md bg-brand-600 px-4 py-1.5 text-white disabled:opacity-40">
           {editing ? (pending ? "Saving…" : "Save changes") : "Create goal"}
         </button>
         {editing && (

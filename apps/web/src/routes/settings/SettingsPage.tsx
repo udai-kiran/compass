@@ -69,7 +69,7 @@ export function SettingsPage() {
           <button
             key={t}
             onClick={() => setTab(t)}
-            className={`px-3 py-2 text-sm capitalize ${tab === t ? "border-b-2 border-slate-800 font-medium text-slate-800" : "text-slate-500"}`}
+            className={`px-3 py-2 text-sm capitalize ${tab === t ? "border-b-2 border-brand-600 font-medium text-brand-700" : "text-slate-500"}`}
           >
             {t}
           </button>
@@ -204,7 +204,7 @@ function AccountsPanel() {
         ) : (
           <input placeholder="Opening ₹" value={opening} onChange={(e) => setOpening(e.target.value)} inputMode="decimal" className="w-28 rounded-md border border-slate-300 px-2 py-1.5 text-right text-sm" />
         )}
-        <button type="submit" disabled={last4Invalid || overdraftInvalid || create.isPending} className="rounded-md bg-slate-800 px-3 py-1.5 text-sm text-white disabled:opacity-50">Add account</button>
+        <button type="submit" disabled={last4Invalid || overdraftInvalid || create.isPending} className="rounded-md bg-brand-600 px-3 py-1.5 text-sm text-white disabled:opacity-50">Add account</button>
         {last4Invalid && (
           <p role="alert" className="w-full text-xs text-red-600">
             Last 4 must be exactly 4 digits — we only ever store the last four, never the full number.
@@ -455,7 +455,7 @@ function CategoriesPanel() {
     <div className="mt-4 max-w-2xl">
       <div className="flex gap-2">
         {(["expense", "income"] as const).map((k) => (
-          <button key={k} onClick={() => setKind(k)} className={`rounded-full px-3 py-1 text-sm capitalize ${kind === k ? "bg-slate-800 text-white" : "bg-slate-100 text-slate-600"}`}>
+          <button key={k} onClick={() => setKind(k)} className={`rounded-full px-3 py-1 text-sm capitalize ${kind === k ? "bg-brand-600 text-white" : "bg-slate-100 text-slate-600"}`}>
             {k}
           </button>
         ))}
@@ -469,7 +469,7 @@ function CategoriesPanel() {
             <option key={c.id} value={c.id}>under {c.name}</option>
           ))}
         </select>
-        <button type="submit" className="rounded-md bg-slate-800 px-3 py-1.5 text-sm text-white">Add category</button>
+        <button type="submit" className="rounded-md bg-brand-600 px-3 py-1.5 text-sm text-white">Add category</button>
       </form>
 
       {roots.length === 0 && (
