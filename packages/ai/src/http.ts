@@ -9,6 +9,24 @@ function stringifyBody(body: unknown): string {
 }
 
 /**
+ * Parse a provider's response body, tolerating keep-alive padding. Some providers
+ * (notably OpenRouter, for slow reasoning models) prepend the JSON with blank
+ * lines and `: OPENROUTER PROCESSING` SSE comments to hold the connection open.
+ * Plain whitespace is fine for `JSON.parse`, but a leading `:` comment is not —
+ * so on failure we skip to the first JSON value. Returns a discriminated result
+ * (never a sentinel) so a legitimate `null`/`false` body isn't mistaken for a
+ * parse failure.
+ */
+function parseResponseBody(text: string): { ok: true; value: unknown } | { ok: false } {
+  try {
+    return { ok: true, value: JSON.parse(text) };
+  } catch {
+    const extracted = extractJson(text);
+    return extracted === undefined ? { ok: false } : { ok: true, value: extracted };
+  }
+}
+
+/**
  * Report one model round-trip to the observer. Fired exactly once per
  * {@link postJson} call (not per retry). Never throws.
  *
@@ -81,13 +99,12 @@ export async function postJson(
         // like a transient failure and retry (never emit a premature ok event).
         const text = await res.text();
         lastResponse = text;
-        try {
-          const parsed = JSON.parse(text);
+        const parsed = parseResponseBody(text);
+        if (parsed.ok) {
           void report(observe, request, startedAt, { response: text, ok: true });
-          return parsed;
-        } catch {
-          lastErr = new AiUnavailableError("AI response was not valid JSON");
+          return parsed.value;
         }
+        lastErr = new AiUnavailableError("AI response was not valid JSON");
       }
     } catch (err) {
       lastErr = err;

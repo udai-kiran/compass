@@ -72,6 +72,36 @@ test("postJson emits one error observation for a permanent 4xx, keeping the raw 
   assert.match(obs[0]!.response, /invalid api key/);
 });
 
+test("postJson parses a body with only leading whitespace", async () => {
+  const restore = stubFetch([{ status: 200, body: '\n\n\n   {"x":1}' }]);
+  try {
+    const out = await postJson("http://x", { a: 1 }, { retries: 0 });
+    assert.deepEqual(out, { x: 1 });
+  } finally {
+    restore();
+  }
+});
+
+test("postJson tolerates OpenRouter keep-alive padding before the JSON", async () => {
+  // A slow reasoning model on OpenRouter: SSE `:` comments hold the connection
+  // open, then the real JSON arrives. JSON.parse chokes on the leading `:`, so
+  // the parser must skip the padding.
+  const padded =
+    "\n\n: OPENROUTER PROCESSING\n\n: OPENROUTER PROCESSING\n\n" +
+    '{"choices":[{"message":{"content":"hi"}}]}';
+  const restore = stubFetch([{ status: 200, body: padded }]);
+  const obs: AiCallObservation[] = [];
+  try {
+    const out = await postJson("http://x", { a: 1 }, { observe: (o) => void obs.push(o), retries: 0 });
+    assert.deepEqual(out, { choices: [{ message: { content: "hi" } }] });
+  } finally {
+    restore();
+  }
+  assert.equal(obs.length, 1);
+  assert.equal(obs[0]!.ok, true);
+  assert.match(obs[0]!.response, /OPENROUTER PROCESSING/); // raw body preserved in the log
+});
+
 test("postJson does not wait on a slow observer — logging is off the model-call path", async () => {
   const restore = stubFetch([{ status: 200, body: '{"x":1}' }]);
   let observerDone = false;
