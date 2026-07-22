@@ -65,9 +65,13 @@ export async function loadAccounts(pool: pg.Pool, userId: string): Promise<Accou
     name: string;
     account_last4: string | null;
     institution: string | null;
+    debit_card_last4: string | null;
   }>(
-    `select id, name, account_last4, institution
-       from accounts where user_id = $1 and archived_at is null`,
+    `select a.id, a.name, a.account_last4, a.institution,
+            nullif(bd.debit_card_last4, '') as debit_card_last4
+       from accounts a
+       left join bank_details bd on bd.account_id = a.id
+      where a.user_id = $1 and a.archived_at is null`,
     [userId],
   );
   return res.rows.map((r) => ({
@@ -75,6 +79,7 @@ export async function loadAccounts(pool: pg.Pool, userId: string): Promise<Accou
     name: r.name,
     accountLast4: r.account_last4,
     institution: r.institution,
+    debitCardLast4: r.debit_card_last4,
   }));
 }
 
