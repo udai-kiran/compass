@@ -67,6 +67,7 @@ const ctx = (accounts: AccountRef[] = [], categories: CategoryRef[] = []) => ({
   receivedDate: "2026-07-10",
   accounts,
   categories,
+  identity: { names: [], emails: [], upiIds: [] },
 });
 
 test("decideStatus routes each class", () => {
