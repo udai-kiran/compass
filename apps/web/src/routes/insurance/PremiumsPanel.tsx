@@ -14,6 +14,8 @@ export function PremiumsPanel({ policy }: { policy: InsurancePolicy }) {
       a.archivedAt === null &&
       (isBankAccount(a.type) || a.type === "credit_card"),
   );
+  const bankAccounts = payFrom.filter((a) => isBankAccount(a.type));
+  const creditCards = payFrom.filter((a) => a.type === "credit_card");
   const nameOf = new Map((accounts ?? []).map((a) => [a.id, a.name]));
 
   const [fromAccountId, setFromAccountId] = useState("");
@@ -57,11 +59,24 @@ export function PremiumsPanel({ policy }: { policy: InsurancePolicy }) {
           Paid from
           <select value={fromAccountId} onChange={(e) => setFromAccountId(e.target.value)} className="input">
             <option value="">Select account…</option>
-            {payFrom.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.name}
-              </option>
-            ))}
+            {bankAccounts.length > 0 && (
+              <optgroup label="Bank accounts">
+                {bankAccounts.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}
+                  </option>
+                ))}
+              </optgroup>
+            )}
+            {creditCards.length > 0 && (
+              <optgroup label="Credit cards">
+                {creditCards.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}
+                  </option>
+                ))}
+              </optgroup>
+            )}
           </select>
         </label>
         <label className="flex flex-col gap-1 text-xs text-slate-500">
