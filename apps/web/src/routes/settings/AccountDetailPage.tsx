@@ -17,6 +17,8 @@ import { ACCOUNT_TYPE_LABELS, ACCOUNT_TYPES, maskAccountNumber } from "../../lib
 import {
   useBankDetails,
   useBankDetailsMutation,
+  useAccountNpsDetails,
+  useAccountNpsDetailsMutation,
   useOverdraftDetails,
   useOverdraftDetailsMutation,
   useRetirementDetails,
@@ -42,6 +44,7 @@ const NON_UPI_ACCOUNT_TYPES: readonly AccountWithBalance["type"][] = [
   "home_loan_od",
   "epf",
   "ppf",
+  "nps",
 ];
 
 /** Validates with the same schema the API enforces, so the two can't disagree. */
@@ -100,6 +103,7 @@ function AccountDetail({ account }: { account: AccountWithBalance }) {
       {isBankAccount(account.type) && <BankSection key={account.type} account={account} />}
       {isOverdraftAccount(account.type) && <OverdraftSection key={account.type} account={account} />}
       {isRetirementAccount(account.type) && <RetirementSection key={account.type} account={account} />}
+      {account.type === "nps" && <NpsSection account={account} />}
       {account.type === "credit_card" && <StatementPasswordSection account={account} />}
     </div>
   );
@@ -705,6 +709,81 @@ function RetirementSection({ account }: { account: AccountWithBalance }) {
         )}
         <div className="pt-1">
           <SaveButton dirty={dirty} disabled={rateError !== null || epsError !== null} pending={save.isPending} />
+        </div>
+      </Section>
+    </form>
+  );
+}
+
+function NpsSection({ account }: { account: AccountWithBalance }) {
+  const { data, isPending } = useAccountNpsDetails(account.id, true);
+  const save = useAccountNpsDetailsMutation(account.id);
+  const [pran, setPran] = useState("");
+  const [tier, setTier] = useState<"tier_i" | "tier_ii">("tier_i");
+  const [equity, setEquity] = useState("0");
+  const [corporate, setCorporate] = useState("0");
+  const [govt, setGovt] = useState("100");
+
+  useEffect(() => {
+    if (!data) return;
+    setPran(data.pran);
+    setTier(data.tier);
+    setEquity(String(data.equityPct));
+    setCorporate(String(data.corporatePct));
+    setGovt(String(data.govtPct));
+  }, [data]);
+
+  const equityPct = Number(equity);
+  const corporatePct = Number(corporate);
+  const govtPct = Number(govt);
+  const allocationValid =
+    [equityPct, corporatePct, govtPct].every((v) => Number.isInteger(v) && v >= 0 && v <= 100) &&
+    equityPct + corporatePct + govtPct === 100;
+  const dirty =
+    pran !== (data?.pran ?? "") ||
+    tier !== (data?.tier ?? "tier_i") ||
+    equityPct !== (data?.equityPct ?? 0) ||
+    corporatePct !== (data?.corporatePct ?? 0) ||
+    govtPct !== (data?.govtPct ?? 100);
+
+  function submit(e: FormEvent) {
+    e.preventDefault();
+    if (!allocationValid) return;
+    save.mutate(
+      { pran: pran.trim(), tier, equityPct, corporatePct, govtPct },
+      { onSuccess: () => toast("NPS details saved", "success") },
+    );
+  }
+
+  if (isPending) return <Section title="NPS details"><p className="text-sm text-slate-400">Loading…</p></Section>;
+
+  return (
+    <form onSubmit={submit}>
+      <Section title="NPS details" hint="Track the PRAN and current E/C/G scheme allocation; the corpus is the account balance.">
+        <Field label="PRAN">
+          <input value={pran} onChange={(e) => setPran(e.target.value)} className={`${inputClass} font-mono`} />
+        </Field>
+        <Field label="Tier">
+          <select value={tier} onChange={(e) => setTier(e.target.value as "tier_i" | "tier_ii")} className={inputClass}>
+            <option value="tier_i">Tier I</option>
+            <option value="tier_ii">Tier II</option>
+          </select>
+        </Field>
+        {([
+          ["Equity (E)", equity, setEquity],
+          ["Corporate (C)", corporate, setCorporate],
+          ["Government (G)", govt, setGovt],
+        ] as const).map(([label, value, setter]) => (
+          <Field key={label} label={label}>
+            <div className="flex items-center gap-2">
+              <input type="number" min="0" max="100" step="1" value={value} onChange={(e) => setter(e.target.value)} className={inputClass} />
+              <span className="text-sm text-slate-400">%</span>
+            </div>
+          </Field>
+        ))}
+        {!allocationValid && <p className="text-xs text-red-600">E + C + G must total exactly 100%.</p>}
+        <div className="pt-1">
+          <SaveButton dirty={dirty} disabled={!allocationValid} pending={save.isPending} />
         </div>
       </Section>
     </form>

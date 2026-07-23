@@ -12,6 +12,7 @@ export const ACCOUNT_TYPES: AccountType[] = [
   "ppf",
   "epf",
   "ssy",
+  "nps",
 ];
 
 // `insurance` is intentionally absent above — it's a deprecated account type
@@ -28,6 +29,7 @@ export const ACCOUNT_TYPE_LABELS: Record<AccountType, string> = {
   ppf: "PPF",
   epf: "EPF",
   ssy: "Sukanya Samriddhi",
+  nps: "NPS",
   insurance: "Insurance",
 };
 

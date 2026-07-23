@@ -36,6 +36,7 @@ import { billRoutes } from "./routes/bills.ts";
 import { cardRoutes } from "./routes/cards.ts";
 import { emiRoutes } from "./routes/emis.ts";
 import { retirementRoutes } from "./routes/retirement.ts";
+import { accountNpsRoutes } from "./routes/account-nps.ts";
 import { bankDetailsRoutes } from "./routes/bank-details.ts";
 import { overdraftDetailsRoutes } from "./routes/overdraft-details.ts";
 import { insuranceRoutes } from "./routes/insurance.ts";
@@ -159,6 +160,7 @@ export async function buildApp(config: Config): Promise<FastifyInstance> {
   await app.register(cardRoutes);
   await app.register(emiRoutes);
   await app.register(retirementRoutes);
+  await app.register(accountNpsRoutes);
   await app.register(bankDetailsRoutes);
   await app.register(overdraftDetailsRoutes);
   await app.register(insuranceRoutes);

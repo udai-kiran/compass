@@ -25,6 +25,7 @@ test("credited-balance schemes count as investment assets, not cash or debt", ()
   assert.equal(ACCOUNT_BUCKET.ppf, "investmentAccountsPaise");
   assert.equal(ACCOUNT_BUCKET.epf, "investmentAccountsPaise");
   assert.equal(ACCOUNT_BUCKET.ssy, "investmentAccountsPaise");
+  assert.equal(ACCOUNT_BUCKET.nps, "investmentAccountsPaise");
 });
 
 test("account types map to the bucket their sign convention expects", () => {

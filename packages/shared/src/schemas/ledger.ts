@@ -12,6 +12,7 @@ export const AccountTypeSchema = z.enum([
   "ppf",
   "epf",
   "ssy",
+  "nps",
   "home_loan_od",
   // DEPRECATED account type. Insurance is now a standalone entity (see
   // schemas/insurance.ts), not an account. Kept only because the Postgres enum
@@ -66,6 +67,7 @@ export const GOAL_ELIGIBLE_ACCOUNT_TYPES = [
   "ppf",
   "epf",
   "ssy",
+  "nps",
 ] as const satisfies readonly AccountType[];
 
 export function accountCanHaveGoal(type: AccountType): boolean {

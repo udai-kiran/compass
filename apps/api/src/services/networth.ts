@@ -30,6 +30,7 @@ export const ACCOUNT_BUCKET: Record<AccountType, AccountBucket | null> = {
   ppf: "investmentAccountsPaise",
   epf: "investmentAccountsPaise",
   ssy: "investmentAccountsPaise",
+  nps: "investmentAccountsPaise",
   credit_card: "creditCardsPaise",
   loan: "loansPaise",
   overdraft: "loansPaise",

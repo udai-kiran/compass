@@ -1,9 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   BankDetailsSchema,
+  AccountNpsDetailsSchema,
   OverdraftDetailsSchema,
   RetirementDetailsSchema,
   type UpsertBankDetails,
+  type UpsertAccountNpsDetails,
   type UpsertOverdraftDetails,
   type UpsertRetirementDetails,
 } from "@compass/shared";
@@ -49,6 +51,24 @@ export function useRetirementDetailsMutation(accountId: string) {
     mutationFn: (body: UpsertRetirementDetails) =>
       apiPut(`/api/retirement/${accountId}/details`, RetirementDetailsSchema, body),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["retirement-details", accountId] }),
+  });
+}
+
+export function useAccountNpsDetails(accountId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ["account-nps-details", accountId],
+    queryFn: () =>
+      apiGet(`/api/accounts/${accountId}/nps-details`, AccountNpsDetailsSchema.nullable()),
+    enabled,
+  });
+}
+
+export function useAccountNpsDetailsMutation(accountId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: UpsertAccountNpsDetails) =>
+      apiPut(`/api/accounts/${accountId}/nps-details`, AccountNpsDetailsSchema, body),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["account-nps-details", accountId] }),
   });
 }
 

@@ -17,7 +17,8 @@ import {
   useRefreshNav,
 } from "../../lib/wealth-queries.ts";
 
-// PPF/EPF are not here on purpose — they're account types, managed in Settings.
+// NPS remains labelled here so legacy positions render, but new NPS containers
+// are accounts and are created in Settings.
 const ASSET_LABELS: Record<AssetClass, string> = {
   stock: "Stocks",
   mutual_fund: "Mutual funds",
@@ -28,6 +29,7 @@ const ASSET_LABELS: Record<AssetClass, string> = {
   other: "Other",
 };
 const ASSET_CLASSES = Object.keys(ASSET_LABELS) as AssetClass[];
+const CREATABLE_ASSET_CLASSES = ASSET_CLASSES.filter((assetClass) => assetClass !== "nps");
 
 export function PortfolioPage() {
   const { data: p, isLoading } = usePortfolio();
@@ -475,7 +477,7 @@ function NewHoldingForm() {
       <label className="flex flex-col gap-1 text-xs text-slate-500">
         Asset class
         <select value={assetClass} onChange={(e) => setAssetClass(e.target.value as AssetClass)} className="input">
-          {ASSET_CLASSES.map((c) => <option key={c} value={c}>{ASSET_LABELS[c]}</option>)}
+              {CREATABLE_ASSET_CLASSES.map((c) => <option key={c} value={c}>{ASSET_LABELS[c]}</option>)}
         </select>
       </label>
       <label className="flex flex-col gap-1 text-xs text-slate-500">
