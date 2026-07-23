@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { formatINR, type Transaction, type TransactionFilter } from "@compass/shared";
+import { formatINR, type Category, type Transaction, type TransactionFilter } from "@compass/shared";
 import { toast } from "../../lib/toast.tsx";
 import {
   useAccounts,
@@ -9,6 +9,7 @@ import {
   useTransactionMutations,
   useTransactionsInfinite,
 } from "../../lib/queries.ts";
+import { CategoryPicker } from "../../components/CategoryPicker.tsx";
 import { TransactionDrawer } from "./TransactionDrawer.tsx";
 import { AiCategorizePanel } from "./AiCategorizePanel.tsx";
 import { PayslipModal } from "./PayslipModal.tsx";
@@ -175,20 +176,13 @@ export function TransactionsPage() {
             </option>
           ))}
         </select>
-        <select
-          value={params.get("categoryId") ?? ""}
-          onChange={(e) => setFilterParam("categoryId", e.target.value)}
-          className="rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm"
-        >
-          <option value="">All categories</option>
-          {categories
-            ?.filter((c) => !c.archivedAt)
-            .map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-        </select>
+        <CategoryPicker
+          categories={categories ?? []}
+          value={params.get("categoryId") || null}
+          onChange={(id) => setFilterParam("categoryId", id ?? "")}
+          emptyLabel="All categories"
+          className="w-44"
+        />
         <input
           placeholder="tag"
           defaultValue={params.get("tag") ?? ""}
@@ -218,28 +212,15 @@ export function TransactionsPage() {
               Select all {totalCount} matching
             </button>
           )}
-          <select
-            className="rounded bg-brand-700 px-2 py-1"
-            defaultValue=""
-            onChange={(e) => {
-              if (e.target.value) {
-                runBulk(
-                  { action: "setCategory", categoryId: e.target.value, ...bulkTarget() },
-                  "Recategorized",
-                );
-                e.target.value = "";
-              }
+          <CategoryPicker
+            categories={categories ?? []}
+            value={null}
+            onChange={(id) => {
+              if (id) runBulk({ action: "setCategory", categoryId: id, ...bulkTarget() }, "Recategorized");
             }}
-          >
-            <option value="">Set category…</option>
-            {categories
-              ?.filter((c) => !c.archivedAt)
-              .map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-          </select>
+            placeholder="Set category…"
+            className="w-44 text-slate-700"
+          />
           <button
             className="rounded bg-brand-700 px-2 py-1"
             onClick={() => {
@@ -347,7 +328,7 @@ function TxRow({
   catName: (id: string | null) => string;
   accName: (id: string) => string;
   accounts: Array<{ id: string; name: string; type: string; archivedAt: string | null }>;
-  categories: Array<{ id: string; name: string; archivedAt: string | null }>;
+  categories: Category[];
   onUpdate: (
     patch: Partial<{
       categoryId: string | null;
@@ -492,25 +473,15 @@ function TxRow({
         </button>
       )}
       {editing === "category" ? (
-        <select
-          autoFocus
-          defaultValue={tx.categoryId ?? ""}
-          onBlur={() => setEditing(null)}
-          onChange={(e) => {
-            onUpdate({ categoryId: e.target.value === "" ? null : e.target.value });
-            setEditing(null);
-          }}
-          className="w-36 rounded border border-slate-300 px-1 py-0.5"
-        >
-          <option value="">Uncategorized</option>
-          {categories
-            .filter((c) => !c.archivedAt)
-            .map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-        </select>
+        <CategoryPicker
+          categories={categories}
+          value={tx.categoryId}
+          defaultOpen
+          onClose={() => setEditing(null)}
+          onChange={(id) => onUpdate({ categoryId: id })}
+          emptyLabel="Uncategorized"
+          className="w-40"
+        />
       ) : (
         <button
           className="w-36 truncate text-left text-slate-500"
@@ -596,7 +567,10 @@ function QuickAdd({ filter }: { filter: TransactionFilter }) {
     >
       <select
         value={kind}
-        onChange={(e) => setKind(e.target.value as "expense" | "income")}
+        onChange={(e) => {
+          setKind(e.target.value as "expense" | "income");
+          setCategoryId(""); // categories are kind-specific — drop a now-mismatched pick
+        }}
         className="rounded-md border border-slate-300 px-2 py-1.5 text-sm"
       >
         <option value="expense">Expense</option>
@@ -633,20 +607,14 @@ function QuickAdd({ filter }: { filter: TransactionFilter }) {
           </option>
         ))}
       </select>
-      <select
-        value={categoryId}
-        onChange={(e) => setCategoryId(e.target.value)}
-        className="rounded-md border border-slate-300 px-2 py-1.5 text-sm"
-      >
-        <option value="">Category…</option>
-        {categories
-          ?.filter((c) => !c.archivedAt && c.kind === kind)
-          .map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-            </option>
-          ))}
-      </select>
+      <CategoryPicker
+        categories={categories ?? []}
+        value={categoryId || null}
+        onChange={(id) => setCategoryId(id ?? "")}
+        kind={kind}
+        placeholder="Category…"
+        className="w-40"
+      />
       <button
         type="submit"
         disabled={create.isPending}

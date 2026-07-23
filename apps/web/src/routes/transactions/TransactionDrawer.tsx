@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { formatINR, TransactionSchema, type TransactionFilter } from "@compass/shared";
 import { apiGet } from "../../lib/api.ts";
+import { CategoryPicker } from "../../components/CategoryPicker.tsx";
 import { toast } from "../../lib/toast.tsx";
 import {
   useAttachmentMutations,
@@ -136,15 +137,15 @@ export function TransactionDrawer({
           </div>
           {rows.map((row, i) => (
             <div key={i} className="mt-2 flex items-center gap-2">
-              <select
-                value={row.categoryId}
-                onChange={(e) => setRows(rows.map((r, j) => (j === i ? { ...r, categoryId: e.target.value } : r)))}
-                className="flex-1 rounded-md border border-slate-300 px-2 py-1 text-sm"
-              >
-                {categories?.filter((c) => !c.archivedAt).map((c) => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
-              </select>
+              <CategoryPicker
+                categories={categories ?? []}
+                value={row.categoryId || null}
+                onChange={(id) =>
+                  setRows(rows.map((r, j) => (j === i ? { ...r, categoryId: id ?? "" } : r)))
+                }
+                placeholder="Category…"
+                className="flex-1"
+              />
               <input
                 value={row.amountRupees}
                 onChange={(e) => setRows(rows.map((r, j) => (j === i ? { ...r, amountRupees: e.target.value } : r)))}
