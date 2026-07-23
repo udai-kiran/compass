@@ -20,3 +20,7 @@ test("non-equity holdings retain their own assumptions", () => {
   assert.equal(assetClassReturnBps("gold", 950), 800);
   assert.equal(assetClassReturnBps("fd", 950), 700);
 });
+
+test("NPS accounts use a conservative blended market return", () => {
+  assert.equal(accountReturnBps("nps", null, 950), 1000);
+});

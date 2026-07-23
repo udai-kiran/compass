@@ -5,6 +5,9 @@ export type GoalAllocationClass = "equity" | "debt" | "other";
 export function accountAllocationClass(type: AccountType): GoalAllocationClass {
   if (type === "investment") return "equity";
   if (type === "ppf" || type === "epf" || type === "ssy") return "debt";
+  // An NPS account can span E/C/G; until goal assets support split buckets,
+  // keep the blend visible as "other" rather than mislabelling the whole corpus.
+  if (type === "nps") return "other";
   return "other";
 }
 

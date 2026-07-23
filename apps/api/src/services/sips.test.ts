@@ -55,7 +55,7 @@ test("classifySipTarget: an mf_folio SIP takes its holding's classification", ()
   );
 });
 
-test("classifySipTarget: an account SIP (e.g. PPF/SSY) is always debt", () => {
+test("classifySipTarget: credited schemes are debt while blended NPS stays other", () => {
   assert.equal(
     classifySipTarget({ targetKind: "account", holding: null, account: { type: "ppf" } }),
     "debt",
@@ -63,6 +63,10 @@ test("classifySipTarget: an account SIP (e.g. PPF/SSY) is always debt", () => {
   assert.equal(
     classifySipTarget({ targetKind: "account", holding: null, account: { type: "ssy" } }),
     "debt",
+  );
+  assert.equal(
+    classifySipTarget({ targetKind: "account", holding: null, account: { type: "nps" } }),
+    "other",
   );
 });
 
@@ -295,11 +299,12 @@ test("SIP account targets: liabilities are rejected", () => {
   assert.equal(accountCanHaveGoal("home_loan_od"), false);
 });
 
-test("SIP account targets: investment-scheme accounts (PPF/EPF/SSY/investment) remain valid", () => {
+test("SIP account targets: investment-scheme accounts (including NPS) remain valid", () => {
   assert.equal(accountCanHaveGoal("investment"), true);
   assert.equal(accountCanHaveGoal("ppf"), true);
   assert.equal(accountCanHaveGoal("epf"), true);
   assert.equal(accountCanHaveGoal("ssy"), true);
+  assert.equal(accountCanHaveGoal("nps"), true);
 });
 
 // ---------- resolveSipDateRange (Fix 4: resolved-pair validation on partial update) ----------

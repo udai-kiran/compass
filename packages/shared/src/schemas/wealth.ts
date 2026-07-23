@@ -85,6 +85,32 @@ export const UpsertRetirementDetailsSchema = z.object({
 });
 export type UpsertRetirementDetails = z.input<typeof UpsertRetirementDetailsSchema>;
 
+// ---------- NPS accounts ----------
+
+export const AccountNpsDetailsSchema = z.object({
+  accountId: z.uuid(),
+  pran: z.string(),
+  tier: z.enum(["tier_i", "tier_ii"]),
+  equityPct: z.number().int(),
+  corporatePct: z.number().int(),
+  govtPct: z.number().int(),
+});
+export type AccountNpsDetails = z.infer<typeof AccountNpsDetailsSchema>;
+
+export const UpsertAccountNpsDetailsSchema = z
+  .object({
+    pran: z.string().max(32).default(""),
+    tier: z.enum(["tier_i", "tier_ii"]).default("tier_i"),
+    equityPct: z.number().int().min(0).max(100).default(0),
+    corporatePct: z.number().int().min(0).max(100).default(0),
+    govtPct: z.number().int().min(0).max(100).default(0),
+  })
+  .refine((v) => v.equityPct + v.corporatePct + v.govtPct === 100, {
+    error: "Scheme allocation (E + C + G) must total 100%",
+    path: ["equityPct"],
+  });
+export type UpsertAccountNpsDetails = z.input<typeof UpsertAccountNpsDetailsSchema>;
+
 export const CardSummarySchema = z.object({
   accountId: z.uuid(),
   name: z.string(),

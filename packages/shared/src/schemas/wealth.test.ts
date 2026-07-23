@@ -1,11 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { CreateAccountSchema, isRetirementAccount } from "./ledger.ts";
+import { AccountTypeSchema, CreateAccountSchema, accountCanHaveGoal, isRetirementAccount } from "./ledger.ts";
 import {
   AssetClassSchema,
   CreateHoldingEventSchema,
   UpsertGoldDetailsSchema,
   UpsertNpsDetailsSchema,
+  UpsertAccountNpsDetailsSchema,
   UpsertRetirementDetailsSchema,
 } from "./wealth.ts";
 
@@ -18,7 +19,7 @@ test("a buy or sell holding event requires units; a dividend need not", () => {
   assert.equal(CreateHoldingEventSchema.safeParse({ ...base, type: "dividend" }).success, true);
 });
 
-test("PPF and EPF are account types, not asset classes", () => {
+test("long-lived schemes, including NPS, are account types", () => {
   // The whole point of the split: a credited balance is an account, a
   // mark-to-market one is a holding. Two homes for PPF would be a bug.
   assert.equal(AssetClassSchema.safeParse("ppf").success, false);
@@ -31,6 +32,8 @@ test("PPF and EPF are account types, not asset classes", () => {
   assert.equal(isRetirementAccount("ssy"), true);
   assert.equal(isRetirementAccount("bank"), false);
   assert.equal(isRetirementAccount("investment"), false);
+  assert.equal(AccountTypeSchema.safeParse("nps").success, true);
+  assert.equal(accountCanHaveGoal("nps"), true);
 });
 
 test("account last4 takes exactly 4 digits, or nothing", () => {
@@ -73,6 +76,24 @@ test("NPS defaults to tier I", () => {
   const parsed = UpsertNpsDetailsSchema.parse({ equityPct: 100, corporatePct: 0, govtPct: 0 });
   assert.equal(parsed.tier, "tier_i");
   assert.equal(parsed.pran, "");
+});
+
+test("NPS account details enforce the same E/C/G allocation", () => {
+  const parsed = UpsertAccountNpsDetailsSchema.parse({
+    pran: "123456789012",
+    equityPct: 50,
+    corporatePct: 30,
+    govtPct: 20,
+  });
+  assert.equal(parsed.tier, "tier_i");
+  assert.equal(
+    UpsertAccountNpsDetailsSchema.safeParse({
+      equityPct: 50,
+      corporatePct: 30,
+      govtPct: 10,
+    }).success,
+    false,
+  );
 });
 
 test("gold purity applies to metal, not paper", () => {

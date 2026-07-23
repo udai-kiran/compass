@@ -83,10 +83,8 @@ export const aiSettings = pgTable("ai_settings", {
 });
 
 /**
- * `ppf`, `epf` and `ssy` are accounts rather than holdings because their balance
- * is known exactly — interest is credited at a fixed rate, not estimated. NPS
- * and gold move with a daily NAV/price, so they stay holdings, where a valuation
- * carries the as-of date that makes the estimate honest.
+ * Long-lived financial containers are accounts. Their current value is the
+ * account balance; scheme-specific metadata lives in a one-to-one detail table.
  */
 export const accountType = pgEnum("account_type", [
   "bank",
@@ -102,6 +100,7 @@ export const accountType = pgEnum("account_type", [
   // Sukanya Samriddhi: a PPF twin (fixed govt rate, credited annually, matures
   // ~21 years out, has an account number). Reuses the scheme-details structure.
   "ssy",
+  "nps",
   // Overdraft home loan (SBI Maxgain and its equivalents). A distinct type, not
   // just a loan: you park surplus into it to cut interest and can withdraw it
   // back, so it carries a sanctioned limit and a drawing power a term loan has
@@ -1075,7 +1074,25 @@ export const holdings = pgTable(
 
 export const npsTier = pgEnum("nps_tier", ["tier_i", "tier_ii"]);
 
-/** Extra detail for `nps` holdings. */
+/** Scheme metadata for an NPS account; its corpus is the account balance. */
+export const accountNpsDetails = pgTable("account_nps_details", {
+  accountId: uuid("account_id")
+    .primaryKey()
+    .references(() => accounts.id, { onDelete: "cascade" }),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => users.id),
+  pran: text("pran").notNull().default(""),
+  tier: npsTier("tier").notNull().default("tier_i"),
+  /** Current E/C/G scheme allocation; validated to total 100 by the service. */
+  equityPct: integer("equity_pct").notNull().default(0),
+  corporatePct: integer("corporate_pct").notNull().default(0),
+  govtPct: integer("govt_pct").notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** Extra detail for legacy `nps` holdings. */
 export const npsDetails = pgTable("nps_details", {
   holdingId: uuid("holding_id")
     .primaryKey()

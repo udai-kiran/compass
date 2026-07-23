@@ -24,6 +24,8 @@ export const ACCOUNT_RETURN_BPS: Record<AccountType, number | typeof STORED> = {
   ppf: STORED,
   epf: STORED,
   ssy: STORED,
+  // NPS is market-linked; use a conservative blended long-horizon assumption.
+  nps: 1000,
   // Liabilities don't "grow" a goal; their balance is already negative and stays flat here.
   credit_card: 0,
   loan: 0,
