@@ -22,6 +22,7 @@ import {
 import { useAccounts } from "../../lib/queries.ts";
 import { useAssetGoalMutation, useNetWorthByGoal, usePortfolio } from "../../lib/wealth-queries.ts";
 import { SERIES } from "../../lib/viz.tsx";
+import { formatGoalDeadlineDistance } from "./goal-date.ts";
 
 const GOAL_TYPES: Array<{ value: GoalType; label: string }> = [
   { value: "savings", label: "Savings" },
@@ -218,7 +219,9 @@ function GoalCard({
             <h2 className="font-semibold text-slate-800">{goal.name}</h2>
             <p className="text-xs text-slate-400">
               {typeLabel(goal.type)}
-              {goal.targetDate ? ` · by ${goal.targetDate}` : " · no target date"}
+              {goal.targetDate
+                ? ` · by ${goal.targetDate} · ${formatGoalDeadlineDistance(goal.targetDate)}`
+                : " · no target date"}
             </p>
           </div>
           <div className="flex items-center gap-2 text-xs">
