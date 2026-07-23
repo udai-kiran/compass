@@ -45,6 +45,7 @@ function formatPct(bps: number): string {
 
 export function GoalsPage() {
   const { data: goals } = useGoals();
+  const { reorder } = useGoalMutations();
   const [showForm, setShowForm] = useState(false);
   const active = goals?.filter((g) => !g.archived) ?? [];
   const archived = goals?.filter((g) => g.archived) ?? [];
@@ -64,8 +65,23 @@ export function GoalsPage() {
       {showForm && <GoalForm onDone={() => setShowForm(false)} />}
 
       <div className="mt-4 space-y-4">
-        {active.map((g) => (
-          <GoalCard key={g.id} goal={g} />
+        {active.map((g, index) => (
+          <GoalCard
+            key={g.id}
+            goal={g}
+            canMoveUp={index > 0}
+            canMoveDown={index < active.length - 1}
+            reorderPending={reorder.isPending}
+            onMove={(offset) => {
+              const reordered = [...active];
+              const [moved] = reordered.splice(index, 1);
+              reordered.splice(index + offset, 0, moved!);
+              reorder.mutate(
+                { goalIds: reordered.map(({ id }) => id) },
+                { onError: () => toast("Couldn't rearrange goals") },
+              );
+            }}
+          />
         ))}
         {active.length === 0 && !showForm && (
           <p className="rounded-lg border border-slate-200 bg-white p-8 text-center text-sm text-slate-400">
@@ -175,7 +191,19 @@ function GoalForm({ goal, onDone }: { goal?: Goal; onDone: () => void }) {
   );
 }
 
-function GoalCard({ goal }: { goal: Goal }) {
+function GoalCard({
+  goal,
+  canMoveUp,
+  canMoveDown,
+  reorderPending,
+  onMove,
+}: {
+  goal: Goal;
+  canMoveUp: boolean;
+  canMoveDown: boolean;
+  reorderPending: boolean;
+  onMove: (offset: -1 | 1) => void;
+}) {
   const { data: p } = useGoalProgress(goal.id);
   const { update, remove } = useGoalMutations();
   const [editing, setEditing] = useState(false);
@@ -193,7 +221,29 @@ function GoalCard({ goal }: { goal: Goal }) {
               {goal.targetDate ? ` · by ${goal.targetDate}` : " · no target date"}
             </p>
           </div>
-          <div className="flex gap-2 text-xs">
+          <div className="flex items-center gap-2 text-xs">
+            <div className="flex flex-col" aria-label={`Rearrange ${goal.name}`}>
+              <button
+                type="button"
+                aria-label={`Move ${goal.name} up`}
+                title="Move goal up"
+                disabled={!canMoveUp || reorderPending}
+                className="leading-3 text-slate-400 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-25"
+                onClick={() => onMove(-1)}
+              >
+                ▲
+              </button>
+              <button
+                type="button"
+                aria-label={`Move ${goal.name} down`}
+                title="Move goal down"
+                disabled={!canMoveDown || reorderPending}
+                className="leading-3 text-slate-400 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-25"
+                onClick={() => onMove(1)}
+              >
+                ▼
+              </button>
+            </div>
             <button className="text-slate-500 underline" onClick={() => setEditing(true)}>
               Edit
             </button>
@@ -275,32 +325,42 @@ function formatConstituentPct(pct: number): string {
 /** Goal progress split into the mapped assets that make up the funded corpus. */
 function GoalFundingMeter({ p }: { p: GoalProgress }) {
   const assets = p.assets.filter(hasValue);
-  const positiveFundedPaise = assets.reduce(
-    (sum, asset) => sum + Math.max(0, asset.valuePaise),
+  const positiveAssets = assets.filter((asset) => asset.valuePaise > 0);
+  const positiveFundedPaise = positiveAssets.reduce(
+    (sum, asset) => sum + asset.valuePaise,
     0,
   );
   const barTotalPaise = Math.max(p.effectiveTargetPaise, positiveFundedPaise);
-  const fundedAssetCount = assets.filter((asset) => asset.valuePaise > 0).length;
+  const fundedAssetCount = positiveAssets.length;
 
   return (
     <div
-      className="flex h-2 w-full overflow-hidden rounded-full bg-slate-200"
+      className="flex h-2 w-full rounded-full bg-slate-200"
       role="img"
       aria-label={`${p.percent}% funded, split across ${fundedAssetCount} mapped asset${fundedAssetCount === 1 ? "" : "s"}`}
     >
-      {assets.map((asset, index) => {
-        if (asset.valuePaise <= 0) return null;
+      {positiveAssets.map((asset, index) => {
         const share = constituentPct(asset.valuePaise, positiveFundedPaise);
         return (
           <span
             key={`${asset.kind}:${asset.id}`}
-            className="h-full"
+            className="group relative h-full first:rounded-l-full last:rounded-r-full focus-visible:z-10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600"
+            tabIndex={0}
+            aria-label={`${asset.name}: ${formatINR(asset.valuePaise)}, ${formatConstituentPct(share)} of funded assets`}
             style={{
               width: `${barTotalPaise > 0 ? (asset.valuePaise / barTotalPaise) * 100 : 0}%`,
               backgroundColor: assetColor(index),
             }}
-            title={`${asset.name}: ${formatConstituentPct(share)} of funded assets`}
-          />
+          >
+            <span
+              role="tooltip"
+              className="pointer-events-none absolute bottom-full left-1/2 z-20 mb-2 hidden w-max max-w-56 -translate-x-1/2 rounded-md bg-slate-900 px-2 py-1.5 text-xs font-normal text-white shadow-lg group-hover:block group-focus:block"
+            >
+              <b>{asset.name}</b>
+              <br />
+              {formatINR(asset.valuePaise)} · {formatConstituentPct(share)} of funded
+            </span>
+          </span>
         );
       })}
     </div>

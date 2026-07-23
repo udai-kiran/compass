@@ -535,6 +535,7 @@ export const goals = pgTable(
     /** emergency_fund preset: target = N months of trailing average expenses */
     targetMonths: integer("target_months"),
     targetDate: date("target_date"),
+    sortOrder: integer("sort_order").notNull().default(0),
     archivedAt: timestamp("archived_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

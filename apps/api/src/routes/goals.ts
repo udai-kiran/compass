@@ -5,6 +5,7 @@ import {
   CreateGoalSchema,
   GoalProgressSchema,
   GoalSchema,
+  ReorderGoalsSchema,
   UpdateGoalSchema,
 } from "@compass/shared";
 import {
@@ -12,6 +13,7 @@ import {
   deleteGoal,
   getGoalProgress,
   listGoals,
+  reorderGoals,
   updateGoal,
 } from "../services/goals.ts";
 
@@ -31,6 +33,12 @@ export async function goalRoutes(app: FastifyInstance) {
     { schema: { body: CreateGoalSchema, response: { 201: GoalSchema } } },
     async (req, reply) =>
       reply.code(201).send(await createGoal(app.db, req.session!.userId, req.body)),
+  );
+
+  r.put(
+    "/api/goals/order",
+    { schema: { body: ReorderGoalsSchema, response: { 200: z.array(GoalSchema) } } },
+    async (req) => reorderGoals(app.db, req.session!.userId, req.body),
   );
 
   r.patch(
