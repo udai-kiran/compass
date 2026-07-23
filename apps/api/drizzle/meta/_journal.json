@@ -323,6 +323,20 @@
       "when": 1784746769418,
       "tag": "0045_convert_opening_balances_to_tx",
       "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1784794409483,
+      "tag": "0046_nappy_shockwave",
+      "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1784795471978,
+      "tag": "0047_flat_edwin_jarvis",
+      "breakpoints": true
     }
   ]
 }

@@ -2,13 +2,14 @@ import { and, eq, isNull, sql } from "drizzle-orm";
 import type { Redis } from "ioredis";
 import type { CashflowMonth, Forecast } from "@compass/shared";
 import type { Db } from "../db/index.ts";
-import { recurringTemplates } from "../db/schema.ts";
+import { accounts, holdings, recurringTemplates, sips } from "../db/schema.ts";
 import { toCsv } from "../lib/csv.ts";
 import { bankCashTotal } from "./balances.ts";
 import { cached } from "./cache.ts";
 import { getTrends } from "./dashboard.ts";
 import { LIABILITY_TYPES_SQL } from "./periods.ts";
 import { advanceDate } from "./recurring.ts";
+import { sipOccurrencesInWindow } from "./sips.ts";
 
 const TTL = 300;
 
@@ -95,6 +96,34 @@ export async function getForecast(db: Db, redis: Redis, userId: string): Promise
           obligationsByDate.set(due, list);
         }
         due = advanceDate(due, t.frequency, t.interval);
+      }
+    }
+
+    // Upcoming goal-SIP debits — the same predictable outflow as a recurring
+    // template, so they count toward the trough/runway just like a bill.
+    const activeSips = await db
+      .select({
+        amountPaise: sips.amountPaise,
+        dayOfMonth: sips.dayOfMonth,
+        frequency: sips.frequency,
+        startDate: sips.startDate,
+        endDate: sips.endDate,
+        status: sips.status,
+        targetKind: sips.targetKind,
+        holdingName: holdings.name,
+        accountName: accounts.name,
+      })
+      .from(sips)
+      .leftJoin(holdings, eq(holdings.id, sips.targetHoldingId))
+      .leftJoin(accounts, eq(accounts.id, sips.targetAccountId))
+      .where(and(eq(sips.userId, userId), eq(sips.status, "active")));
+    for (const s of activeSips) {
+      const target = s.targetKind === "mf_folio" ? s.holdingName : s.accountName;
+      const merchant = `SIP → ${target ?? "goal"}`;
+      for (const due of sipOccurrencesInWindow(s, today, horizon)) {
+        const list = obligationsByDate.get(due) ?? [];
+        list.push({ merchant, amountPaise: -s.amountPaise });
+        obligationsByDate.set(due, list);
       }
     }
 

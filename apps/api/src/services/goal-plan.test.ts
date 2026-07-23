@@ -35,6 +35,8 @@ test("behind goal proposes a contribution split to the target mix", () => {
     currentDebtPct: 0,
     currentOtherPct: 0,
     fundedPaise: 5_00_000_00,
+    committedEquityPaise: 0,
+    committedDebtPaise: 0,
   });
   assert.equal(plan.status, "behind");
   assert.equal(plan.targetEquityPct, 75);
@@ -54,6 +56,8 @@ test("on-track goal within the band is not flagged as drifted", () => {
     currentDebtPct: 35,
     currentOtherPct: 0,
     fundedPaise: 10_00_000_00,
+    committedEquityPaise: 0,
+    committedDebtPaise: 0,
   });
   assert.equal(plan.status, "on_track");
   assert.equal(plan.allocationDrifted, false);
@@ -70,6 +74,8 @@ test("a funded goal whose mix drifts beyond the band is flagged", () => {
     currentDebtPct: 10,
     currentOtherPct: 0,
     fundedPaise: 10_00_000_00,
+    committedEquityPaise: 0,
+    committedDebtPaise: 0,
   });
   assert.equal(plan.allocationDrifted, true);
 });
@@ -87,6 +93,8 @@ test("a cash buffer alongside a balanced core does not fabricate a warning", () 
     currentDebtPct: 20,
     currentOtherPct: 50,
     fundedPaise: 10_00_000_00,
+    committedEquityPaise: 0,
+    committedDebtPaise: 0,
   });
   assert.equal(plan.allocationDrifted, false);
 });
@@ -103,6 +111,8 @@ test("a mid/long goal parked mostly in cash is flagged even when its slice match
     currentDebtPct: 1,
     currentOtherPct: 96,
     fundedPaise: 10_00_000_00,
+    committedEquityPaise: 0,
+    committedDebtPaise: 0,
   });
   assert.equal(plan.allocationDrifted, true);
 });
@@ -117,6 +127,8 @@ test("an emergency fund fully in cash is NOT flagged (cash is the right place)",
     currentDebtPct: 0,
     currentOtherPct: 100,
     fundedPaise: 10_00_000_00,
+    committedEquityPaise: 0,
+    committedDebtPaise: 0,
   });
   assert.equal(plan.allocationDrifted, false);
 });
@@ -131,6 +143,8 @@ test("an empty goal does not 'drift' — it just needs funding", () => {
     currentDebtPct: 0,
     currentOtherPct: 0,
     fundedPaise: 0,
+    committedEquityPaise: 0,
+    committedDebtPaise: 0,
   });
   assert.equal(plan.allocationDrifted, false);
 });
@@ -145,9 +159,47 @@ test("undated goal → no_target status, null recommendation", () => {
     currentDebtPct: 50,
     currentOtherPct: 0,
     fundedPaise: 1_00_000_00,
+    committedEquityPaise: 0,
+    committedDebtPaise: 0,
   });
   assert.equal(plan.status, "no_target");
   assert.equal(plan.recommendedMonthlyPaise, null);
   assert.equal(plan.monthlyEquityPaise, 0);
   assert.equal(plan.monthlyDebtPaise, 0);
+});
+
+test("committed SIPs partially cover the recommendation → per-leg gap", () => {
+  const plan = buildGoalPlan({
+    goalType: "retirement",
+    monthsToTarget: 20 * 12, // 75/25
+    onTrack: false,
+    requiredMonthlyPaise: 10_000_00, // needs 7,500 equity + 2,500 debt
+    currentEquityPct: 100,
+    currentDebtPct: 0,
+    currentOtherPct: 0,
+    fundedPaise: 5_00_000_00,
+    committedEquityPaise: 3_000_00, // an equity SIP covering part of it
+    committedDebtPaise: 4_000_00, // a debt SIP that overshoots its leg
+  });
+  assert.equal(plan.committedMonthlyPaise, 7_000_00);
+  assert.equal(plan.gapEquityPaise, 4_500_00); // 7,500 − 3,000
+  assert.equal(plan.gapDebtPaise, 0); // over-committed leg floors at 0, not negative
+  assert.equal(plan.gapMonthlyPaise, 4_500_00);
+});
+
+test("no SIPs → the whole recommendation is the gap", () => {
+  const plan = buildGoalPlan({
+    goalType: "home",
+    monthsToTarget: 6 * 12,
+    onTrack: false,
+    requiredMonthlyPaise: 5_000_00,
+    currentEquityPct: 0,
+    currentDebtPct: 0,
+    currentOtherPct: 0,
+    fundedPaise: 0,
+    committedEquityPaise: 0,
+    committedDebtPaise: 0,
+  });
+  assert.equal(plan.committedMonthlyPaise, 0);
+  assert.equal(plan.gapMonthlyPaise, plan.recommendedMonthlyPaise);
 });

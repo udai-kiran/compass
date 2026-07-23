@@ -16,6 +16,12 @@ import type { Storage } from "../lib/storage.ts";
  * handle those references in two passes. Kept exhaustive on purpose: a table
  * missing here silently drops out of the encrypted backup, so the schema-coverage
  * test guards it against drift as new tables are added.
+ *
+ * `sips` is placed after `holdings` (not next to `goals`, where it logically
+ * belongs) because it FKs both: goal_id and, for an mf_folio target,
+ * target_holding_id. Unlike accounts.goal_id/categories.parent_id it has no
+ * deferred-column entry below — its one forward-ish reference is just avoided
+ * by ordering instead.
  */
 export const ALL_TABLES = [
   "users", "accounts", "categories", "transactions", "transaction_splits", "transfer_links",
@@ -26,7 +32,7 @@ export const ALL_TABLES = [
   "card_details", "card_issuer_settings", "card_statements", "bank_details", "retirement_details", "overdraft_details",
   "insurance_policies", "insurance_health_cards",
   "reward_entries", "emi_details", "holdings", "nps_details", "gold_details",
-  "holding_valuations", "holding_events", "net_worth_snapshots",
+  "holding_valuations", "holding_events", "sips", "net_worth_snapshots",
   "mailbox_accounts", "mailbox_credentials", "email_ingestions", "extracted_transactions",
   "statement_reconciliations", "ai_events",
 ] as const;
@@ -36,7 +42,7 @@ export const USER_TABLES: Record<string, string> = {
   accounts: "user_id", categories: "user_id", transactions: "user_id", transfer_links: "user_id",
   imports: "user_id", import_presets: "user_id", merchant_rules: "user_id",
   budgets: "user_id", budget_alerts: "user_id", notifications: "user_id", recurring_templates: "user_id",
-  goals: "user_id", alert_ledger: "user_id", subscription_dismissals: "user_id", notification_prefs: "user_id",
+  goals: "user_id", sips: "user_id", alert_ledger: "user_id", subscription_dismissals: "user_id", notification_prefs: "user_id",
   projection_settings: "user_id", ai_settings: "user_id",
   card_details: "user_id", card_issuer_settings: "user_id", card_statements: "user_id",
   bank_details: "user_id", retirement_details: "user_id",

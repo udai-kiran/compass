@@ -1,6 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { costBasis, unitsHeld } from "./holdings.ts";
+import {
+  costBasis,
+  holdingArchiveConflictsWithSip,
+  holdingGoalEditConflictsWithSip,
+  sipTargetHoldingArchiveBlockedMessage,
+  sipTargetHoldingBlockedMessage,
+  unitsHeld,
+} from "./holdings.ts";
 
 const buy = (date: string, units: number, amountPaise: number) => ({ type: "buy", date, units, amountPaise });
 const sell = (date: string, units: number, amountPaise: number) => ({ type: "sell", date, units, amountPaise });
@@ -46,4 +53,82 @@ test("a sell larger than units held cannot drive cost basis or units negative", 
 
 test("units held still tallies buys, sells, and cash dividends", () => {
   assert.equal(unitsHeld([buy("2026-01-01", 100, 1), sell("2026-02-01", 30, 1), dividend("2026-03-01", 1)]), 70);
+});
+
+// ---------- holdingGoalEditConflictsWithSip (Fix 1: asset-edit vs SIP-invariant guard) ----------
+
+test("holdingGoalEditConflictsWithSip: a goalId change on a SIP-targeted holding is rejected", () => {
+  assert.equal(holdingGoalEditConflictsWithSip({ goalId: "goal-2" }, { goalId: "goal-1" }, 2), true);
+});
+
+test("holdingGoalEditConflictsWithSip: unmapping (goalId -> null) a SIP-targeted holding is rejected", () => {
+  assert.equal(holdingGoalEditConflictsWithSip({ goalId: null }, { goalId: "goal-1" }, 1), true);
+});
+
+test("holdingGoalEditConflictsWithSip: a same-value goalId patch is allowed (no-op)", () => {
+  assert.equal(holdingGoalEditConflictsWithSip({ goalId: "goal-1" }, { goalId: "goal-1" }, 5), false);
+});
+
+test("holdingGoalEditConflictsWithSip: an untouched goalId field (absent from patch) is allowed", () => {
+  assert.equal(holdingGoalEditConflictsWithSip({}, { goalId: "goal-1" }, 5), false);
+});
+
+test("holdingGoalEditConflictsWithSip: a goalId change is allowed when no SIP targets the holding", () => {
+  assert.equal(holdingGoalEditConflictsWithSip({ goalId: "goal-2" }, { goalId: "goal-1" }, 0), false);
+});
+
+test("holdingGoalEditConflictsWithSip: paused SIPs still block — the caller counts every SIP, not just active", () => {
+  // The caller (updateHolding) queries sips.targetHoldingId without filtering
+  // on status, so a paused-only reference still surfaces as a non-zero count.
+  assert.equal(holdingGoalEditConflictsWithSip({ goalId: null }, { goalId: "goal-1" }, 1), true);
+});
+
+test("sipTargetHoldingBlockedMessage: names the SIP count", () => {
+  assert.equal(
+    sipTargetHoldingBlockedMessage(1),
+    "Holding is the target of 1 SIP(s) for this goal — delete or repoint them first",
+  );
+  assert.equal(
+    sipTargetHoldingBlockedMessage(3),
+    "Holding is the target of 3 SIP(s) for this goal — delete or repoint them first",
+  );
+});
+
+// ---------- holdingArchiveConflictsWithSip (Fix 1: archived holdings can't stay a SIP target) ----------
+
+test("holdingArchiveConflictsWithSip: archiving a SIP-targeted holding is rejected", () => {
+  assert.equal(holdingArchiveConflictsWithSip({ archived: true }, { archivedAt: null }, 1), true);
+});
+
+test("holdingArchiveConflictsWithSip: archiving a SIP-targeted holding with a paused-only reference still blocks", () => {
+  // The caller (updateHolding) queries sips.targetHoldingId without filtering
+  // on status, so a paused-only reference still surfaces as a non-zero count.
+  assert.equal(holdingArchiveConflictsWithSip({ archived: true }, { archivedAt: null }, 1), true);
+});
+
+test("holdingArchiveConflictsWithSip: archiving with no SIP references at all is allowed", () => {
+  assert.equal(holdingArchiveConflictsWithSip({ archived: true }, { archivedAt: null }, 0), false);
+});
+
+test("holdingArchiveConflictsWithSip: an already-archived holding re-sent as archived:true is a no-op, not re-blocked", () => {
+  assert.equal(holdingArchiveConflictsWithSip({ archived: true }, { archivedAt: new Date("2026-01-01") }, 1), false);
+});
+
+test("holdingArchiveConflictsWithSip: unarchiving a SIP-referenced holding is never blocked", () => {
+  assert.equal(holdingArchiveConflictsWithSip({ archived: false }, { archivedAt: new Date("2026-01-01") }, 1), false);
+});
+
+test("holdingArchiveConflictsWithSip: an unrelated patch with archived left untouched is unaffected", () => {
+  assert.equal(holdingArchiveConflictsWithSip({}, { archivedAt: null }, 1), false);
+});
+
+test("sipTargetHoldingArchiveBlockedMessage: names the SIP count", () => {
+  assert.equal(
+    sipTargetHoldingArchiveBlockedMessage(1),
+    "Holding is the target of 1 SIP(s) — delete or repoint them before archiving",
+  );
+  assert.equal(
+    sipTargetHoldingArchiveBlockedMessage(2),
+    "Holding is the target of 2 SIP(s) — delete or repoint them before archiving",
+  );
 });

@@ -101,6 +101,14 @@ export const GoalPlanSchema = z.object({
   /** the recommended monthly amount split to the target mix (0 when none recommended) */
   monthlyEquityPaise: z.number().int(),
   monthlyDebtPaise: z.number().int(),
+  /** sum of the goal's active SIPs, paise/month (0 with none) */
+  committedMonthlyPaise: z.number().int(),
+  committedEquityPaise: z.number().int(),
+  committedDebtPaise: z.number().int(),
+  /** max(0, recommended − committed), per leg and total — what the SIPs don't yet cover */
+  gapMonthlyPaise: z.number().int(),
+  gapEquityPaise: z.number().int(),
+  gapDebtPaise: z.number().int(),
 });
 export type GoalPlan = z.infer<typeof GoalPlanSchema>;
 
