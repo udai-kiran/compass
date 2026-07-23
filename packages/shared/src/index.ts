@@ -1,5 +1,6 @@
 export * from "./money.ts";
 export * from "./date.ts";
+export * from "./redact.ts";
 export * from "./schemas/health.ts";
 export * from "./schemas/auth.ts";
 export * from "./schemas/ledger.ts";

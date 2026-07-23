@@ -3,9 +3,11 @@ import { z } from "zod";
 import { extractJson, type AiProvider } from "@compass/ai";
 import {
   EmailClassSchema,
+  redactPii,
   TxnDirectionSchema,
   type EmailClass,
   type EmailIngestStatus,
+  type RedactionIdentity,
   type TxnDirection,
 } from "@compass/shared";
 import type { ParsedEmail } from "./email.ts";
@@ -72,14 +74,17 @@ function categoryLines(categories: CategoryRef[]): string {
   ].join("\n");
 }
 
-function userPrompt(email: ParsedEmail, categories: CategoryRef[]): string {
+function userPrompt(email: ParsedEmail, categories: CategoryRef[], identity: RedactionIdentity): string {
   const cats = categoryLines(categories);
+  // Redact the user's PII before it reaches the model. Subject/From carry the
+  // bank/merchant sender the classifier needs, so only the user's own known
+  // identifiers are stripped there; the body gets the full structural pass.
   return [
-    `Subject: ${email.subject}`,
-    `From: ${email.from}`,
+    `Subject: ${redactPii(email.subject, identity, { structural: false })}`,
+    `From: ${redactPii(email.from, identity, { structural: false })}`,
     ...(cats ? ["", cats] : []),
     "",
-    email.body,
+    redactPii(email.body, identity),
   ].join("\n");
 }
 
@@ -284,10 +289,11 @@ export async function classifyAndExtract(
   email: ParsedEmail,
   ai: AiProvider,
   categories: CategoryRef[],
+  identity: RedactionIdentity,
 ): Promise<z.infer<typeof ModelResultSchema>> {
   const turn = await ai.chat({
     system: EXTRACT_SYSTEM,
-    messages: [{ role: "user", content: userPrompt(email, categories) }],
+    messages: [{ role: "user", content: userPrompt(email, categories, identity) }],
     tools: [],
     maxTokens: 2048,
     // A statement email's HTML body is bigger than an alert's; a slow reasoning
@@ -309,9 +315,14 @@ export async function classifyAndExtract(
 export async function runExtraction(
   email: ParsedEmail,
   ai: AiProvider,
-  ctx: { receivedDate: string | null; accounts: AccountRef[]; categories: CategoryRef[] },
+  ctx: {
+    receivedDate: string | null;
+    accounts: AccountRef[];
+    categories: CategoryRef[];
+    identity: RedactionIdentity;
+  },
 ): Promise<ExtractionOutcome> {
-  const model = await classifyAndExtract(email, ai, ctx.categories);
+  const model = await classifyAndExtract(email, ai, ctx.categories, ctx.identity);
   const { status, extract } = decideStatus(model.classification);
   if (!extract) return { classification: model.classification, status, rows: [] };
 

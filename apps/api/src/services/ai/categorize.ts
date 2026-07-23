@@ -1,7 +1,37 @@
 import { sql } from "drizzle-orm";
 import type { AiProvider } from "@compass/ai";
-import type { AiCategorySuggestion } from "@compass/shared";
+import { redactPii, type AiCategorySuggestion, type RedactionIdentity } from "@compass/shared";
 import type { Db } from "../../db/index.ts";
+
+/**
+ * The user's own identifiers, to redact *their* PII from the free-text note sent
+ * to the model (the merchant name is kept — it's the categorization signal). See
+ * `redactPii`.
+ */
+async function loadRedactionIdentity(db: Db, userId: string): Promise<RedactionIdentity> {
+  const row = (
+    await db.execute(sql`
+      select u.display_name, u.email,
+        array_remove(array_agg(distinct nullif(a.holder_name, '')), null) as holder_names,
+        array_remove(array_agg(distinct vpa), null) as upi_ids
+      from users u
+      left join accounts a on a.user_id = u.id
+      left join lateral unnest(coalesce(a.upi_ids, '{}')) as vpa on true
+      where u.id = ${userId}
+      group by u.id
+    `)
+  ).rows[0] as
+    | { display_name: string; email: string; holder_names: string[] | null; upi_ids: string[] | null }
+    | undefined;
+  if (!row) return { names: [], emails: [], upiIds: [] };
+  const names = new Set<string>(row.holder_names ?? []);
+  if (row.display_name) names.add(row.display_name);
+  return {
+    names: [...names],
+    emails: row.email ? [row.email] : [],
+    upiIds: (row.upi_ids ?? []).filter((v) => v !== ""),
+  };
+}
 
 /**
  * AI categorization assist (task 7.3). Fetches uncategorized transactions,
@@ -37,12 +67,15 @@ export async function suggestCategoriesFor(
   ).rows as Array<{ id: string; name: string; kind: "expense" | "income" }>;
   if (catRows.length === 0) return [];
 
+  const identity = await loadRedactionIdentity(db, userId);
   const suggestions = await ai.suggestCategories({
     categories: catRows.map((c) => ({ id: c.id, name: c.name, kind: c.kind })),
     transactions: rows.map((r) => ({
       id: r.id,
       merchant: r.merchant,
-      description: r.notes,
+      // The user's free-text note may carry their own PII; the merchant name is
+      // the categorization signal and stays as-is.
+      description: redactPii(r.notes, identity),
       amountPaise: Number(r.amount_paise),
     })),
   });

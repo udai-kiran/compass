@@ -1,6 +1,6 @@
 import { Worker } from "bullmq";
 import { createAiProvider, effectiveModel, type AiObserver, type AiProvider } from "@compass/ai";
-import { EXTRACT_QUEUE, ExtractJobSchema } from "@compass/shared";
+import { EXTRACT_QUEUE, ExtractJobSchema, redactPii, type RedactionIdentity } from "@compass/shared";
 import { loadConfig } from "./config.ts";
 import {
   applyStatementRewards,
@@ -10,6 +10,7 @@ import {
   loadCardLedgerTxns,
   loadCategories,
   loadCreditCards,
+  loadIdentity,
   loadIngestion,
   recordAiEvent,
   saveResults,
@@ -117,7 +118,7 @@ async function processStatement(
   email: ParsedEmail,
   providerFor: (kind: string, accountId: string | null, title: string) => AiProvider,
   userId: string,
-  ctx: { receivedDate: string | null; categories: CategoryRef[] },
+  ctx: { receivedDate: string | null; categories: CategoryRef[]; identity: RedactionIdentity },
 ): Promise<StatementOutcome> {
   const pdf = email.attachments.find(
     (a) => a.contentType.toLowerCase().includes("pdf") || a.filename.toLowerCase().endsWith(".pdf"),
@@ -133,7 +134,11 @@ async function processStatement(
     return { status: "deferred", rows: [], accountId: null, summary: null };
   }
 
-  const extractFrom = async (text: string, accountId: string | null) => {
+  const extractFrom = async (rawText: string, accountId: string | null) => {
+    // Redact the owner's PII from the statement text once, before either model
+    // pass sees it — the statement header carries their name/address/account
+    // number; merchant lines (name + amount + date) survive untouched.
+    const text = redactPii(rawText, ctx.identity);
     if (text.length > MAX_STATEMENT_CHARS) {
       log("warn", "statement text exceeds the extraction cap — some transactions may be missing", {
         chars: text.length,
@@ -272,9 +277,10 @@ const worker = new Worker(
     await setStatus(pool, ingestion.id, "processing");
     try {
       const email = await parseEmail(ingestion.raw);
-      const [accounts, categories] = await Promise.all([
+      const [accounts, categories, identity] = await Promise.all([
         loadAccounts(pool, ingestion.userId),
         loadCategories(pool, ingestion.userId),
+        loadIdentity(pool, ingestion.userId),
       ]);
       const receivedDate = ingestion.receivedAt
         ? ingestion.receivedAt.toISOString().slice(0, 10)
@@ -283,7 +289,7 @@ const worker = new Worker(
       const outcome = await runExtraction(
         email,
         providerFor("email_extract", null, emailTitle),
-        { receivedDate, accounts, categories },
+        { receivedDate, accounts, categories, identity },
       );
       // A statement email is recognized here but its transactions live in the PDF;
       // process that separately, overriding the (deferred) email-body outcome.
@@ -295,7 +301,7 @@ const worker = new Worker(
           email,
           providerFor,
           ingestion.userId,
-          { receivedDate, categories },
+          { receivedDate, categories, identity },
         );
         status = stmt.status;
         // Suppress lines already in the ledger from real-time alerts this cycle.

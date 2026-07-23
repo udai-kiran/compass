@@ -1,5 +1,5 @@
 import pg from "pg";
-import type { EmailIngestStatus } from "@compass/shared";
+import type { EmailIngestStatus, RedactionIdentity } from "@compass/shared";
 import { computeStatementRewardEntries } from "./extract.ts";
 import type {
   AccountRef,
@@ -109,6 +109,41 @@ export async function loadCreditCards(pool: pg.Pool, userId: string): Promise<Cr
     name: r.name,
     statementPasswordEnc: r.statement_password_enc,
   }));
+}
+
+/**
+ * The mailbox owner's own identifiers, to redact *their* PII from anything sent to
+ * the model while leaving merchant data intact (see `redactPii`). Names come from
+ * the login profile and every account holder name; VPAs/emails from their accounts.
+ */
+export async function loadIdentity(pool: pg.Pool, userId: string): Promise<RedactionIdentity> {
+  const res = await pool.query<{
+    display_name: string;
+    email: string;
+    holder_names: string[];
+    upi_ids: string[];
+  }>(
+    `select
+        u.display_name,
+        u.email,
+        array_remove(array_agg(distinct nullif(a.holder_name, '')), null) as holder_names,
+        array_remove(array_agg(distinct vpa), null) as upi_ids
+      from users u
+      left join accounts a on a.user_id = u.id
+      left join lateral unnest(coalesce(a.upi_ids, '{}')) as vpa on true
+      where u.id = $1
+      group by u.id`,
+    [userId],
+  );
+  const r = res.rows[0];
+  if (!r) return { names: [], emails: [], upiIds: [] };
+  const names = new Set<string>(r.holder_names ?? []);
+  if (r.display_name) names.add(r.display_name);
+  return {
+    names: [...names],
+    emails: r.email ? [r.email] : [],
+    upiIds: (r.upi_ids ?? []).filter((v) => v !== ""),
+  };
 }
 
 /** The user's own categories — the model may only tag a draft with one of these. */
