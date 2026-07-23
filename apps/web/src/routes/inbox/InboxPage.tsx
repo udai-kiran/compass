@@ -3,6 +3,7 @@ import { formatINR, type Account, type Category, type ExtractedTransaction } fro
 import { useAccounts, useCategories } from "../../lib/queries.ts";
 import { useInbox, useInboxMutations } from "../../lib/inbox-queries.ts";
 import { toast } from "../../lib/toast.tsx";
+import { CategoryPicker } from "../../components/CategoryPicker.tsx";
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -145,8 +146,6 @@ function DraftCard({
 
   const isDebit = draft.direction === "debit";
   const busy = accept.isPending || reject.isPending;
-  // A debit is an expense, a credit is income — only offer categories of that kind.
-  const relevantCategories = categories.filter((c) => c.kind === (isDebit ? "expense" : "income"));
 
   function onAccept() {
     if (!accountId) {
@@ -220,17 +219,14 @@ function DraftCard({
           </select>
         </Field>
         <Field label="Category">
-          <select
-            value={categoryId}
-            onChange={(e) => setCategoryId(e.target.value)}
-            className="input"
-            aria-label="Category"
-          >
-            <option value="">No category</option>
-            {relevantCategories.map((c) => (
-              <option key={c.id} value={c.id}>{c.name}</option>
-            ))}
-          </select>
+          <CategoryPicker
+            categories={categories}
+            value={categoryId || null}
+            onChange={(id) => setCategoryId(id ?? "")}
+            kind={isDebit ? "expense" : "income"}
+            emptyLabel="No category"
+            className="w-full"
+          />
         </Field>
         <Field label="Date">
           <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="input" />
