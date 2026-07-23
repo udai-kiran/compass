@@ -21,7 +21,7 @@ import {
 } from "../../lib/goal-queries.ts";
 import { useAccounts } from "../../lib/queries.ts";
 import { useAssetGoalMutation, useNetWorthByGoal, usePortfolio } from "../../lib/wealth-queries.ts";
-import { Meter } from "../../lib/viz.tsx";
+import { SERIES } from "../../lib/viz.tsx";
 
 const GOAL_TYPES: Array<{ value: GoalType; label: string }> = [
   { value: "savings", label: "Savings" },
@@ -222,7 +222,7 @@ function GoalProgressBody({ goal, p }: { goal: Goal; p: GoalProgress }) {
     <>
       <div className="mt-3 flex items-center gap-3">
         <div className="flex-1">
-          <Meter pct={p.percent} />
+          <GoalFundingMeter p={p} />
         </div>
         <span className="text-sm font-medium tabular-nums text-slate-700">{p.percent}%</span>
       </div>
@@ -255,6 +255,55 @@ function GoalProgressBody({ goal, p }: { goal: Goal; p: GoalProgress }) {
       <MappedAssets goalId={goal.id} p={p} />
       <SipsSection goalId={goal.id} />
     </>
+  );
+}
+
+function assetColor(index: number): string {
+  return SERIES[index] ?? `hsl(${(index * 137.508) % 360} 58% 45%)`;
+}
+
+function constituentPct(valuePaise: number, fundedPaise: number): number {
+  if (valuePaise <= 0 || fundedPaise <= 0) return 0;
+  return (valuePaise / fundedPaise) * 100;
+}
+
+function formatConstituentPct(pct: number): string {
+  if (pct > 0 && pct < 0.1) return "<0.1%";
+  return `${pct.toFixed(1)}%`;
+}
+
+/** Goal progress split into the mapped assets that make up the funded corpus. */
+function GoalFundingMeter({ p }: { p: GoalProgress }) {
+  const assets = p.assets.filter(hasValue);
+  const positiveFundedPaise = assets.reduce(
+    (sum, asset) => sum + Math.max(0, asset.valuePaise),
+    0,
+  );
+  const barTotalPaise = Math.max(p.effectiveTargetPaise, positiveFundedPaise);
+  const fundedAssetCount = assets.filter((asset) => asset.valuePaise > 0).length;
+
+  return (
+    <div
+      className="flex h-2 w-full overflow-hidden rounded-full bg-slate-200"
+      role="img"
+      aria-label={`${p.percent}% funded, split across ${fundedAssetCount} mapped asset${fundedAssetCount === 1 ? "" : "s"}`}
+    >
+      {assets.map((asset, index) => {
+        if (asset.valuePaise <= 0) return null;
+        const share = constituentPct(asset.valuePaise, positiveFundedPaise);
+        return (
+          <span
+            key={`${asset.kind}:${asset.id}`}
+            className="h-full"
+            style={{
+              width: `${barTotalPaise > 0 ? (asset.valuePaise / barTotalPaise) * 100 : 0}%`,
+              backgroundColor: assetColor(index),
+            }}
+            title={`${asset.name}: ${formatConstituentPct(share)} of funded assets`}
+          />
+        );
+      })}
+    </div>
   );
 }
 
@@ -365,6 +414,10 @@ function MappedAssets({ goalId, p }: { goalId: string; p: GoalProgress }) {
   const [pick, setPick] = useState("");
 
   const assets = p.assets.filter(hasValue);
+  const positiveFundedPaise = assets.reduce(
+    (sum, asset) => sum + Math.max(0, asset.valuePaise),
+    0,
+  );
   // The Unassigned group is the assignable one with no goal — not the (also
   // goalId-null) Liabilities group, whose rows can't be mapped to a goal.
   const unassigned = (
@@ -404,11 +457,22 @@ function MappedAssets({ goalId, p }: { goalId: string; p: GoalProgress }) {
         </p>
       ) : (
         <ul className="divide-y divide-slate-100 text-sm">
-          {assets.map((a) => (
+          {assets.map((a, index) => (
             <li key={`${a.kind}:${a.id}`} className="flex items-center gap-3 px-3 py-1.5">
+              <span
+                className="h-2.5 w-2.5 shrink-0 rounded-sm"
+                style={{ backgroundColor: assetColor(index) }}
+                aria-hidden
+              />
               <span className="truncate text-slate-700">{a.name}</span>
               <span className="truncate text-xs text-slate-400">{a.subtitle}</span>
               <span className="ml-auto tabular-nums text-slate-700">{formatINR(a.valuePaise)}</span>
+              <span
+                className="w-14 text-right text-xs font-medium tabular-nums text-slate-600"
+                title="Share of funded assets"
+              >
+                {formatConstituentPct(constituentPct(a.valuePaise, positiveFundedPaise))}
+              </span>
               <span className="w-16 text-right text-xs text-slate-400">{formatPct(a.annualReturnBps)}</span>
               <button
                 className="text-slate-400 hover:text-red-600"
