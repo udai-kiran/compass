@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { formatINR, type InsurancePolicy } from "@compass/shared";
+import { formatINR, isBankAccount, type InsurancePolicy } from "@compass/shared";
 import { usePolicyPremiums, useLogPremium } from "../../lib/insurance-queries.ts";
 import { useAccounts } from "../../lib/queries.ts";
 import { toast } from "../../lib/toast.tsx";
@@ -9,7 +9,11 @@ export function PremiumsPanel({ policy }: { policy: InsurancePolicy }) {
   const { data: accounts } = useAccounts();
   const log = useLogPremium(policy.id);
 
-  const payFrom = (accounts ?? []).filter((a) => a.archivedAt === null);
+  const payFrom = (accounts ?? []).filter(
+    (a) =>
+      a.archivedAt === null &&
+      (isBankAccount(a.type) || a.type === "credit_card"),
+  );
   const nameOf = new Map((accounts ?? []).map((a) => [a.id, a.name]));
 
   const [fromAccountId, setFromAccountId] = useState("");
