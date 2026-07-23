@@ -28,6 +28,7 @@ export async function buildReport(
       from transactions t
       where t.user_id = ${userId} and t.deleted_at is null
         and t.date >= ${from} and t.date <= ${to} and t.amount_paise < 0 and t.merchant <> ''
+        and not t.is_opening
         and not exists (select 1 from transfer_links tl where tl.out_transaction_id = t.id or tl.in_transaction_id = t.id)
       group by t.merchant order by spent desc limit 15
     `),

@@ -58,7 +58,8 @@ export async function getTrends(db: Db, redis: Redis, userId: string, months: nu
     const from = `${start}-01`;
     const { to } = periodRange("monthly", end);
 
-    const notTransfer = sql`not exists (select 1 from transfer_links tl
+    // Opening-balance seed rows are not activity — excluded alongside transfers.
+    const notTransfer = sql`not t.is_opening and not exists (select 1 from transfer_links tl
       where tl.out_transaction_id = t.id or tl.in_transaction_id = t.id)`;
 
     const totals = await db.execute(sql`

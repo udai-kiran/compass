@@ -94,6 +94,7 @@ export async function suggestSubscriptions(db: Db, userId: string): Promise<Subs
     from transactions t
     where t.user_id = ${userId} and t.deleted_at is null and t.amount_paise < 0
       and t.merchant <> '' and t.date >= current_date - interval '400 days'
+      and not t.is_opening
       and not exists (select 1 from transfer_links tl
         where tl.out_transaction_id = t.id or tl.in_transaction_id = t.id)
     order by t.merchant, t.date

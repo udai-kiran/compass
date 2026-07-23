@@ -58,7 +58,8 @@ export async function getForecast(db: Db, redis: Redis, userId: string): Promise
     const now = new Date();
     const today = now.toISOString().slice(0, 10);
     const from90 = isoPlusDays(now, -90);
-    const notTransfer = sql`not exists (select 1 from transfer_links tl
+    // Opening-balance seed rows are not activity — excluded alongside transfers.
+    const notTransfer = sql`not t.is_opening and not exists (select 1 from transfer_links tl
       where tl.out_transaction_id = t.id or tl.in_transaction_id = t.id)`;
 
     // trailing net burn (all sources) for runway, and discretionary spend

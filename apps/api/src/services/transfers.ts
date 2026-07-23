@@ -31,11 +31,13 @@ export async function suggestTransfers(db: Db, userId: string): Promise<Transfer
      and i.amount_paise > 0
      and abs(o.date - i.date) <= ${TRANSFER_WINDOW_DAYS}
      and i.deleted_at is null
+     and not i.is_opening
      and not exists (select 1 from transfer_links tl
        where tl.out_transaction_id = i.id or tl.in_transaction_id = i.id)
     where o.user_id = ${userId}
       and o.deleted_at is null
       and o.amount_paise < 0
+      and not o.is_opening
       and not exists (select 1 from transfer_links tl
         where tl.out_transaction_id = o.id or tl.in_transaction_id = o.id)
     order by abs(o.date - i.date), o.date desc

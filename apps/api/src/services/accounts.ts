@@ -5,11 +5,39 @@ import type {
   CreateAccount,
   UpdateAccount,
 } from "@compass/shared";
-import { accountCanHaveGoal } from "@compass/shared";
+import { accountCanHaveGoal, type AccountType } from "@compass/shared";
 import type { Db } from "../db/index.ts";
 import { accounts, bankDetails, retirementDetails, transactions } from "../db/schema.ts";
 import { HttpError } from "../lib/errors.ts";
 import { assertOwnedGoal } from "./ownership.ts";
+
+/** Only these carry their opening balance as a ledger transaction; other types
+ * (cards/loans/schemes) keep it on the accounts.opening_balance_paise column,
+ * which their statement/valuation logic reads directly. */
+function seedsOpeningTransaction(type: AccountType, openingBalancePaise: number): boolean {
+  return (type === "bank" || type === "cash") && openingBalancePaise !== 0;
+}
+
+/**
+ * The "Opening balance" ledger row for a bank/cash account's starting balance —
+ * a real, dated transaction so the account ledger reconciles (rather than a
+ * balance appearing from a hidden column). Pure/DB-free for testability; returns
+ * null when the account type or amount warrants no seed row. Flagged `isOpening`
+ * so it is excluded from income/expense/spend like a transfer.
+ */
+export function openingBalanceRow(
+  input: { userId: string; accountId: string; type: AccountType; openingBalancePaise: number; date: string },
+): typeof transactions.$inferInsert | null {
+  if (!seedsOpeningTransaction(input.type, input.openingBalancePaise)) return null;
+  return {
+    userId: input.userId,
+    accountId: input.accountId,
+    date: input.date,
+    amountPaise: input.openingBalancePaise,
+    merchant: "Opening balance",
+    isOpening: true,
+  };
+}
 
 type AccountRow = typeof accounts.$inferSelect;
 
@@ -58,11 +86,28 @@ export async function createAccount(
   userId: string,
   input: CreateAccount,
 ): Promise<Account> {
-  const rows = await db
-    .insert(accounts)
-    .values({ ...input, userId })
-    .returning();
-  return toAccount(rows[0]!);
+  // For bank/cash we move the opening balance into a real "Opening balance"
+  // transaction and hold the column at 0, so the ledger reconciles and no
+  // surface double-counts (every balance is column + Σtx = 0 + Σtx).
+  const seedOpening = seedsOpeningTransaction(input.type, input.openingBalancePaise);
+  return db.transaction(async (tx) => {
+    const rows = await tx
+      .insert(accounts)
+      .values({ ...input, userId, ...(seedOpening ? { openingBalancePaise: 0 } : {}) })
+      .returning();
+    const account = rows[0]!;
+    if (seedOpening) {
+      const row = openingBalanceRow({
+        userId,
+        accountId: account.id,
+        type: input.type,
+        openingBalancePaise: input.openingBalancePaise,
+        date: new Date().toISOString().slice(0, 10),
+      });
+      if (row) await tx.insert(transactions).values(row);
+    }
+    return toAccount(account);
+  });
 }
 
 /** Last 4 of a full account number; null when there aren't enough digits to take. */

@@ -56,6 +56,7 @@ export async function spentByCategory(
     where t.user_id = ${userId} and t.deleted_at is null
       and t.date >= ${from} and t.date <= ${to}
       and t.amount_paise < 0
+      and not t.is_opening
       and not exists (select 1 from transfer_links tl
         where tl.out_transaction_id = t.id or tl.in_transaction_id = t.id)
       and not exists (select 1 from transaction_splits s where s.transaction_id = t.id)
@@ -68,6 +69,7 @@ export async function spentByCategory(
     where t.user_id = ${userId} and t.deleted_at is null
       and t.date >= ${from} and t.date <= ${to}
       and s.amount_paise < 0
+      and not t.is_opening
       and not exists (select 1 from transfer_links tl
         where tl.out_transaction_id = t.id or tl.in_transaction_id = t.id)
     group by s.category_id
@@ -95,6 +97,7 @@ export async function incomeExpense(
     join accounts a on a.id = t.account_id
     where t.user_id = ${userId} and t.deleted_at is null
       and t.date >= ${from} and t.date <= ${to}
+      and not t.is_opening
       and not exists (select 1 from transfer_links tl
         where tl.out_transaction_id = t.id or tl.in_transaction_id = t.id)
   `);
