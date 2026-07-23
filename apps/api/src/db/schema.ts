@@ -222,6 +222,14 @@ export const transactions = pgTable(
       .default(sql`'{}'::text[]`),
     source: transactionSource("source").notNull().default("manual"),
     /**
+     * True for the single seed row carrying a bank/cash account's starting
+     * balance, so the account ledger reconciles instead of a balance appearing
+     * from a hidden column. Excluded from income/expense/spend aggregations the
+     * same way transfers are. A boolean (not a new `source` enum value) so the
+     * marker is usable in the same migration transaction that adds it.
+     */
+    isOpening: boolean("is_opening").notNull().default(false),
+    /**
      * Insurance policy this expense pays a premium for — a link to an
      * insurance_policies row, kept apart from `accountId` (the account the money
      * left). Null for ordinary transactions. Lets a policy show its premium

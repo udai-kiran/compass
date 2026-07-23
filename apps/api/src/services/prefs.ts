@@ -94,6 +94,7 @@ export async function evaluateLargeTransactions(db: Db, userId: string): Promise
       where t.user_id = ${userId} and t.deleted_at is null
         and t.date >= current_date - interval '7 days'
         and abs(t.amount_paise) >= ${pref.thresholdPaise}
+        and not t.is_opening
         ${pref.accountId === null ? sql`` : sql`and t.account_id = ${pref.accountId}`}
         and not exists (select 1 from transfer_links tl
           where tl.out_transaction_id = t.id or tl.in_transaction_id = t.id)

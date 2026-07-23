@@ -111,8 +111,10 @@ async function seedInto(db: Db, userId: string): Promise<void> {
     const [hdfc, cash, _zerodha, hdfcCard, iciciCard, _homeLoan, ppf, epf] = await tx
       .insert(accounts)
       .values([
-        { userId, name: "HDFC Savings", type: "bank", institution: "HDFC", accountLast4: "4821", holderName: "Demo User", openingBalancePaise: r(180000) },
-        { userId, name: "Cash Wallet", type: "cash", openingBalancePaise: r(6000) },
+        // Bank/cash opening balances are seeded as real "Opening balance" ledger
+        // rows below (isOpening), matching createAccount — so the column stays 0.
+        { userId, name: "HDFC Savings", type: "bank", institution: "HDFC", accountLast4: "4821", holderName: "Demo User", openingBalancePaise: 0 },
+        { userId, name: "Cash Wallet", type: "cash", openingBalancePaise: 0 },
         { userId, name: "Zerodha", type: "investment", institution: "Zerodha", holderName: "Demo User", openingBalancePaise: 0 },
         { userId, name: "HDFC Millennia", type: "credit_card", institution: "HDFC", accountLast4: "7702", holderName: "Demo User", openingBalancePaise: 0 },
         { userId, name: "ICICI Amazon Pay", type: "credit_card", institution: "ICICI", accountLast4: "5140", holderName: "Demo User", openingBalancePaise: 0 },
@@ -171,6 +173,11 @@ async function seedInto(db: Db, userId: string): Promise<void> {
       txns.push({ userId, accountId, date: monthDay(monthsAgo, day), amountPaise: r(-rupees), categoryId: catId(category), merchant, source: "manual" });
     const earn = (accountId: string, monthsAgo: number, day: number, rupees: number, category: string, merchant: string) =>
       txns.push({ userId, accountId, date: monthDay(monthsAgo, day), amountPaise: r(rupees), categoryId: catId(category), merchant, source: "manual" });
+
+    // Opening balances as real ledger rows (dated before the activity below) so the
+    // bank/cash ledgers reconcile — the same model createAccount uses for new accounts.
+    txns.push({ userId, accountId: hdfc!.id, date: monthDay(12, 1), amountPaise: r(180000), merchant: "Opening balance", isOpening: true });
+    txns.push({ userId, accountId: cash!.id, date: monthDay(12, 1), amountPaise: r(6000), merchant: "Opening balance", isOpening: true });
 
     for (let m = MONTHS - 1; m >= 0; m--) {
       earn(hdfc!.id, m, 1, 150000, "Salary", "Acme Corp Payroll");

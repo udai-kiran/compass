@@ -132,6 +132,7 @@ async function topMerchants(
     from transactions t
     where t.user_id = ${userId} and t.deleted_at is null
       and t.date >= ${from} and t.date <= ${to} and t.amount_paise < 0 and t.merchant <> ''
+      and not t.is_opening
       and not exists (select 1 from transfer_links tl where tl.out_transaction_id = t.id or tl.in_transaction_id = t.id)
     group by t.merchant order by spent desc limit ${limit}
   `);
@@ -177,6 +178,7 @@ export async function getInsights(db: Db, userId: string, periodKey: string): Pr
     select t.id, t.merchant, -t.amount_paise as amt, t.date from transactions t
     where t.user_id = ${userId} and t.deleted_at is null and t.date >= ${from} and t.date <= ${to}
       and t.amount_paise < 0
+      and not t.is_opening
       and not exists (select 1 from transfer_links tl where tl.out_transaction_id = t.id or tl.in_transaction_id = t.id)
     order by t.amount_paise asc limit 1
   `);
