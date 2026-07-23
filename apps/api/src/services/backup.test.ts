@@ -96,6 +96,9 @@ test("the per-user restore covers exactly the exported tables, in parent-first o
   assert.ok(at("accounts") < at("card_statements"));
   assert.ok(at("insurance_policies") < at("insurance_health_cards"));
   assert.ok(at("mailbox_accounts") < at("email_ingestions"));
+  // sips FKs both goals and holdings (for an mf_folio target) — must restore after both.
+  assert.ok(at("goals") < at("sips"));
+  assert.ok(at("holdings") < at("sips"));
 });
 
 test("restore defers cyclic and self-referencing foreign keys", () => {

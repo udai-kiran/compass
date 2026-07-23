@@ -30,6 +30,7 @@ import { dashboardRoutes } from "./routes/dashboard.ts";
 import { notificationRoutes } from "./routes/notifications.ts";
 import { recurringRoutes } from "./routes/recurring.ts";
 import { goalRoutes } from "./routes/goals.ts";
+import { sipRoutes } from "./routes/sips.ts";
 import { cashflowRoutes } from "./routes/cashflow.ts";
 import { billRoutes } from "./routes/bills.ts";
 import { cardRoutes } from "./routes/cards.ts";
@@ -152,6 +153,7 @@ export async function buildApp(config: Config): Promise<FastifyInstance> {
   await app.register(notificationRoutes);
   await app.register(recurringRoutes);
   await app.register(goalRoutes);
+  await app.register(sipRoutes);
   await app.register(cashflowRoutes);
   await app.register(billRoutes);
   await app.register(cardRoutes);

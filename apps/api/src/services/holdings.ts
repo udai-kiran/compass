@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type {
   CreateHolding,
   CreateHoldingEvent,
@@ -11,7 +11,7 @@ import type {
   UpdateHolding,
 } from "@compass/shared";
 import type { Db } from "../db/index.ts";
-import { holdingEvents, holdings, holdingValuations } from "../db/schema.ts";
+import { holdingEvents, holdings, holdingValuations, sips } from "../db/schema.ts";
 import { HttpError } from "../lib/errors.ts";
 import { fetchNavByCode } from "./amfi.ts";
 import { assertOwnedGoal } from "./ownership.ts";
@@ -94,6 +94,47 @@ export async function createHolding(db: Db, userId: string, input: CreateHolding
   return toHolding(rows[0]!);
 }
 
+/** Message for the "holding is a SIP target for a different/no goal" edit guard — pure, testable without a DB. */
+export function sipTargetHoldingBlockedMessage(count: number): string {
+  return `Holding is the target of ${count} SIP(s) for this goal — delete or repoint them first`;
+}
+
+/** Message for the "holding is a SIP target, and would be archived out from under it" guard. */
+export function sipTargetHoldingArchiveBlockedMessage(count: number): string {
+  return `Holding is the target of ${count} SIP(s) — delete or repoint them before archiving`;
+}
+
+/**
+ * Whether an UpdateHolding patch's goalId would break a SIP that targets this
+ * holding. Pure/DB-free so it's unit-testable: `undefined` means "not touched"
+ * (UpdateHoldingSchema partial-patch semantics — matches `resolveSipDateRange`'s
+ * convention), and only an actual value change (not a same-value patch, and not
+ * an unrelated field edit) counts as a conflict. Any SIP counts, active or
+ * paused — a paused SIP resumes with its existing target binding.
+ */
+export function holdingGoalEditConflictsWithSip(
+  patch: { goalId?: string | null },
+  current: { goalId: string | null },
+  sipTargetCount: number,
+): boolean {
+  return sipTargetCount > 0 && patch.goalId !== undefined && patch.goalId !== current.goalId;
+}
+
+/**
+ * Whether an UpdateHolding patch would archive a holding that a SIP still
+ * targets (active or paused). Pure/DB-free, mirroring
+ * `holdingGoalEditConflictsWithSip`: an archived folio would drop out of the
+ * goal's asset totals while the SIP kept counting it as committed funding.
+ * Only a fresh archive (not already archived, not an unarchive) is a conflict.
+ */
+export function holdingArchiveConflictsWithSip(
+  patch: { archived?: boolean },
+  current: { archivedAt: Date | string | null },
+  sipTargetCount: number,
+): boolean {
+  return sipTargetCount > 0 && patch.archived === true && current.archivedAt === null;
+}
+
 export async function updateHolding(
   db: Db,
   userId: string,
@@ -103,15 +144,50 @@ export async function updateHolding(
   const { archived, ...rest } = input;
   // Earmarking to a goal must point at the caller's own goal.
   await assertOwnedGoal(db, userId, rest.goalId);
-  const set: Record<string, unknown> = { ...rest, updatedAt: new Date() };
-  if (archived !== undefined) set.archivedAt = archived ? new Date() : null;
-  const rows = await db
-    .update(holdings)
-    .set(set)
-    .where(and(eq(holdings.id, id), eq(holdings.userId, userId)))
-    .returning();
-  if (rows.length === 0) throw new HttpError(404, "Holding not found");
-  return toHolding(rows[0]!);
+
+  return db.transaction(async (tx) => {
+    // Lock the holding row first — this is what serializes against a
+    // concurrent SIP creation/update targeting this holding (sips.ts's
+    // ownedHoldingGoal locks the same row before its own checks).
+    const currentRows = await tx
+      .select()
+      .from(holdings)
+      .where(and(eq(holdings.id, id), eq(holdings.userId, userId)))
+      .for("update");
+    const current = currentRows[0];
+    if (!current) throw new HttpError(404, "Holding not found");
+
+    const goalChanging = rest.goalId !== undefined && rest.goalId !== current.goalId;
+    const archiving = archived === true && current.archivedAt === null;
+
+    // A SIP that targets this holding keeps reducing its goal's funding gap
+    // using this holding's value — unmapping/remapping its goal, or archiving
+    // it, out from under an active or paused SIP would silently break that
+    // invariant. Only queries when the patch could actually matter.
+    if (goalChanging || archiving) {
+      const sipTargetRows = await tx
+        .select({ count: sql<number>`count(*)::int` })
+        .from(sips)
+        .where(eq(sips.targetHoldingId, id));
+      const sipTargetCount = sipTargetRows[0]!.count;
+      if (goalChanging && holdingGoalEditConflictsWithSip(rest, current, sipTargetCount)) {
+        throw new HttpError(409, sipTargetHoldingBlockedMessage(sipTargetCount));
+      }
+      if (archiving && holdingArchiveConflictsWithSip({ archived }, current, sipTargetCount)) {
+        throw new HttpError(409, sipTargetHoldingArchiveBlockedMessage(sipTargetCount));
+      }
+    }
+
+    const set: Record<string, unknown> = { ...rest, updatedAt: new Date() };
+    if (archived !== undefined) set.archivedAt = archived ? new Date() : null;
+    const rows = await tx
+      .update(holdings)
+      .set(set)
+      .where(and(eq(holdings.id, id), eq(holdings.userId, userId)))
+      .returning();
+    if (rows.length === 0) throw new HttpError(404, "Holding not found");
+    return toHolding(rows[0]!);
+  });
 }
 
 export async function deleteHolding(db: Db, userId: string, id: string): Promise<void> {

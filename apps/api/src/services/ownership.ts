@@ -1,6 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import type { DbOrTx } from "../db/index.ts";
-import { accounts, categories, goals } from "../db/schema.ts";
+import { accounts, categories, goals, holdings } from "../db/schema.ts";
 import { HttpError } from "../lib/errors.ts";
 
 /**
@@ -51,4 +51,17 @@ export async function assertOwnedGoal(
     columns: { id: true },
   });
   if (!row) throw new HttpError(404, "Goal not found");
+}
+
+export async function assertOwnedHolding(
+  db: DbOrTx,
+  userId: string,
+  holdingId: string | null | undefined,
+): Promise<void> {
+  if (!holdingId) return;
+  const row = await db.query.holdings.findFirst({
+    where: and(eq(holdings.id, holdingId), eq(holdings.userId, userId)),
+    columns: { id: true },
+  });
+  if (!row) throw new HttpError(404, "Holding not found");
 }

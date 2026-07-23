@@ -1168,6 +1168,71 @@ export const holdingEvents = pgTable(
   (t) => [index("holding_events_holding_idx").on(t.holdingId, t.date)],
 );
 
+export const sipTargetKind = pgEnum("sip_target_kind", ["mf_folio", "account"]);
+export const sipStatus = pgEnum("sip_status", ["active", "paused"]);
+/**
+ * How often the SIP debits. Most MF SIPs are monthly, but PPF/SSY are often
+ * funded with a single lump quarterly/annual deposit rather than a monthly
+ * trickle — this lets those goals still be modelled as a SIP instead of being
+ * left out of the commitment math entirely.
+ */
+export const sipFrequency = pgEnum("sip_frequency", ["monthly", "quarterly", "yearly"]);
+
+/**
+ * A goal-funding SIP: a recurring monthly transfer from a bank/savings account
+ * into either an MF folio (a `holdings` row — that table is already keyed by
+ * scheme+folio, so the target is a direct FK, not duplicated scheme columns) or
+ * another account (PPF/SSY deposits — think a Sukanya Samriddhi girl-child
+ * goal). A goal can have several SIPs. Exactly one of `targetHoldingId` /
+ * `targetAccountId` is set, matching `targetKind`; enforced in the service/zod
+ * layer, not the DB, the same way accounts.goal_id's "one goal" isn't a DB
+ * constraint either. Cascades on both the goal and the target: a SIP has no
+ * purpose once either disappears (contrast accounts.goal_id, which set-nulls,
+ * because an *account* survives its goal being deleted).
+ */
+export const sips = pgTable(
+  "sips",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    goalId: uuid("goal_id")
+      .notNull()
+      .references(() => goals.id, { onDelete: "cascade" }),
+    sourceAccountId: uuid("source_account_id")
+      .notNull()
+      .references(() => accounts.id),
+    targetKind: sipTargetKind("target_kind").notNull(),
+    /** set when targetKind = 'mf_folio'; the holdings row IS the scheme+folio position */
+    targetHoldingId: uuid("target_holding_id").references(() => holdings.id, {
+      onDelete: "cascade",
+    }),
+    /** set when targetKind = 'account' (e.g. PPF/SSY) */
+    targetAccountId: uuid("target_account_id").references(() => accounts.id, {
+      onDelete: "cascade",
+    }),
+    amountPaise: bigint("amount_paise", { mode: "number" }).notNull(),
+    /** debit day of month, 1–28 (validated at the zod layer, like card cycle/due day) */
+    dayOfMonth: integer("day_of_month").notNull(),
+    /**
+     * Cadence of the debit. quarterly/yearly occurrences are anchored to the
+     * month of `startDate` (see sipOccurrencesInWindow) — every 3rd/12th month
+     * from there, on dayOfMonth.
+     */
+    frequency: sipFrequency("frequency").notNull().default("monthly"),
+    status: sipStatus("status").notNull().default("active"),
+    startDate: date("start_date").notNull(),
+    endDate: date("end_date"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("sips_user_idx").on(t.userId),
+    index("sips_goal_idx").on(t.goalId),
+    index("sips_source_account_idx").on(t.sourceAccountId),
+  ],
+);
+
 export const netWorthSnapshots = pgTable(
   "net_worth_snapshots",
   {

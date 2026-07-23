@@ -7,9 +7,12 @@ import {
   GoalProgressSchema,
   GoalSchema,
   NotificationPrefSchema,
+  SipSchema,
   SubscriptionSuggestionSchema,
   type CreateGoal,
+  type CreateSip,
   type UpdateGoal,
+  type UpdateSip,
   type UpsertNotificationPref,
 } from "@compass/shared";
 import { apiGet, apiPost } from "./api.ts";
@@ -57,6 +60,38 @@ export function useGoalMutations() {
   });
   const remove = useMutation({
     mutationFn: (id: string) => send("DELETE", `/api/goals/${id}`, OkSchema),
+    onSuccess: invalidate,
+  });
+  return { create, update, remove };
+}
+
+// ---------- SIPs ----------
+
+export function useSips(goalId: string) {
+  return useQuery({
+    queryKey: ["sips", goalId],
+    queryFn: () => apiGet(`/api/goals/${goalId}/sips`, z.array(SipSchema)),
+  });
+}
+
+export function useSipMutations() {
+  const qc = useQueryClient();
+  const invalidate = () => {
+    void qc.invalidateQueries({ queryKey: ["sips"] });
+    void qc.invalidateQueries({ queryKey: ["goal-progress"] });
+    void qc.invalidateQueries({ queryKey: ["forecast"] });
+  };
+  const create = useMutation({
+    mutationFn: (body: CreateSip) => apiPost("/api/sips", SipSchema, body),
+    onSuccess: invalidate,
+  });
+  const update = useMutation({
+    mutationFn: ({ id, ...body }: UpdateSip & { id: string }) =>
+      send("PATCH", `/api/sips/${id}`, SipSchema, body),
+    onSuccess: invalidate,
+  });
+  const remove = useMutation({
+    mutationFn: (id: string) => send("DELETE", `/api/sips/${id}`, OkSchema),
     onSuccess: invalidate,
   });
   return { create, update, remove };

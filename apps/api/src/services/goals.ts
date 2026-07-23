@@ -19,6 +19,7 @@ import { createNotification } from "./notifications.ts";
 import { incomeExpense, periodRange, prevPeriodKey, currentPeriodKey } from "./periods.ts";
 import { prefEnabled } from "./prefs.ts";
 import { getProjectionSettings } from "./projection-settings.ts";
+import { committedForGoal } from "./sips.ts";
 import {
   accountAllocationClass,
   allocationPercentages,
@@ -198,11 +199,12 @@ function monthsBetween(from: Date, to: Date): number {
 export async function getGoalProgress(db: Db, userId: string, id: string): Promise<GoalProgress> {
   const g = await ownedGoal(db, userId, id);
 
-  const [accountList, portfolio, target, projectionSettings] = await Promise.all([
+  const [accountList, portfolio, target, projectionSettings, committed] = await Promise.all([
     listAccounts(db, userId),
     getPortfolio(db, userId),
     effectiveTarget(db, userId, g),
     getProjectionSettings(db, userId),
+    committedForGoal(db, userId, g.id),
   ]);
 
   const mappedAccounts = accountList.filter((a) => a.goalId === g.id && a.archivedAt === null);
@@ -287,6 +289,8 @@ export async function getGoalProgress(db: Db, userId: string, id: string): Promi
     currentDebtPct: allocation.debtPct,
     currentOtherPct: allocation.otherPct,
     fundedPaise: funded,
+    committedEquityPaise: committed.committedEquityPaise,
+    committedDebtPaise: committed.committedDebtPaise,
   });
 
   return {

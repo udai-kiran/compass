@@ -58,6 +58,10 @@ export interface GoalPlanInput {
   currentOtherPct: number;
   /** current market value of the mapped assets, paise */
   fundedPaise: number;
+  /** sum of the goal's active SIPs funding equity targets, paise/month */
+  committedEquityPaise: number;
+  /** sum of the goal's active SIPs funding debt targets, paise/month */
+  committedDebtPaise: number;
 }
 
 /** Equity share of just the equity+debt portion — the basis the target mix is on.
@@ -71,7 +75,10 @@ export function equityShareOfInvestable(equityPct: number, debtPct: number): num
 /**
  * Build the recommended allocation and monthly investment split for a goal.
  * The proposed contribution is the projection's `requiredMonthlyPaise` divided
- * between equity and debt per the target mix.
+ * between equity and debt per the target mix. `committedEquityPaise` /
+ * `committedDebtPaise` (the goal's active SIPs, split by target) are compared
+ * against that split to report the gap — what the SIPs don't yet cover, floored
+ * at 0 per leg (an over-committed SIP doesn't produce a negative "gap").
  *
  * Drift (only when the goal is funded) fires on either of two conditions:
  *  1. the equity/debt *ratio* of the invested portion drifts past the band — a
@@ -99,6 +106,12 @@ export function buildGoalPlan(input: GoalPlanInput): GoalPlan {
   const overweightOther = target.equityPct > 0 && input.currentOtherPct > OTHER_BAND_PCT;
   const allocationDrifted = input.fundedPaise > 0 && (ratioDrifted || overweightOther);
 
+  const committedEquityPaise = Math.max(0, input.committedEquityPaise);
+  const committedDebtPaise = Math.max(0, input.committedDebtPaise);
+  const committedMonthlyPaise = committedEquityPaise + committedDebtPaise;
+  const gapEquityPaise = Math.max(0, monthlyEquityPaise - committedEquityPaise);
+  const gapDebtPaise = Math.max(0, monthlyDebtPaise - committedDebtPaise);
+
   return {
     status,
     targetEquityPct: target.equityPct,
@@ -107,5 +120,11 @@ export function buildGoalPlan(input: GoalPlanInput): GoalPlan {
     recommendedMonthlyPaise: req,
     monthlyEquityPaise,
     monthlyDebtPaise,
+    committedMonthlyPaise,
+    committedEquityPaise,
+    committedDebtPaise,
+    gapMonthlyPaise: gapEquityPaise + gapDebtPaise,
+    gapEquityPaise,
+    gapDebtPaise,
   };
 }

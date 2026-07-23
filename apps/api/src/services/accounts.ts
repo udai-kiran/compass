@@ -1,13 +1,13 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, or, sql } from "drizzle-orm";
 import type {
   Account,
   AccountWithBalance,
   CreateAccount,
   UpdateAccount,
 } from "@compass/shared";
-import { accountCanHaveGoal, type AccountType } from "@compass/shared";
+import { accountCanHaveGoal, isBankAccount, type AccountType } from "@compass/shared";
 import type { Db } from "../db/index.ts";
-import { accounts, bankDetails, retirementDetails, transactions } from "../db/schema.ts";
+import { accounts, bankDetails, retirementDetails, sips, transactions } from "../db/schema.ts";
 import { HttpError } from "../lib/errors.ts";
 import { assertOwnedGoal } from "./ownership.ts";
 
@@ -133,6 +133,71 @@ export async function syncAccountLast4(
     .where(and(eq(accounts.id, accountId), eq(accounts.userId, userId)));
 }
 
+/** Message for the "account is a SIP target, and its goal earmark would change" edit guard. */
+export function sipTargetGoalBlockedMessage(count: number): string {
+  return `Account is the target of ${count} SIP(s) for a goal — delete or repoint them first`;
+}
+
+/** Message for the "account is a SIP target, and its type would stop being goal-eligible" edit guard. */
+export function sipTargetTypeBlockedMessage(count: number): string {
+  return `Account is the target of ${count} SIP(s) — delete or repoint them before changing its type`;
+}
+
+/** Message for the "account is a SIP target, and would be archived out from under it" guard. */
+export function sipTargetArchiveBlockedMessage(count: number): string {
+  return `Account is the target of ${count} SIP(s) — delete or repoint them before archiving`;
+}
+
+/**
+ * Whether an UpdateAccount patch would break a SIP that references this
+ * account (as its target or its source). Pure/DB-free so the guard is
+ * unit-testable: `undefined` fields mean "not touched" (UpdateAccountSchema
+ * partial-patch semantics), and only an actual value change — not a same-value
+ * patch or an unrelated field edit — counts as a conflict. Counts include
+ * paused SIPs, which resume with their existing bindings. Returns the 409
+ * message to throw, or null when the patch is safe.
+ */
+export function assessAccountEditAgainstSips(
+  patch: { type?: AccountType; goalId?: string | null; archived?: boolean },
+  current: { type: AccountType; goalId: string | null; archivedAt: Date | string | null },
+  refs: { targetSipCount: number; sourceSipCount: number },
+): string | null {
+  const nextType = patch.type ?? current.type;
+  const typeChanged = patch.type !== undefined && patch.type !== current.type;
+  // Only a fresh archive (not already archived, and not an unarchive) removes
+  // the account from the cash forecast / goal-asset totals it was providing.
+  const archiving = patch.archived === true && current.archivedAt === null;
+
+  if (archiving) {
+    // An archived source would drop out of the forecast's starting bank+cash
+    // balance while its SIP debit kept landing in the forecast; an archived
+    // target would drop out of goal-asset totals while the SIP kept counting
+    // it as committed (see sips.ts's lockedAccountForSip callers).
+    if (refs.targetSipCount > 0) return sipTargetArchiveBlockedMessage(refs.targetSipCount);
+    if (refs.sourceSipCount > 0) return sipSourceBlockedMessage(refs.sourceSipCount);
+  }
+
+  if (refs.targetSipCount > 0) {
+    // A SIP's target earmark must stay pointed at the SIP's own goal — see
+    // resolveTargetGoalDecision in sips.ts.
+    if (patch.goalId !== undefined && patch.goalId !== current.goalId) {
+      return sipTargetGoalBlockedMessage(refs.targetSipCount);
+    }
+    // A SIP target must remain a goal-eligible investment-scheme type (see
+    // assertAccountTargetType in sips.ts) — losing that would recreate a
+    // fictional forecast cash outflow / broken goal-funding math.
+    if (typeChanged && !accountCanHaveGoal(nextType)) {
+      return sipTargetTypeBlockedMessage(refs.targetSipCount);
+    }
+  }
+  // A SIP source must stay a bank account (assertBankSource in sips.ts) — the
+  // same invariant the delete guard below protects, just via an edit instead.
+  if (refs.sourceSipCount > 0 && typeChanged && !isBankAccount(nextType)) {
+    return sipSourceBlockedMessage(refs.sourceSipCount);
+  }
+  return null;
+}
+
 export async function updateAccount(
   db: Db,
   userId: string,
@@ -140,71 +205,128 @@ export async function updateAccount(
   input: UpdateAccount,
 ): Promise<Account> {
   const { archived, ...fields } = input;
-  const current = await db.query.accounts.findFirst({
-    where: and(eq(accounts.id, id), eq(accounts.userId, userId)),
-  });
-  if (!current) throw new HttpError(404, "Account not found");
 
-  const nextType = fields.type ?? current.type;
-  const typeChanged = fields.type !== undefined && fields.type !== current.type;
+  return db.transaction(async (tx) => {
+    // Lock the account row first — this is what serializes against a
+    // concurrent SIP creation/update targeting the same account (sips.ts's
+    // lockedAccountForSip locks the same row before its own checks): whichever
+    // transaction commits first is what the other one's guard sees, so the
+    // loser can't act on the pre-edit state.
+    const currentRows = await tx
+      .select()
+      .from(accounts)
+      .where(and(eq(accounts.id, id), eq(accounts.userId, userId)))
+      .for("update");
+    const current = currentRows[0];
+    if (!current) throw new HttpError(404, "Account not found");
 
-  // A goal earmark only applies to accounts you accumulate toward a goal. If the
-  // resulting type can't hold one, drop the assignment — whether it's being set
-  // now or was left over from before a type change — so it never lingers,
-  // hidden from the UI, still counted in goal funding.
-  if (!accountCanHaveGoal(nextType)) {
-    fields.goalId = null;
-  }
-  // Earmarking to a goal must point at the caller's own goal.
-  await assertOwnedGoal(db, userId, fields.goalId);
+    const nextType = fields.type ?? current.type;
+    const typeChanged = fields.type !== undefined && fields.type !== current.type;
+    const goalChanged = fields.goalId !== undefined && fields.goalId !== current.goalId;
+    const archiving = archived === true && current.archivedAt === null;
 
-  if (fields.accountLast4 !== undefined) {
-    const bank = await db.query.bankDetails.findFirst({
-      where: and(eq(bankDetails.accountId, id), eq(bankDetails.userId, userId)),
-    });
-    // Accepting this would let the two drift apart silently. The full number wins.
-    if (bank && bank.accountNumber !== "") {
-      throw new HttpError(400, "Last 4 is derived from the account number — edit that instead");
+    // A SIP bound to this account (as its source or its target, active or
+    // paused) keeps assuming the account's original type/goal/archived state —
+    // check *before* the auto-null-goalId logic below mutates `fields`, using
+    // the patch's as-submitted values.
+    if (typeChanged || goalChanged || archiving) {
+      const sipRefs = await tx
+        .select({ sourceAccountId: sips.sourceAccountId, targetAccountId: sips.targetAccountId })
+        .from(sips)
+        .where(or(eq(sips.sourceAccountId, id), eq(sips.targetAccountId, id)));
+      const targetSipCount = sipRefs.filter((r) => r.targetAccountId === id).length;
+      const sourceSipCount = sipRefs.filter((r) => r.sourceAccountId === id).length;
+      const blocked = assessAccountEditAgainstSips({ ...fields, archived }, current, { targetSipCount, sourceSipCount });
+      if (blocked) throw new HttpError(409, blocked);
     }
-  }
-  const rows = await db
-    .update(accounts)
-    .set({
-      ...fields,
-      ...(archived === undefined ? {} : { archivedAt: archived ? new Date() : null }),
-      updatedAt: new Date(),
-    })
-    .where(and(eq(accounts.id, id), eq(accounts.userId, userId)))
-    .returning();
-  if (rows.length === 0) throw new HttpError(404, "Account not found");
 
-  // Keep scheme details consistent with the new type: EPS is EPF-only, and EPF
-  // has no maturity date. Clear whichever the transition invalidates so a stale
-  // value can't survive the type editor.
-  if (typeChanged) {
-    const patch = nextType === "epf" ? { maturityDate: null } : { epsBalancePaise: null };
-    await db
-      .update(retirementDetails)
-      .set({ ...patch, updatedAt: new Date() })
-      .where(and(eq(retirementDetails.accountId, id), eq(retirementDetails.userId, userId)));
-  }
+    // A goal earmark only applies to accounts you accumulate toward a goal. If the
+    // resulting type can't hold one, drop the assignment — whether it's being set
+    // now or was left over from before a type change — so it never lingers,
+    // hidden from the UI, still counted in goal funding.
+    if (!accountCanHaveGoal(nextType)) {
+      fields.goalId = null;
+    }
+    // Earmarking to a goal must point at the caller's own goal.
+    await assertOwnedGoal(tx, userId, fields.goalId);
 
-  return toAccount(rows[0]!);
+    if (fields.accountLast4 !== undefined) {
+      const bank = await tx.query.bankDetails.findFirst({
+        where: and(eq(bankDetails.accountId, id), eq(bankDetails.userId, userId)),
+      });
+      // Accepting this would let the two drift apart silently. The full number wins.
+      if (bank && bank.accountNumber !== "") {
+        throw new HttpError(400, "Last 4 is derived from the account number — edit that instead");
+      }
+    }
+    const rows = await tx
+      .update(accounts)
+      .set({
+        ...fields,
+        ...(archived === undefined ? {} : { archivedAt: archived ? new Date() : null }),
+        updatedAt: new Date(),
+      })
+      .where(and(eq(accounts.id, id), eq(accounts.userId, userId)))
+      .returning();
+    if (rows.length === 0) throw new HttpError(404, "Account not found");
+
+    // Keep scheme details consistent with the new type: EPS is EPF-only, and EPF
+    // has no maturity date. Clear whichever the transition invalidates so a stale
+    // value can't survive the type editor.
+    if (typeChanged) {
+      const patch = nextType === "epf" ? { maturityDate: null } : { epsBalancePaise: null };
+      await tx
+        .update(retirementDetails)
+        .set({ ...patch, updatedAt: new Date() })
+        .where(and(eq(retirementDetails.accountId, id), eq(retirementDetails.userId, userId)));
+    }
+
+    return toAccount(rows[0]!);
+  });
+}
+
+/** Message for the "account is a SIP source" delete guard — pure so it's testable without a DB. */
+export function sipSourceBlockedMessage(count: number): string {
+  return `Account is the source of ${count} SIP(s) — pause and delete them or repoint them first`;
 }
 
 export async function deleteAccount(db: Db, userId: string, id: string): Promise<void> {
-  // Any transaction counts, including soft-deleted ones: they still hold a
-  // (non-cascading) FK to the account, so deleting would hit a constraint error
-  // at the DB. Archive is the path for an account that has ever been used.
-  const used = await db.query.transactions.findFirst({
-    where: eq(transactions.accountId, id),
+  return db.transaction(async (tx) => {
+    // Lock the account row first — same TOCTOU rationale as updateAccount: a
+    // concurrent SIP creation locks this same row (sips.ts's
+    // lockedAccountForSip) before it counts/relies on this account, so
+    // whichever side commits first is what the other sees.
+    const currentRows = await tx
+      .select({ id: accounts.id })
+      .from(accounts)
+      .where(and(eq(accounts.id, id), eq(accounts.userId, userId)))
+      .for("update");
+    if (currentRows.length === 0) throw new HttpError(404, "Account not found");
+
+    // Any transaction counts, including soft-deleted ones: they still hold a
+    // (non-cascading) FK to the account, so deleting would hit a constraint error
+    // at the DB. Archive is the path for an account that has ever been used.
+    const used = await tx.query.transactions.findFirst({
+      where: eq(transactions.accountId, id),
+    });
+    if (used) {
+      throw new HttpError(409, "Account has transactions — archive it instead of deleting");
+    }
+    // sips.source_account_id has no delete action (unlike target_account_id,
+    // which cascades by design) — without this check a SIP-referenced account
+    // would hit a raw FK constraint error instead of a controlled response.
+    const sipRows = await tx
+      .select({ count: sql<number>`count(*)::int` })
+      .from(sips)
+      .where(eq(sips.sourceAccountId, id));
+    const sipCount = sipRows[0]!.count;
+    if (sipCount > 0) {
+      throw new HttpError(409, sipSourceBlockedMessage(sipCount));
+    }
+    const rows = await tx
+      .delete(accounts)
+      .where(and(eq(accounts.id, id), eq(accounts.userId, userId)))
+      .returning({ id: accounts.id });
+    if (rows.length === 0) throw new HttpError(404, "Account not found");
   });
-  if (used) {
-    throw new HttpError(409, "Account has transactions — archive it instead of deleting");
-  }
-  const rows = await db
-    .delete(accounts)
-    .where(and(eq(accounts.id, id), eq(accounts.userId, userId)))
-    .returning({ id: accounts.id });
-  if (rows.length === 0) throw new HttpError(404, "Account not found");
 }
