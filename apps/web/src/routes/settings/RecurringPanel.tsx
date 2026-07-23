@@ -3,6 +3,7 @@ import { formatINR, type RecurringFrequency } from "@compass/shared";
 import { toast } from "../../lib/toast.tsx";
 import { useAccounts, useCategories } from "../../lib/queries.ts";
 import { useRecurring, useRecurringMutations } from "../../lib/budget-queries.ts";
+import { useResources } from "../../lib/resource-queries.ts";
 
 const FREQUENCIES: RecurringFrequency[] = ["daily", "weekly", "monthly", "yearly"];
 
@@ -11,15 +12,18 @@ export function RecurringPanel() {
   const { data: accounts } = useAccounts();
   const { data: categories } = useCategories();
   const { create, update, remove } = useRecurringMutations();
+  const { data: resources } = useResources();
 
   const active = accounts?.filter((a) => !a.archivedAt) ?? [];
   const [merchant, setMerchant] = useState("");
   const [amount, setAmount] = useState("");
   const [kind, setKind] = useState<"expense" | "income">("expense");
+  const [templateKind, setTemplateKind] = useState<"none" | "bill" | "subscription">("none");
   const [frequency, setFrequency] = useState<RecurringFrequency>("monthly");
   const [accountId, setAccountId] = useState("");
   const [categoryId, setCategoryId] = useState("");
   const [nextDue, setNextDue] = useState(new Date().toISOString().slice(0, 10));
+  const [resourceId, setResourceId] = useState("");
   const effAccount = accountId || active[0]?.id || "";
 
   function submit(e: FormEvent) {
@@ -34,6 +38,8 @@ export function RecurringPanel() {
         frequency,
         nextDueDate: nextDue,
         categoryId: categoryId || null,
+        resourceId: resourceId || null,
+        kind: templateKind,
       },
       {
         onSuccess: () => {
@@ -67,6 +73,11 @@ export function RecurringPanel() {
             <option key={f} value={f}>{f}</option>
           ))}
         </select>
+        <select value={templateKind} onChange={(e) => setTemplateKind(e.target.value as typeof templateKind)} className="rounded-md border border-slate-300 px-2 py-1.5">
+          <option value="none">Recurring</option>
+          <option value="bill">Bill</option>
+          <option value="subscription">Subscription</option>
+        </select>
         <label className="flex items-center gap-1 text-slate-500">
           next due
           <input type="date" value={nextDue} onChange={(e) => setNextDue(e.target.value)} className="rounded-md border border-slate-300 px-2 py-1.5" />
@@ -80,6 +91,12 @@ export function RecurringPanel() {
           <option value="">Category…</option>
           {categories?.filter((c) => !c.archivedAt && c.kind === kind).map((c) => (
             <option key={c.id} value={c.id}>{c.name}</option>
+          ))}
+        </select>
+        <select value={resourceId} onChange={(e) => setResourceId(e.target.value)} className="rounded-md border border-slate-300 px-2 py-1.5">
+          <option value="">Asset / connection…</option>
+          {resources?.filter((r) => !r.archived).map((r) => (
+            <option key={r.id} value={r.id}>{r.name}</option>
           ))}
         </select>
         <button type="submit" disabled={create.isPending} className="rounded-md bg-brand-600 px-3 py-1.5 text-white disabled:opacity-50">
@@ -98,11 +115,23 @@ export function RecurringPanel() {
               <p className="text-xs text-slate-400">
                 {t.frequency}{t.interval > 1 ? ` ×${t.interval}` : ""} · next {t.nextDueDate} · {accName(t.accountId)} · {catName(t.categoryId)}
                 {t.endDate && ` · ends ${t.endDate}`}
+                {t.resourceId && ` · ${resources?.find((r) => r.id === t.resourceId)?.name ?? "linked resource"}`}
               </p>
             </div>
             <span className={`tabular-nums ${t.amountPaise < 0 ? "text-slate-800" : "text-emerald-600"}`}>
               {formatINR(t.amountPaise)}
             </span>
+            <select
+              aria-label={`Asset or connection for ${t.merchant}`}
+              value={t.resourceId ?? ""}
+              onChange={(e) => update.mutate({ id: t.id, resourceId: e.target.value || null })}
+              className="max-w-40 rounded-md border border-slate-200 px-1.5 py-1 text-xs"
+            >
+              <option value="">No connection</option>
+              {resources?.filter((r) => !r.archived).map((r) => (
+                <option key={r.id} value={r.id}>{r.name}</option>
+              ))}
+            </select>
             <button
               className="text-xs text-slate-500 underline"
               onClick={() => update.mutate({ id: t.id, paused: !t.paused })}

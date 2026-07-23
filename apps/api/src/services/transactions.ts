@@ -10,10 +10,11 @@ import type {
   UpdateTransaction,
 } from "@compass/shared";
 import type { Db, DbOrTx } from "../db/index.ts";
-import { transactions, transactionSplits, transferLinks } from "../db/schema.ts";
+import { recurringTemplates, transactions, transactionSplits, transferLinks } from "../db/schema.ts";
 import { HttpError } from "../lib/errors.ts";
 import { getMerchantRules, normalizeMerchant } from "./merchants.ts";
 import { assertOwnedAccount, assertOwnedCategory } from "./ownership.ts";
+import { assertOwnedResource } from "./resources.ts";
 
 type TxRow = typeof transactions.$inferSelect;
 
@@ -129,6 +130,8 @@ async function hydrate(db: DbOrTx, rows: TxRow[]): Promise<Transaction[]> {
     transferLinkId: linkByTx.get(r.id) ?? null,
     transferCounterpartAccountId: counterpartAccountByTx(r.id),
     policyId: r.policyId,
+    resourceId: r.resourceId,
+    recurringTemplateId: r.recurringTemplateId,
     splits: splitsByTx.get(r.id) ?? [],
   }));
 }
@@ -211,6 +214,17 @@ export async function createTransaction(
 ): Promise<Transaction> {
   await assertOwnedAccount(db, userId, input.accountId);
   await assertOwnedCategory(db, userId, input.categoryId);
+  await assertOwnedResource(db, userId, input.resourceId);
+  if (input.recurringTemplateId) {
+    const template = await db.query.recurringTemplates.findFirst({
+      where: and(
+        eq(recurringTemplates.id, input.recurringTemplateId),
+        eq(recurringTemplates.userId, userId),
+      ),
+      columns: { id: true },
+    });
+    if (!template) throw new HttpError(404, "Recurring bill or subscription not found");
+  }
   // normalize the merchant; the category is whatever the caller supplied
   // (manual entry now, AI-assisted categorization later)
   const merchantRulesList = await getMerchantRules(db, userId);
@@ -230,6 +244,17 @@ export async function updateTransaction(
 ): Promise<Transaction> {
   if (input.accountId !== undefined) await assertOwnedAccount(db, userId, input.accountId);
   if (input.categoryId !== undefined) await assertOwnedCategory(db, userId, input.categoryId);
+  if (input.resourceId !== undefined) await assertOwnedResource(db, userId, input.resourceId);
+  if (input.recurringTemplateId) {
+    const template = await db.query.recurringTemplates.findFirst({
+      where: and(
+        eq(recurringTemplates.id, input.recurringTemplateId),
+        eq(recurringTemplates.userId, userId),
+      ),
+      columns: { id: true },
+    });
+    if (!template) throw new HttpError(404, "Recurring bill or subscription not found");
+  }
   const rows = await db
     .update(transactions)
     .set({ ...input, updatedAt: new Date() })

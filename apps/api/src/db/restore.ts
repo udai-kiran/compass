@@ -11,7 +11,7 @@ export const DEFERRED_RESTORE_COLUMNS = {
   categories: ["parent_id"],
   // policy_id → insurance_policies and reconciled_statement_id →
   // statement_reconciliations both restore after transactions in ALL_TABLES order.
-  transactions: ["policy_id", "reconciled_statement_id"],
+  transactions: ["policy_id", "recurring_template_id", "reconciled_statement_id"],
 } as const satisfies Record<string, readonly string[]>;
 
 /** Database-generated columns present in `select *` dumps but never insertable. */
@@ -80,6 +80,12 @@ export async function restoreDump(pool: pg.Pool, dump: Dump): Promise<void> {
     for (const row of dump.transactions ?? []) {
       if (row.policy_id !== null && row.policy_id !== undefined) {
         await client.query("update transactions set policy_id = $1 where id = $2", [row.policy_id, row.id]);
+      }
+      if (row.recurring_template_id !== null && row.recurring_template_id !== undefined) {
+        await client.query("update transactions set recurring_template_id = $1 where id = $2", [
+          row.recurring_template_id,
+          row.id,
+        ]);
       }
       if (row.reconciled_statement_id !== null && row.reconciled_statement_id !== undefined) {
         await client.query("update transactions set reconciled_statement_id = $1 where id = $2", [

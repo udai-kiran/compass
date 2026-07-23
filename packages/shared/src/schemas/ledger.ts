@@ -296,6 +296,10 @@ export const TransactionSchema = z.object({
   transferCounterpartAccountId: z.uuid().nullable(),
   /** insurance policy this expense is a premium for; null for ordinary transactions */
   policyId: z.uuid().nullable(),
+  /** vehicle or utility connection this expense belongs to */
+  resourceId: z.uuid().nullable(),
+  /** recurring bill/subscription that generated or was linked to this transaction */
+  recurringTemplateId: z.uuid().nullable(),
   splits: z.array(SplitSchema),
 });
 export type Transaction = z.infer<typeof TransactionSchema>;
@@ -311,8 +315,10 @@ export const CreateTransactionSchema = z.object({
   categoryId: z.uuid().nullable().default(null),
   notes: z.string().default(""),
   tags: z.array(z.string()).default([]),
+  resourceId: z.uuid().nullable().default(null),
+  recurringTemplateId: z.uuid().nullable().default(null),
 });
-export type CreateTransaction = z.infer<typeof CreateTransactionSchema>;
+export type CreateTransaction = z.input<typeof CreateTransactionSchema>;
 
 export const UpdateTransactionSchema = z.object({
   accountId: z.uuid().optional(),
@@ -326,6 +332,8 @@ export const UpdateTransactionSchema = z.object({
   categoryId: z.uuid().nullable().optional(),
   notes: z.string().optional(),
   tags: z.array(z.string()).optional(),
+  resourceId: z.uuid().nullable().optional(),
+  recurringTemplateId: z.uuid().nullable().optional(),
 });
 export type UpdateTransaction = z.infer<typeof UpdateTransactionSchema>;
 
