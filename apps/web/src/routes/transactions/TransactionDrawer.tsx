@@ -12,6 +12,8 @@ import {
   useTransferMutations,
   useTransferSuggestions,
 } from "../../lib/queries.ts";
+import { useRecurring } from "../../lib/budget-queries.ts";
+import { useResources } from "../../lib/resource-queries.ts";
 
 export function TransactionDrawer({
   id,
@@ -32,6 +34,8 @@ export function TransactionDrawer({
   const { data: suggestions } = useTransferSuggestions();
   const { data: attachments } = useAttachments(id);
   const attMut = useAttachmentMutations(id);
+  const { data: resources } = useResources();
+  const { data: recurring } = useRecurring();
 
   const [rows, setRows] = useState<Array<{ categoryId: string; amountRupees: string; note: string }>>([]);
   const [notes, setNotes] = useState("");
@@ -87,6 +91,41 @@ export function TransactionDrawer({
             className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
           />
         </label>
+
+        <section className="mt-5">
+          <h3 className="text-sm font-semibold text-slate-700">Asset or connection</h3>
+          <select
+            value={tx.resourceId ?? ""}
+            onChange={(e) => update.mutate({ id: tx.id, resourceId: e.target.value || null })}
+            className="input mt-1 w-full"
+          >
+            <option value="">Not linked</option>
+            {resources?.filter((resource) => !resource.archived).map((resource) => (
+              <option key={resource.id} value={resource.id}>
+                {resource.name}{resource.identifier ? ` · ${resource.identifier}` : ""}
+              </option>
+            ))}
+          </select>
+          <h3 className="mt-3 text-sm font-semibold text-slate-700">Bill or subscription</h3>
+          <select
+            value={tx.recurringTemplateId ?? ""}
+            onChange={(e) => {
+              const recurringTemplateId = e.target.value || null;
+              const template = recurring?.find((item) => item.id === recurringTemplateId);
+              update.mutate({
+                id: tx.id,
+                recurringTemplateId,
+                ...(template?.resourceId ? { resourceId: template.resourceId } : {}),
+              });
+            }}
+            className="input mt-1 w-full"
+          >
+            <option value="">Not linked</option>
+            {recurring?.map((template) => (
+              <option key={template.id} value={template.id}>{template.merchant} · {template.frequency}</option>
+            ))}
+          </select>
+        </section>
 
         {/* Transfer */}
         <section className="mt-5">

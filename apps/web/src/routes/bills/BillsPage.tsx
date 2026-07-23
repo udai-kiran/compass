@@ -14,6 +14,7 @@ import {
   useUpcomingBills,
 } from "../../lib/goal-queries.ts";
 import { compactINR, StatTile } from "../../lib/viz.tsx";
+import { useResources } from "../../lib/resource-queries.ts";
 
 const KIND_LABEL: Record<string, string> = {
   bill: "Bill",
@@ -43,6 +44,7 @@ export function BillsPage() {
   const { data: upcoming } = useUpcomingBills(view === "calendar" ? 90 : days);
   const { data: templates } = useRecurring();
   const { data: suggestions } = useSubscriptionSuggestions();
+  const { data: resources } = useResources();
 
   const billTemplates = useMemo(
     () => templates?.filter((t) => t.kind !== "none") ?? [],
@@ -104,7 +106,14 @@ export function BillsPage() {
               <span className={`w-24 shrink-0 tabular-nums ${b.dueDate <= today ? "font-semibold text-red-700" : "text-slate-500"}`}>
                 {b.dueDate}
               </span>
-              <span className="min-w-0 flex-1 truncate text-slate-700">{b.merchant}</span>
+              <span className="min-w-0 flex-1 truncate text-slate-700">
+                {b.merchant}
+                {(() => {
+                  const resourceId = templates?.find((t) => t.id === b.templateId)?.resourceId;
+                  const resource = resources?.find((r) => r.id === resourceId);
+                  return resource ? <span className="ml-2 text-xs text-slate-400">· {resource.name}</span> : null;
+                })()}
+              </span>
               <span className="rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
                 {KIND_LABEL[b.kind] ?? b.kind}
               </span>

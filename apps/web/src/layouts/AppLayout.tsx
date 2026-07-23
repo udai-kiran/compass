@@ -39,6 +39,7 @@ const NAV_GROUPS: NavGroup[] = [
       { to: "/budgets", label: "Budgets", icon: "budgets" },
       { to: "/cash-flow", label: "Cash Flow", icon: "cashflow" },
       { to: "/bills", label: "Bills & Subscriptions", icon: "bills" },
+      { to: "/resources", label: "Assets & Connections", icon: "wallet" },
       { to: "/cards", label: "Credit Cards", icon: "cards" },
       { to: "/emis", label: "EMIs & Loans", icon: "loans" },
     ],

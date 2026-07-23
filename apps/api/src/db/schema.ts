@@ -193,6 +193,36 @@ export const categories = pgTable(
 
 export const transactionSource = pgEnum("transaction_source", ["manual", "import", "recurring"]);
 
+export const resourceKind = pgEnum("resource_kind", [
+  "vehicle",
+  "electricity",
+  "mobile",
+  "internet",
+  "gas",
+  "water",
+  "other",
+]);
+
+/** A physical asset or service connection that expenses can be attributed to. */
+export const resources = pgTable(
+  "resources",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id").notNull().references(() => users.id),
+    kind: resourceKind("kind").notNull(),
+    name: text("name").notNull(),
+    /** registration, consumer/account number, or mobile number */
+    identifier: text("identifier").notNull().default(""),
+    provider: text("provider").notNull().default(""),
+    planName: text("plan_name").notNull().default(""),
+    details: text("details").notNull().default(""),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("resources_user_kind_idx").on(t.userId, t.kind, t.name)],
+);
+
 export const transactions = pgTable(
   "transactions",
   {
@@ -237,6 +267,11 @@ export const transactions = pgTable(
     policyId: uuid("policy_id").references((): AnyPgColumn => insurancePolicies.id, {
       onDelete: "set null",
     }),
+    resourceId: uuid("resource_id").references(() => resources.id, { onDelete: "set null" }),
+    recurringTemplateId: uuid("recurring_template_id").references(
+      (): AnyPgColumn => recurringTemplates.id,
+      { onDelete: "set null" },
+    ),
     /**
      * The statement cycle that cleared this transaction — set when a statement
      * line matched it (see statement_reconciliations). A set-once-per-cycle stamp:
@@ -256,6 +291,8 @@ export const transactions = pgTable(
     index("transactions_account_idx").on(t.accountId),
     index("transactions_category_idx").on(t.categoryId),
     index("transactions_policy_idx").on(t.policyId),
+    index("transactions_resource_idx").on(t.resourceId),
+    index("transactions_recurring_template_idx").on(t.recurringTemplateId),
     index("transactions_reconciled_idx").on(t.reconciledStatementId),
   ],
 );
@@ -503,6 +540,7 @@ export const recurringTemplates = pgTable(
     kind: recurringKind("kind").notNull().default("none"),
     /** reminder lead days; null = per-kind default (3, annual 14) */
     remindDays: integer("remind_days"),
+    resourceId: uuid("resource_id").references(() => resources.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -841,6 +879,8 @@ export const insurancePolicies = pgTable(
     vehicleType: vehicleKind("vehicle_type"),
     /** vehicle registration number; "" for non-vehicle policies */
     vehicleRegNo: text("vehicle_reg_no").notNull().default(""),
+    /** canonical vehicle record; legacy type/registration fields remain for compatibility */
+    resourceId: uuid("resource_id").references(() => resources.id, { onDelete: "set null" }),
     /** indemnity/critical-illness/etc. for a health policy; null for life/vehicle */
     healthType: healthType("health_type"),
     /** insurance company, e.g. "LIC", "Star Health" */

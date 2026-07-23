@@ -66,6 +66,7 @@ export const InsurancePolicySchema = z.object({
   vehicleType: VehicleKindSchema.nullable(),
   /** vehicle registration number (e.g. "KA01AB1234"); "" for non-vehicle policies */
   vehicleRegNo: z.string(),
+  resourceId: z.uuid().nullable(),
   /** indemnity/critical-illness/etc. for a health policy; null for life/vehicle */
   healthType: HealthTypeSchema.nullable(),
   /** insurance company, e.g. "LIC", "Star Health", "ICICI Lombard" */
@@ -107,6 +108,7 @@ const policyFields = {
   kind: InsuranceKindSchema.default("life"),
   vehicleType: VehicleKindSchema.nullable().default(null),
   vehicleRegNo: z.string().max(20).default(""),
+  resourceId: z.uuid().nullable().default(null),
   healthType: HealthTypeSchema.nullable().default(null),
   insurer: z.string().max(120).default(""),
   policyNumber: z.string().max(60).default(""),

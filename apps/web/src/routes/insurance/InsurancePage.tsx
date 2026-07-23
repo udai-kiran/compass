@@ -15,6 +15,7 @@ import {
 import { usePolicies, usePolicyMutations } from "../../lib/insurance-queries.ts";
 import { toast } from "../../lib/toast.tsx";
 import { PremiumsPanel } from "./PremiumsPanel.tsx";
+import { useResources } from "../../lib/resource-queries.ts";
 
 const KIND_LABELS: Record<InsuranceKind, string> = {
   life: "Life",
@@ -451,10 +452,12 @@ function PolicyForm({
   onDone: () => void;
 }) {
   const { create, update } = usePolicyMutations();
+  const { data: resources } = useResources();
   const [name, setName] = useState(policy?.name ?? "");
   const [kind, setKind] = useState<InsuranceKind>(policy?.kind ?? defaultKind ?? "life");
   const [vehicleType, setVehicleType] = useState<VehicleKind | "">(policy?.vehicleType ?? "");
   const [vehicleRegNo, setVehicleRegNo] = useState(policy?.vehicleRegNo ?? "");
+  const [resourceId, setResourceId] = useState(policy?.resourceId ?? "");
   const [healthType, setHealthType] = useState<HealthType | "">(policy?.healthType ?? "");
   const [insurer, setInsurer] = useState(policy?.insurer ?? "");
   const [policyNumber, setPolicyNumber] = useState(policy?.policyNumber ?? "");
@@ -481,6 +484,7 @@ function PolicyForm({
       kind,
       vehicleType: kind === "vehicle" ? (vehicleType || null) : null,
       vehicleRegNo: kind === "vehicle" ? vehicleRegNo.trim() : "",
+      resourceId: kind === "vehicle" ? (resourceId || null) : null,
       healthType: kind === "health" ? (healthType || null) : null,
       insurer: insurer.trim(),
       policyNumber: policyNumber.trim(),
@@ -537,6 +541,14 @@ function PolicyForm({
               className="input font-mono"
               placeholder="KA01AB1234"
             />
+          </Field>
+          <Field label="Linked vehicle">
+            <select value={resourceId} onChange={(e) => setResourceId(e.target.value)} className="input">
+              <option value="">Not linked</option>
+              {resources?.filter((resource) => resource.kind === "vehicle" && !resource.archived).map((resource) => (
+                <option key={resource.id} value={resource.id}>{resource.name}</option>
+              ))}
+            </select>
           </Field>
         </>
       )}

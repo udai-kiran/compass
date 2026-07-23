@@ -10,6 +10,7 @@ export * from "./schemas/goals.ts";
 export * from "./schemas/sips.ts";
 export * from "./schemas/wealth.ts";
 export * from "./schemas/insurance.ts";
+export * from "./schemas/resources.ts";
 export * from "./schemas/insights.ts";
 export * from "./schemas/reports.ts";
 export * from "./schemas/search.ts";

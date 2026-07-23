@@ -8,6 +8,7 @@ import type { Db } from "../db/index.ts";
 import { recurringTemplates, transactions } from "../db/schema.ts";
 import { HttpError } from "../lib/errors.ts";
 import { assertOwnedAccount, assertOwnedCategory } from "./ownership.ts";
+import { assertOwnedResource } from "./resources.ts";
 
 type TemplateRow = typeof recurringTemplates.$inferSelect;
 
@@ -26,6 +27,7 @@ function toTemplate(r: TemplateRow): RecurringTemplate {
     paused: r.pausedAt !== null,
     kind: r.kind,
     remindDays: r.remindDays,
+    resourceId: r.resourceId,
   };
 }
 
@@ -79,6 +81,7 @@ export async function createTemplate(
 ): Promise<RecurringTemplate> {
   await assertOwnedAccount(db, userId, input.accountId);
   await assertOwnedCategory(db, userId, input.categoryId);
+  await assertOwnedResource(db, userId, input.resourceId);
   const rows = await db
     .insert(recurringTemplates)
     .values({ ...input, userId })
@@ -95,6 +98,7 @@ export async function updateTemplate(
   const { paused, ...rest } = input;
   await assertOwnedAccount(db, userId, rest.accountId);
   await assertOwnedCategory(db, userId, rest.categoryId);
+  await assertOwnedResource(db, userId, rest.resourceId);
   const set: Record<string, unknown> = { ...rest, updatedAt: new Date() };
   if (paused !== undefined) set.pausedAt = paused ? new Date() : null;
   const rows = await db
@@ -161,6 +165,8 @@ export async function materializeDue(db: Db): Promise<{ created: number; userIds
           categoryId: t.categoryId,
           notes: t.notes,
           source: "recurring" as const,
+          resourceId: t.resourceId,
+          recurringTemplateId: t.id,
         })),
       );
       created += dates.length;

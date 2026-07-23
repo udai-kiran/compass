@@ -18,6 +18,7 @@ import { HttpError } from "../lib/errors.ts";
 import type { Storage } from "../lib/storage.ts";
 import { assertUploadable } from "./attachments.ts";
 import { createTransaction } from "./transactions.ts";
+import { assertOwnedResource } from "./resources.ts";
 
 type PolicyRow = typeof insurancePolicies.$inferSelect;
 type HealthCardRow = typeof insuranceHealthCards.$inferSelect;
@@ -33,6 +34,7 @@ function toPolicy(p: PolicyRow, cards: HealthCardRow[] = []): InsurancePolicy {
     kind: p.kind,
     vehicleType: p.vehicleType,
     vehicleRegNo: p.vehicleRegNo,
+    resourceId: p.resourceId,
     healthType: p.healthType,
     insurer: p.insurer,
     policyNumber: p.policyNumber,
@@ -102,6 +104,7 @@ export async function createPolicy(
   input: CreateInsurancePolicy,
 ): Promise<InsurancePolicy> {
   const parsed = CreateInsurancePolicySchema.parse(input);
+  await assertOwnedResource(db, userId, parsed.resourceId);
   const rows = await db
     .insert(insurancePolicies)
     .values({ ...parsed, userId })
@@ -117,6 +120,7 @@ export async function updatePolicy(
 ): Promise<InsurancePolicy> {
   await ownedPolicy(db, userId, id);
   const { archived, ...fields } = UpdateInsurancePolicySchema.parse(input);
+  await assertOwnedResource(db, userId, fields.resourceId);
   await db
     .update(insurancePolicies)
     .set({ ...fields, archivedAt: archived ? new Date() : null, updatedAt: new Date() })
@@ -324,6 +328,7 @@ export async function logPremium(
     notes: parsed.note,
     tags: [],
     policyId,
+    resourceId: policy.resourceId,
   });
   return listPolicyPremiums(db, userId, policyId);
 }

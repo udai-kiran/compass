@@ -150,6 +150,7 @@ export const RecurringTemplateSchema = z.object({
   paused: z.boolean(),
   kind: z.enum(["none", "bill", "subscription", "insurance", "emi"]),
   remindDays: z.number().int().nullable(),
+  resourceId: z.uuid().nullable(),
 });
 export type RecurringTemplate = z.infer<typeof RecurringTemplateSchema>;
 
@@ -168,6 +169,7 @@ export const CreateRecurringTemplateSchema = z.object({
   endDate: z.iso.date().nullable().default(null),
   kind: z.enum(["none", "bill", "subscription", "insurance", "emi"]).default("none"),
   remindDays: z.number().int().min(0).max(60).nullable().default(null),
+  resourceId: z.uuid().nullable().default(null),
 });
 export type CreateRecurringTemplate = z.input<typeof CreateRecurringTemplateSchema>;
 

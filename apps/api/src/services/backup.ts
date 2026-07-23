@@ -24,7 +24,7 @@ import type { Storage } from "../lib/storage.ts";
  * by ordering instead.
  */
 export const ALL_TABLES = [
-  "users", "accounts", "categories", "transactions", "transaction_splits", "transfer_links",
+  "users", "accounts", "categories", "resources", "transactions", "transaction_splits", "transfer_links",
   "attachments", "imports", "import_rows", "import_presets", "merchant_rules",
   "budgets", "budget_lines", "budget_alerts", "notifications", "recurring_templates",
   "goals", "alert_ledger", "subscription_dismissals", "notification_prefs", "projection_settings",
@@ -39,7 +39,7 @@ export const ALL_TABLES = [
 
 /** Tables that carry a user_id directly — scoped by that column in the export. */
 export const USER_TABLES: Record<string, string> = {
-  accounts: "user_id", categories: "user_id", transactions: "user_id", transfer_links: "user_id",
+  accounts: "user_id", categories: "user_id", resources: "user_id", transactions: "user_id", transfer_links: "user_id",
   imports: "user_id", import_presets: "user_id", merchant_rules: "user_id",
   budgets: "user_id", budget_alerts: "user_id", notifications: "user_id", recurring_templates: "user_id",
   goals: "user_id", sips: "user_id", alert_ledger: "user_id", subscription_dismissals: "user_id", notification_prefs: "user_id",
