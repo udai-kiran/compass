@@ -11,6 +11,7 @@ import {
   SubscriptionSuggestionSchema,
   type CreateGoal,
   type CreateSip,
+  type ReorderGoals,
   type UpdateGoal,
   type UpdateSip,
   type UpsertNotificationPref,
@@ -62,7 +63,14 @@ export function useGoalMutations() {
     mutationFn: (id: string) => send("DELETE", `/api/goals/${id}`, OkSchema),
     onSuccess: invalidate,
   });
-  return { create, update, remove };
+  const reorder = useMutation({
+    mutationFn: (body: ReorderGoals) =>
+      send("PUT", "/api/goals/order", z.array(GoalSchema), body),
+    onSuccess: (ordered) => {
+      qc.setQueryData(["goals"], ordered);
+    },
+  });
+  return { create, update, remove, reorder };
 }
 
 // ---------- SIPs ----------

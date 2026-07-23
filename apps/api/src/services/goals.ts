@@ -1,12 +1,13 @@
-import { and, eq, gt, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNull, sql } from "drizzle-orm";
 import type {
   CreateGoal,
   Goal,
   GoalAssetProgress,
   GoalProgress,
+  ReorderGoals,
   UpdateGoal,
 } from "@compass/shared";
-import { CreateGoalSchema, isRetirementAccount } from "@compass/shared";
+import { CreateGoalSchema, isRetirementAccount, ReorderGoalsSchema } from "@compass/shared";
 import type { Db } from "../db/index.ts";
 import { alertLedger, goals, holdingEvents, retirementDetails, transactions } from "../db/schema.ts";
 import { HttpError } from "../lib/errors.ts";
@@ -36,6 +37,7 @@ function toGoal(g: GoalRow): Goal {
     targetPaise: g.targetPaise,
     targetMonths: g.targetMonths,
     targetDate: g.targetDate,
+    sortOrder: g.sortOrder,
     archived: g.archivedAt !== null,
   };
 }
@@ -49,14 +51,23 @@ async function ownedGoal(db: Db, userId: string, id: string): Promise<GoalRow> {
 export async function listGoals(db: Db, userId: string): Promise<Goal[]> {
   const rows = await db.query.goals.findMany({
     where: eq(goals.userId, userId),
-    orderBy: (g, { asc }) => [asc(g.createdAt)],
+    orderBy: (g, { asc }) => [asc(g.sortOrder), asc(g.createdAt)],
   });
   return rows.map(toGoal);
 }
 
 export async function createGoal(db: Db, userId: string, input: CreateGoal): Promise<Goal> {
   const parsed = CreateGoalSchema.parse(input);
-  const rows = await db.insert(goals).values({ ...parsed, userId }).returning();
+  const [last] = await db
+    .select({ sortOrder: goals.sortOrder })
+    .from(goals)
+    .where(eq(goals.userId, userId))
+    .orderBy(sql`${goals.sortOrder} desc`)
+    .limit(1);
+  const rows = await db
+    .insert(goals)
+    .values({ ...parsed, userId, sortOrder: (last?.sortOrder ?? -1) + 1 })
+    .returning();
   return toGoal(rows[0]!);
 }
 
@@ -84,6 +95,40 @@ export async function deleteGoal(db: Db, userId: string, id: string): Promise<vo
     .where(and(eq(goals.id, id), eq(goals.userId, userId)))
     .returning({ id: goals.id });
   if (rows.length === 0) throw new HttpError(404, "Goal not found");
+}
+
+export async function reorderGoals(
+  db: Db,
+  userId: string,
+  input: ReorderGoals,
+): Promise<Goal[]> {
+  const { goalIds } = ReorderGoalsSchema.parse(input);
+  if (new Set(goalIds).size !== goalIds.length) {
+    throw new HttpError(400, "Goal order contains duplicates");
+  }
+
+  return db.transaction(async (tx) => {
+    const owned = await tx
+      .select({ id: goals.id })
+      .from(goals)
+      .where(and(eq(goals.userId, userId), isNull(goals.archivedAt)));
+    if (owned.length !== goalIds.length || owned.some(({ id }) => !goalIds.includes(id))) {
+      throw new HttpError(400, "Goal order must include every active goal");
+    }
+
+    for (const [sortOrder, id] of goalIds.entries()) {
+      await tx
+        .update(goals)
+        .set({ sortOrder, updatedAt: new Date() })
+        .where(and(eq(goals.id, id), eq(goals.userId, userId)));
+    }
+    const rows = await tx
+      .select()
+      .from(goals)
+      .where(eq(goals.userId, userId))
+      .orderBy(asc(goals.sortOrder), asc(goals.createdAt));
+    return rows.map(toGoal);
+  });
 }
 
 /** Emergency-fund preset: target = N months × trailing 6-month average expenses. */

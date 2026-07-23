@@ -21,6 +21,7 @@ export const GoalSchema = z.object({
   targetPaise: z.number().int().nullable(),
   targetMonths: z.number().int().nullable(),
   targetDate: z.iso.date().nullable(),
+  sortOrder: z.number().int(),
   archived: z.boolean(),
 });
 export type Goal = z.infer<typeof GoalSchema>;
@@ -57,6 +58,11 @@ export const UpdateGoalSchema = z.object({
   archived: z.boolean().optional(),
 });
 export type UpdateGoal = z.infer<typeof UpdateGoalSchema>;
+
+export const ReorderGoalsSchema = z.object({
+  goalIds: z.array(z.uuid()).min(1),
+});
+export type ReorderGoals = z.infer<typeof ReorderGoalsSchema>;
 
 // ---------- Projection settings ----------
 
