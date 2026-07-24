@@ -37,7 +37,7 @@ const ModelResultSchema = z.object({
   transactions: z.array(ModelTxnSchema).default([]),
 });
 
-const EXTRACT_SYSTEM = [
+export const EXTRACT_SYSTEM = [
   "You extract transactions from a personal-finance email (bank/card alerts, bills, statements).",
   "Return ONLY a JSON object, no prose, shaped exactly:",
   '{"classification": <class>, "transactions": [<txn>, ...]}',
@@ -56,6 +56,7 @@ const EXTRACT_SYSTEM = [
   "",
   "direction: debit = money LEAVING the user (spend, payment, withdrawal, purchase); credit = money ENTERING (refund, salary, received, cashback).",
   "category: infer it from the merchant/counterparty (e.g. a food-delivery brand → Food). Only ever return a name that appears in the provided list; if unsure or the list is empty, return \"\".",
+  "date: output YYYY-MM-DD (ISO). Emails are INDIAN and print dates DAY-FIRST: all-numeric dates like DD-MM-YY, DD-MM-YYYY, DD/MM/YYYY are day-month-year. E.g. 24-07-26 and 24/07/2026 both mean 24 July 2026 → output 2026-07-24. A 2-digit year expands to 20YY. A date already in ISO YYYY-MM-DD is correct — output it unchanged. A textual date with a month name (e.g. 27 May 26) is unambiguous — keep its day and month, just expand a 2-digit year to 20YY.",
   "Extract every distinct transaction; a statement may list many. Never invent figures — if a field is unknown use null or \"\". Amounts are Indian Rupees.",
 ].join("\n");
 
@@ -345,7 +346,7 @@ export async function runExtraction(
  */
 export const MAX_STATEMENT_CHARS = 60_000;
 
-const STATEMENT_SYSTEM = [
+export const STATEMENT_SYSTEM = [
   "You extract EVERY transaction from the text of a CREDIT-CARD STATEMENT.",
   'Return ONLY a JSON object, no prose: {"classification": "card_statement", "transactions": [<txn>, ...]}',
   "",
@@ -359,7 +360,8 @@ const STATEMENT_SYSTEM = [
   "A transaction line looks like: DATE  DESCRIPTION  AMOUNT  <C|D>.",
   'direction: a "D" (debit) is a purchase/spend on the card → "debit"; a "C" (credit) is a payment received, refund, or cashback → "credit".',
   'A credit that is a BILL PAYMENT to the card — "PAYMENT RECEIVED", "BBPS"/"BPPY", autopay, a NEFT/UPI/cheque payment, "payment thank you" — is a transfer/repayment, NOT income: keep direction "credit" but set its category to "". Only a genuine refund or cashback may take an income category.',
-  "Extract every dated transaction in the statement period. Ignore summary, subtotal, interest-explanation and marketing lines that aren't dated transactions. In particular NEVER emit balance/summary lines as transactions: Opening Balance, Previous/Closing Balance, Balance B/F or C/F, Total Amount Due, Minimum Amount Due, and any running-balance figure are NOT transactions. Never invent figures. Amounts are Indian Rupees; a 2-digit year expands to 20YY.",
+  "date: output YYYY-MM-DD (ISO). Statements are INDIAN and print dates DAY-FIRST: all-numeric dates like DD-MM-YY, DD-MM-YYYY, DD/MM/YYYY are day-month-year. E.g. 24-07-26 and 24/07/2026 both mean 24 July 2026 → output 2026-07-24. A 2-digit year expands to 20YY. A date already in ISO YYYY-MM-DD is correct — output it unchanged. A textual date with a month name (e.g. 27 May 26) is unambiguous — keep its day and month, just expand a 2-digit year to 20YY.",
+  "Extract every dated transaction in the statement period. Ignore summary, subtotal, interest-explanation and marketing lines that aren't dated transactions. In particular NEVER emit balance/summary lines as transactions: Opening Balance, Previous/Closing Balance, Balance B/F or C/F, Total Amount Due, Minimum Amount Due, and any running-balance figure are NOT transactions. Never invent figures. Amounts are Indian Rupees.",
 ].join("\n");
 
 /**
