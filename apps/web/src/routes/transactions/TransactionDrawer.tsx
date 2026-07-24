@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { formatINR, TransactionSchema, type TransactionFilter } from "@compass/shared";
 import { apiGet } from "../../lib/api.ts";
 import { CategoryPicker } from "../../components/CategoryPicker.tsx";
@@ -28,6 +28,7 @@ export function TransactionDrawer({
     queryKey: ["transaction", id],
     queryFn: () => apiGet(`/api/transactions/${id}`, TransactionSchema),
   });
+  const qc = useQueryClient();
   const { data: categories } = useCategories();
   const { setSplits, update, remove } = useTransactionMutations(filter);
   const { link, unlink } = useTransferMutations();
@@ -39,6 +40,8 @@ export function TransactionDrawer({
 
   const [rows, setRows] = useState<Array<{ categoryId: string; amountRupees: string; note: string }>>([]);
   const [notes, setNotes] = useState("");
+  const [resourceId, setResourceId] = useState<string | null>(null);
+  const [recurringTemplateId, setRecurringTemplateId] = useState<string | null>(null);
 
   useEffect(() => {
     if (tx) {
@@ -50,6 +53,8 @@ export function TransactionDrawer({
         })),
       );
       setNotes(tx.notes);
+      setResourceId(tx.resourceId);
+      setRecurringTemplateId(tx.recurringTemplateId);
     }
   }, [tx]);
 
@@ -95,8 +100,8 @@ export function TransactionDrawer({
         <section className="mt-5">
           <h3 className="text-sm font-semibold text-slate-700">Asset or connection</h3>
           <select
-            value={tx.resourceId ?? ""}
-            onChange={(e) => update.mutate({ id: tx.id, resourceId: e.target.value || null })}
+            value={resourceId ?? ""}
+            onChange={(e) => setResourceId(e.target.value || null)}
             className="input mt-1 w-full"
           >
             <option value="">Not linked</option>
@@ -108,15 +113,14 @@ export function TransactionDrawer({
           </select>
           <h3 className="mt-3 text-sm font-semibold text-slate-700">Bill or subscription</h3>
           <select
-            value={tx.recurringTemplateId ?? ""}
+            value={recurringTemplateId ?? ""}
             onChange={(e) => {
-              const recurringTemplateId = e.target.value || null;
-              const template = recurring?.find((item) => item.id === recurringTemplateId);
-              update.mutate({
-                id: tx.id,
-                recurringTemplateId,
-                ...(template?.resourceId ? { resourceId: template.resourceId } : {}),
-              });
+              const newRecurringTemplateId = e.target.value || null;
+              setRecurringTemplateId(newRecurringTemplateId);
+              const template = recurring?.find((item) => item.id === newRecurringTemplateId);
+              if (template?.resourceId) {
+                setResourceId(template.resourceId);
+              }
             }}
             className="input mt-1 w-full"
           >
@@ -125,6 +129,23 @@ export function TransactionDrawer({
               <option key={template.id} value={template.id}>{template.merchant} · {template.frequency}</option>
             ))}
           </select>
+          <button
+            disabled={update.isPending || (resourceId === tx.resourceId && recurringTemplateId === tx.recurringTemplateId)}
+            onClick={() =>
+              update.mutate(
+                { id: tx.id, resourceId, recurringTemplateId },
+                {
+                  onSuccess: () => {
+                    toast("Saved", "success");
+                    void qc.invalidateQueries({ queryKey: ["transaction", id] });
+                  },
+                },
+              )
+            }
+            className="mt-2 rounded-md bg-brand-600 px-3 py-1.5 text-sm text-white disabled:opacity-40"
+          >
+            Save
+          </button>
         </section>
 
         {/* Transfer */}
