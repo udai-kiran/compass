@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ddmmyyyyToISO, formatDisplayDate, isoToDDMMYYYY, monthKey, todayInIST, toISODate } from "./date.ts";
+import { calculateAge, ddmmyyyyToISO, formatDisplayDate, isoToDDMMYYYY, monthKey, todayInIST, toISODate } from "./date.ts";
 
 test("toISODate formats as YYYY-MM-DD", () => {
   assert.equal(toISODate(new Date("2026-01-05T10:00:00.000Z")), "2026-01-05");
@@ -247,4 +247,52 @@ test("ddmmyyyyToISO month-end round-trip sanity cases", () => {
   assert.equal(ddmmyyyyToISO("28-02-2026"), "2026-02-28");
   assert.equal(ddmmyyyyToISO("29-02-2026"), null); // 2026 not a leap year
   assert.equal(ddmmyyyyToISO("31-12-2026"), "2026-12-31");
+});
+
+// calculateAge tests
+test("calculateAge returns correct age for past date of birth", () => {
+  // Person born 2000-05-15, tested on 2026-07-24 IST
+  const now = new Date("2026-07-24T06:00:00Z"); // IST 11:30
+  const age = calculateAge("2000-05-15", now);
+  assert.equal(age, 26);
+});
+
+test("calculateAge returns correct age when birthday not yet reached this year", () => {
+  // Person born 2000-08-15, tested on 2026-07-24 (birthday is in August, hasn't happened yet)
+  const now = new Date("2026-07-24T06:00:00Z");
+  const age = calculateAge("2000-08-15", now);
+  assert.equal(age, 25); // Still 25, will turn 26 in August
+});
+
+test("calculateAge returns correct age when birthday already passed this year", () => {
+  // Person born 2000-01-15, tested on 2026-07-24 (birthday was in January)
+  const now = new Date("2026-07-24T06:00:00Z");
+  const age = calculateAge("2000-01-15", now);
+  assert.equal(age, 26);
+});
+
+test("calculateAge returns null for null date of birth", () => {
+  const age = calculateAge(null);
+  assert.equal(age, null);
+});
+
+test("calculateAge returns null for future date of birth", () => {
+  // Person born 2030-05-15, tested on 2026-07-24
+  const now = new Date("2026-07-24T06:00:00Z");
+  const age = calculateAge("2030-05-15", now);
+  assert.equal(age, null);
+});
+
+test("calculateAge handles birthday on exact date", () => {
+  // Person born 2000-07-24, tested on 2026-07-24 (today is their birthday)
+  const now = new Date("2026-07-24T06:00:00Z");
+  const age = calculateAge("2000-07-24", now);
+  assert.equal(age, 26);
+});
+
+test("calculateAge handles edge case of birthday tomorrow", () => {
+  // Person born 2000-07-25, tested on 2026-07-24 (birthday is tomorrow)
+  const now = new Date("2026-07-24T06:00:00Z");
+  const age = calculateAge("2000-07-25", now);
+  assert.equal(age, 25); // Still 25, will turn 26 tomorrow
 });
