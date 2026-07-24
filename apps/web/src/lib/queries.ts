@@ -141,6 +141,7 @@ export function useTransactionMutations(filter: TransactionFilter) {
   });
 
   const update = useMutation({
+    scope: { id: "transaction-update" },
     mutationFn: ({ id, ...body }: UpdateTransaction & { id: string }) =>
       apiPatch(`/api/transactions/${id}`, TransactionSchema, body),
     // optimistic inline edit

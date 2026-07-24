@@ -4,6 +4,7 @@ import { useAccounts, useCategories } from "../../lib/queries.ts";
 import { useInbox, useInboxMutations } from "../../lib/inbox-queries.ts";
 import { toast } from "../../lib/toast.tsx";
 import { CategoryPicker } from "../../components/CategoryPicker.tsx";
+import { DateField } from "../../components/DateField.tsx";
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -229,7 +230,7 @@ function DraftCard({
           />
         </Field>
         <Field label="Date">
-          <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="input" />
+          <DateField value={date} onChange={(iso) => setDate(iso)} className="w-full" aria-label="Transaction date" />
         </Field>
         <Field label="Merchant">
           <input value={merchant} onChange={(e) => setMerchant(e.target.value)} className="input" />
@@ -360,7 +361,7 @@ function TransferGroup({
           </select>
         </Field>
         <Field label="Date">
-          <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="input" />
+          <DateField value={date} onChange={(iso) => setDate(iso)} className="w-full" aria-label="Transfer date" />
         </Field>
       </div>
 

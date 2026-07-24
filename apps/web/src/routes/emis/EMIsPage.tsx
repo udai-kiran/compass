@@ -4,6 +4,7 @@ import { Meter } from "../../lib/viz.tsx";
 import { toast } from "../../lib/toast.tsx";
 import { useAccounts, useCategories } from "../../lib/queries.ts";
 import { useEmiMutations, useEmis } from "../../lib/emi-queries.ts";
+import { DateField } from "../../components/DateField.tsx";
 
 export function EMIsPage() {
   const { data: emis, isLoading } = useEmis();
@@ -190,7 +191,7 @@ function NewEmiForm() {
         </label>
         <label className="flex flex-col gap-1 text-xs text-slate-500">
           First installment
-          <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="input" />
+          <DateField value={startDate} onChange={(iso) => setStartDate(iso)} className="w-full" aria-label="First installment date" />
         </label>
       </div>
       <div className="mt-3 flex items-center gap-4">

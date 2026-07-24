@@ -16,6 +16,7 @@ import { usePolicies, usePolicyMutations } from "../../lib/insurance-queries.ts"
 import { toast } from "../../lib/toast.tsx";
 import { PremiumsPanel } from "./PremiumsPanel.tsx";
 import { useResources } from "../../lib/resource-queries.ts";
+import { DateField } from "../../components/DateField.tsx";
 
 const KIND_LABELS: Record<InsuranceKind, string> = {
   life: "Life",
@@ -589,14 +590,14 @@ function PolicyForm({
         </select>
       </Field>
       <Field label="Started from">
-        <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="input" />
+        <DateField value={startDate} onChange={(iso) => setStartDate(iso)} className="w-full" aria-label="Start date" />
       </Field>
       <Field label="Renewal date">
-        <input type="date" value={renewalDate} onChange={(e) => setRenewalDate(e.target.value)} className="input" />
+        <DateField value={renewalDate} onChange={(iso) => setRenewalDate(iso)} className="w-full" aria-label="Renewal date" />
       </Field>
       {kind === "life" && (
         <Field label="Maturity date">
-          <input type="date" value={maturityDate} onChange={(e) => setMaturityDate(e.target.value)} className="input" />
+          <DateField value={maturityDate} onChange={(iso) => setMaturityDate(iso)} className="w-full" aria-label="Maturity date" />
         </Field>
       )}
       <Field label="Nominee">

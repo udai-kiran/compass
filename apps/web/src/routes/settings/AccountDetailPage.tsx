@@ -29,6 +29,7 @@ import { UpiQr, upiPayUri } from "../../components/UpiQr.tsx";
 import { useAccountMutations, useAccounts } from "../../lib/queries.ts";
 import { useCardHolders, useStatementPasswordMutation } from "../../lib/card-queries.ts";
 import { toast } from "../../lib/toast.tsx";
+import { DateField } from "../../components/DateField.tsx";
 
 const SUBTYPE_LABELS: Record<BankAccountSubtype, string> = {
   savings: "Savings",
@@ -699,11 +700,11 @@ function RetirementSection({ account }: { account: AccountWithBalance }) {
         {/* EPF has no maturity — the API rejects one, so don't offer the field. */}
         {!isEpf && (
           <Field label="Matures on">
-            <input
-              type="date"
+            <DateField
               value={maturity}
-              onChange={(e) => setMaturity(e.target.value)}
-              className={inputClass}
+              onChange={(iso) => setMaturity(iso)}
+              className="w-full"
+              aria-label="Maturity date"
             />
           </Field>
         )}

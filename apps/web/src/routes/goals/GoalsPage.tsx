@@ -23,6 +23,7 @@ import { useAccounts } from "../../lib/queries.ts";
 import { useAssetGoalMutation, useNetWorthByGoal, usePortfolio } from "../../lib/wealth-queries.ts";
 import { SERIES } from "../../lib/viz.tsx";
 import { formatGoalDeadlineDistance } from "./goal-date.ts";
+import { DateField } from "../../components/DateField.tsx";
 
 const GOAL_TYPES: Array<{ value: GoalType; label: string }> = [
   { value: "savings", label: "Savings" },
@@ -176,7 +177,7 @@ function GoalForm({ goal, onDone }: { goal?: Goal; onDone: () => void }) {
       )}
       <label className="block">
         <span className="text-slate-600">Target date (optional)</span>
-        <input type="date" value={targetDate} onChange={(e) => setTargetDate(e.target.value)} className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5" />
+        <DateField value={targetDate} onChange={(iso) => setTargetDate(iso)} className="mt-1 w-full" aria-label="Target date" />
       </label>
       <div className="flex items-center gap-3 sm:col-span-2">
         <button type="submit" disabled={pending || !name} className="rounded-md bg-brand-600 px-4 py-1.5 text-white disabled:opacity-40">

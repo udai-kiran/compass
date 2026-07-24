@@ -17,6 +17,7 @@ import {
   useTransactionsInfinite,
 } from "../../lib/queries.ts";
 import { CategoryPicker } from "../../components/CategoryPicker.tsx";
+import { DateField } from "../../components/DateField.tsx";
 import { TransactionDrawer } from "./TransactionDrawer.tsx";
 import { AiCategorizePanel } from "./AiCategorizePanel.tsx";
 import { PayslipModal } from "./PayslipModal.tsx";
@@ -161,17 +162,17 @@ export function TransactionsPage() {
           }}
           className="w-full rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm sm:w-56"
         />
-        <input
-          type="date"
+        <DateField
           value={params.get("from") ?? ""}
-          onChange={(e) => setFilterParam("from", e.target.value)}
-          className="rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm"
+          onChange={(iso) => setFilterParam("from", iso)}
+          className="w-36"
+          aria-label="From date"
         />
-        <input
-          type="date"
+        <DateField
           value={params.get("to") ?? ""}
-          onChange={(e) => setFilterParam("to", e.target.value)}
-          className="rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm"
+          onChange={(iso) => setFilterParam("to", iso)}
+          className="w-36"
+          aria-label="To date"
         />
         <select
           value={params.get("accountId") ?? ""}
@@ -362,6 +363,8 @@ function TxRow({
   const [editing, setEditing] = useState<
     "category" | "date" | "amount" | "merchant" | "account" | null
   >(null);
+  const [editingDate, setEditingDate] = useState("");
+  const lastCommittedDate = useRef<string | null>(null);
   const isTransfer = tx.transferLinkId !== null;
   // Distinguish a plain account move from a credit-card payment by looking at the
   // two legs' account types, and name the counterpart so the row is self-explaining.
@@ -384,18 +387,30 @@ function TxRow({
         onClick={(e) => e.stopPropagation()}
       />
       {editing === "date" ? (
-        <input
-          type="date"
+        <DateField
+          value={editingDate}
+          defaultOpen
           autoFocus
-          defaultValue={tx.date}
-          onBlur={(e) => {
-            onUpdate({ date: e.target.value });
-            setEditing(null);
+          onChange={(iso) => {
+            setEditingDate(iso);
+            if (iso && iso !== lastCommittedDate.current) {
+              onUpdate({ date: iso });
+              lastCommittedDate.current = iso;
+            }
           }}
-          className="w-28 rounded border border-slate-300 px-1 py-0.5"
+          onClose={() => setEditing(null)}
+          className="w-28"
+          aria-label="Transaction date"
         />
       ) : (
-        <button className="w-28 text-left text-slate-500" onClick={() => setEditing("date")}>
+        <button
+          className="w-28 text-left text-slate-500"
+          onClick={() => {
+            setEditingDate(tx.date);
+            lastCommittedDate.current = tx.date;
+            setEditing("date");
+          }}
+        >
           {formatDisplayDate(tx.date)}
         </button>
       )}
@@ -610,11 +625,11 @@ function QuickAdd({ filter }: { filter: TransactionFilter }) {
         inputMode="decimal"
         className="w-28 rounded-md border border-slate-300 px-2 py-1.5 text-sm text-right"
       />
-      <input
-        type="date"
+      <DateField
         value={date}
-        onChange={(e) => setDate(e.target.value)}
-        className="rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+        onChange={(iso) => setDate(iso)}
+        className="w-36"
+        aria-label="Transaction date"
       />
       <select
         value={effAccount}

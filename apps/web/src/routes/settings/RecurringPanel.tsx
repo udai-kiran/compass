@@ -4,6 +4,7 @@ import { toast } from "../../lib/toast.tsx";
 import { useAccounts, useCategories } from "../../lib/queries.ts";
 import { useRecurring, useRecurringMutations } from "../../lib/budget-queries.ts";
 import { useResources } from "../../lib/resource-queries.ts";
+import { DateField } from "../../components/DateField.tsx";
 
 const FREQUENCIES: RecurringFrequency[] = ["daily", "weekly", "monthly", "yearly"];
 
@@ -80,7 +81,7 @@ export function RecurringPanel() {
         </select>
         <label className="flex items-center gap-1 text-slate-500">
           next due
-          <input type="date" value={nextDue} onChange={(e) => setNextDue(e.target.value)} className="rounded-md border border-slate-300 px-2 py-1.5" />
+          <DateField value={nextDue} onChange={(iso) => setNextDue(iso)} className="w-36" aria-label="Next due date" />
         </label>
         <select value={effAccount} onChange={(e) => setAccountId(e.target.value)} className="rounded-md border border-slate-300 px-2 py-1.5">
           {active.map((a) => (
