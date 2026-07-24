@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { formatINR, TransactionSchema, type TransactionFilter } from "@compass/shared";
+import { formatDisplayDate, formatINR, TransactionSchema, type TransactionFilter } from "@compass/shared";
 import { apiGet } from "../../lib/api.ts";
 import { CategoryPicker } from "../../components/CategoryPicker.tsx";
 import { toast } from "../../lib/toast.tsx";
@@ -77,7 +77,7 @@ export function TransactionDrawer({
           <div>
             <h2 className="text-lg font-semibold text-slate-800">{tx.merchant || "(no merchant)"}</h2>
             <p className="text-sm text-slate-500">
-              {tx.date} · {formatINR(tx.amountPaise)} · {tx.source}
+              {formatDisplayDate(tx.date)} · {formatINR(tx.amountPaise)} · {tx.source}
             </p>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600">✕</button>
