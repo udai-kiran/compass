@@ -29,6 +29,7 @@ import { RulesPanel } from "./RulesPanel.tsx";
 import { RecurringPanel } from "./RecurringPanel.tsx";
 import { MailboxesPanel } from "./MailboxesPanel.tsx";
 import { AiPanel } from "./AiPanel.tsx";
+import { FamilyPanel } from "./FamilyPanel.tsx";
 import {
   AboutPanel,
   DataPanel,
@@ -40,6 +41,7 @@ import {
 
 const TABS = [
   "profile",
+  "family",
   "accounts",
   "categories",
   "rules",
@@ -76,6 +78,7 @@ export function SettingsPage() {
         ))}
       </div>
       {tab === "profile" && <ProfilePanel />}
+      {tab === "family" && <FamilyPanel />}
       {tab === "accounts" && <AccountsPanel />}
       {tab === "categories" && <CategoriesPanel />}
       {tab === "rules" && <RulesPanel />}

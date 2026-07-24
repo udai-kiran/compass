@@ -113,6 +113,29 @@ export function isoToDDMMYYYY(iso: string): string {
 }
 
 /**
+ * Calculate age in years from an ISO date string (YYYY-MM-DD).
+ * Returns null if the date is in the future (negative age) or null/invalid.
+ * Age is calculated relative to IST today.
+ */
+export function calculateAge(isoDateOfBirth: string | null, now: Date = new Date()): number | null {
+  if (!isoDateOfBirth) return null;
+  const birthDate = new Date(isoDateOfBirth + "T00:00:00Z");
+  const today = todayInIST(now);
+  const todayDate = new Date(today + "T00:00:00Z");
+
+  let age = todayDate.getUTCFullYear() - birthDate.getUTCFullYear();
+  const monthDiff = todayDate.getUTCMonth() - birthDate.getUTCMonth();
+  if (monthDiff < 0 || (monthDiff === 0 && todayDate.getUTCDate() < birthDate.getUTCDate())) {
+    age--;
+  }
+
+  // Return null if the date is in the future
+  if (age < 0) return null;
+
+  return age;
+}
+
+/**
  * Parse Indian date format `DD-MM-YYYY` (or `DD/MM/YYYY` or `DD.MM.YYYY`) to ISO `YYYY-MM-DD`.
  * Returns null if input is not a valid complete date.
  *
