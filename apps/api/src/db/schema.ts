@@ -287,7 +287,12 @@ export const transactions = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    index("transactions_user_date_idx").on(t.userId, t.date.desc(), t.id.desc()),
+    index("transactions_user_date_idx").on(
+      t.userId,
+      t.date.desc(),
+      t.createdAt.desc(),
+      t.id.desc(),
+    ),
     index("transactions_account_idx").on(t.accountId),
     index("transactions_category_idx").on(t.categoryId),
     index("transactions_policy_idx").on(t.policyId),
