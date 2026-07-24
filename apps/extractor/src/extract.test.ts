@@ -5,6 +5,7 @@ import {
   computeStatementRewardEntries,
   decideStatus,
   dedupeHashFor,
+  EXTRACT_SYSTEM,
   extractStatementSummary,
   extractStatementTxns,
   hasRewardData,
@@ -14,6 +15,7 @@ import {
   matchLinesToLedger,
   merchantSimilarity,
   runExtraction,
+  STATEMENT_SYSTEM,
   statementPeriodKey,
   summarizeMatches,
   validIsoDate,
@@ -476,4 +478,26 @@ test("summarizeMatches: a duplicate without a matched id is not counted matched"
   assert.equal(stats.matchedCount, 0);
   assert.equal(stats.unmatchedCount, 1);
   assert.deepEqual(stats.matchedTxnIds, []);
+});
+
+// ---- prompt date-format guidance ----
+
+test("EXTRACT_SYSTEM includes day-first date guidance for Indian emails", () => {
+  assert.ok(/day-first|day-month-year/i.test(EXTRACT_SYSTEM), "missing day-first guidance");
+  assert.ok(/all-numeric dates/i.test(EXTRACT_SYSTEM), "missing all-numeric scoping");
+  assert.ok(/DD-MM-YY|DD-MM-YYYY|DD\/MM\/YYYY/.test(EXTRACT_SYSTEM), "missing format examples");
+  assert.ok(/24-07-26.*24 July 2026.*2026-07-24/.test(EXTRACT_SYSTEM), "missing example conversion");
+  assert.ok(/2-digit year.*20YY/i.test(EXTRACT_SYSTEM), "missing 2-digit year expansion");
+  assert.ok(/already.*ISO YYYY-MM-DD.*unchanged/i.test(EXTRACT_SYSTEM), "missing ISO passthrough guidance");
+  assert.ok(/textual date with a month name/i.test(EXTRACT_SYSTEM), "missing textual date guidance");
+});
+
+test("STATEMENT_SYSTEM includes day-first date guidance for Indian statements", () => {
+  assert.ok(/day-first|day-month-year/i.test(STATEMENT_SYSTEM), "missing day-first guidance");
+  assert.ok(/all-numeric dates/i.test(STATEMENT_SYSTEM), "missing all-numeric scoping");
+  assert.ok(/DD-MM-YY|DD-MM-YYYY|DD\/MM\/YYYY/.test(STATEMENT_SYSTEM), "missing format examples");
+  assert.ok(/24-07-26.*24 July 2026.*2026-07-24/.test(STATEMENT_SYSTEM), "missing example conversion");
+  assert.ok(/2-digit year.*20YY/i.test(STATEMENT_SYSTEM), "missing 2-digit year expansion");
+  assert.ok(/already.*ISO YYYY-MM-DD.*unchanged/i.test(STATEMENT_SYSTEM), "missing ISO passthrough guidance");
+  assert.ok(/textual date with a month name/i.test(STATEMENT_SYSTEM), "missing textual date guidance");
 });
