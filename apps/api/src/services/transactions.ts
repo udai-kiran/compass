@@ -64,14 +64,39 @@ export function filterWhere(
   return and(...conds)!;
 }
 
-function encodeCursor(date: string, id: string): string {
-  return Buffer.from(`${date}|${id}`).toString("base64url");
+export function encodeCursor(date: string, createdAt: Date | string, id: string): string {
+  const createdAtIso = createdAt instanceof Date ? createdAt.toISOString() : createdAt;
+  return Buffer.from(`${date}|${createdAtIso}|${id}`).toString("base64url");
 }
 
-function decodeCursor(cursor: string): { date: string; id: string } {
-  const [date, id] = Buffer.from(cursor, "base64url").toString().split("|");
-  if (!date || !id) throw new HttpError(400, "Invalid cursor");
-  return { date, id };
+/**
+ * Decodes a keyset cursor of (date, createdAt, id). Returns `null` — rather
+ * than throwing — for anything that doesn't parse, including the older
+ * 2-part (date, id) cursor format: callers treat a `null` result as "no
+ * cursor", i.e. serve the first page, instead of erroring on a stale link.
+ */
+export function decodeCursor(cursor: string): { date: string; createdAt: string; id: string } | null {
+  let decoded: string;
+  try {
+    decoded = Buffer.from(cursor, "base64url").toString();
+  } catch {
+    return null;
+  }
+  const parts = decoded.split("|");
+  if (parts.length !== 3) return null;
+  const [date, createdAt, id] = parts as [string, string, string];
+  if (!date || !createdAt || !id) return null;
+
+  // Validate date: must be YYYY-MM-DD and a valid calendar date
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(date))) return null;
+
+  // Validate createdAt: must be parseable as a timestamp
+  if (Number.isNaN(Date.parse(createdAt))) return null;
+
+  // Validate id: must be a valid UUID (8-4-4-4-12 hex)
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) return null;
+
+  return { date, createdAt, id };
 }
 
 async function hydrate(db: DbOrTx, rows: TxRow[]): Promise<Transaction[]> {
@@ -143,24 +168,27 @@ export async function listTransactions(
 ): Promise<TransactionPage> {
   const where = filterWhere(userId, query);
   const conds: SQL[] = [where];
-  if (query.cursor) {
-    const c = decodeCursor(query.cursor);
+  // A malformed/stale cursor (e.g. the older 2-part format) decodes to `null`
+  // and is treated as "no cursor" — first page — rather than throwing.
+  const cursor = query.cursor ? decodeCursor(query.cursor) : null;
+  if (cursor) {
     conds.push(
-      sql`(${transactions.date}, ${transactions.id}) < (${c.date}::date, ${c.id}::uuid)`,
+      sql`(${transactions.date}, ${transactions.createdAt}, ${transactions.id}) < (${cursor.date}::date, ${cursor.createdAt}::timestamptz, ${cursor.id}::uuid)`,
     );
   }
   const order = query.q
     ? [
         desc(sql`ts_rank("transactions"."search", plainto_tsquery('simple', ${query.q}))`),
         desc(transactions.date),
+        desc(transactions.createdAt),
         desc(transactions.id),
       ]
-    : [desc(transactions.date), desc(transactions.id)];
+    : [desc(transactions.date), desc(transactions.createdAt), desc(transactions.id)];
 
   // The filtered totals can't change between pages of one scroll, so only pay
   // for the count/sum aggregate on the first page (no cursor); later pages carry
   // the value the client already has and report -1 to signal "unchanged".
-  const withTotals = query.cursor === undefined;
+  const withTotals = cursor === null;
   const [rows, totals] = await Promise.all([
     db
       .select()
@@ -184,9 +212,28 @@ export async function listTransactions(
   const hasMore = rows.length > query.limit;
   const page = hasMore ? rows.slice(0, query.limit) : rows;
   const last = page[page.length - 1];
+  // For cursor, we need the full-precision created_at to avoid sub-millisecond
+  // truncation that can drop rows at page boundaries. Query it separately for
+  // the last row when we need to build nextCursor. Use to_char to produce a
+  // guaranteed ISO-8601 UTC string with microsecond precision that Date.parse
+  // accepts and that ::timestamptz round-trips exactly.
+  let lastCreatedAtPrecise: string | null = null;
+  if (hasMore && last && !query.q) {
+    const preciseRow = await db
+      .select({
+        createdAtText: sql<string>`to_char(${transactions.createdAt} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`,
+      })
+      .from(transactions)
+      .where(eq(transactions.id, last.id))
+      .limit(1);
+    lastCreatedAtPrecise = preciseRow[0]?.createdAtText ?? null;
+  }
   return {
     items: await hydrate(db, page),
-    nextCursor: hasMore && last && !query.q ? encodeCursor(last.date, last.id) : null,
+    nextCursor:
+      hasMore && last && !query.q && lastCreatedAtPrecise
+        ? encodeCursor(last.date, lastCreatedAtPrecise, last.id)
+        : null,
     totalCount: totals ? totals[0]!.count : -1,
     totalAmountPaise: totals ? Number(totals[0]!.sum) : -1,
     totalInflowPaise: totals ? Number(totals[0]!.inflow) : -1,
