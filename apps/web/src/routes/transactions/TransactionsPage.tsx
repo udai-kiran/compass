@@ -15,7 +15,6 @@ import {
   useTransactionMutations,
   useTransactionsInfinite,
 } from "../../lib/queries.ts";
-import { useResources } from "../../lib/resource-queries.ts";
 import { CategoryPicker } from "../../components/CategoryPicker.tsx";
 import { TransactionDrawer } from "./TransactionDrawer.tsx";
 import { AiCategorizePanel } from "./AiCategorizePanel.tsx";
@@ -532,14 +531,12 @@ function TxRow({
 function QuickAdd({ filter }: { filter: TransactionFilter }) {
   const { data: accounts } = useAccounts();
   const { data: categories } = useCategories();
-  const { data: resources } = useResources();
   const { create } = useTransactionMutations(filter);
   const [merchant, setMerchant] = useState("");
   const [amount, setAmount] = useState("");
   const [kind, setKind] = useState<"expense" | "income">("expense");
   const [accountId, setAccountId] = useState("");
   const [categoryId, setCategoryId] = useState("");
-  const [resourceId, setResourceId] = useState("");
   const [date, setDate] = useState(todayInIST());
   const active = accounts?.filter((a) => !a.archivedAt) ?? [];
   const effAccount = accountId || active[0]?.id || "";
@@ -556,7 +553,6 @@ function QuickAdd({ filter }: { filter: TransactionFilter }) {
         amountPaise: paise,
         merchant,
         categoryId: categoryId || null,
-        resourceId: resourceId || null,
         notes: "",
         tags: [],
       },
@@ -564,7 +560,6 @@ function QuickAdd({ filter }: { filter: TransactionFilter }) {
         onSuccess: () => {
           setMerchant("");
           setAmount("");
-          setResourceId("");
           toast("Transaction added", "success");
         },
       },
@@ -626,19 +621,6 @@ function QuickAdd({ filter }: { filter: TransactionFilter }) {
         placeholder="Category…"
         className="w-40"
       />
-      <select
-        value={resourceId}
-        onChange={(e) => setResourceId(e.target.value)}
-        aria-label="Asset or connection"
-        className="rounded-md border border-slate-300 px-2 py-1.5 text-sm"
-      >
-        <option value="">Not linked</option>
-        {resources?.filter((resource) => !resource.archived).map((resource) => (
-          <option key={resource.id} value={resource.id}>
-            {resource.name}{resource.identifier ? ` · ${resource.identifier}` : ""}
-          </option>
-        ))}
-      </select>
       <button
         type="submit"
         disabled={create.isPending}
