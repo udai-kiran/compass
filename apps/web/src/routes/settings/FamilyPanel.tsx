@@ -16,6 +16,8 @@ export function FamilyPanel() {
   const { create, update, remove } = useFamilyMutations();
 
   const [dob, setDob] = useState("");
+  const [dobValid, setDobValid] = useState(true);
+  const [dobError, setDobError] = useState<string | undefined>();
 
   useEffect(() => {
     if (profile?.dateOfBirth) {
@@ -29,13 +31,16 @@ export function FamilyPanel() {
   const [newName, setNewName] = useState("");
   const [newRelationship, setNewRelationship] = useState<FamilyMember["relationship"]>("child");
   const [newDob, setNewDob] = useState("");
+  const [newDobValid, setNewDobValid] = useState(true);
+  const [newDobError, setNewDobError] = useState<string | undefined>();
   const [newEducationStage, setNewEducationStage] = useState<FamilyMember["educationStage"]>(null);
   const [newInstitution, setNewInstitution] = useState("");
   const [newCourse, setNewCourse] = useState("");
   const [newExpectedYear, setNewExpectedYear] = useState("");
   const [newNotes, setNewNotes] = useState("");
 
-  const handleSaveProfile = () => {
+  const handleSaveProfile = (e: React.FormEvent) => {
+    e.preventDefault();
     profileUpdate.mutate({ dateOfBirth: dob || null });
   };
 
@@ -57,6 +62,8 @@ export function FamilyPanel() {
           setNewName("");
           setNewRelationship("child");
           setNewDob("");
+          setNewDobValid(true);
+          setNewDobError(undefined);
           setNewEducationStage(null);
           setNewInstitution("");
           setNewCourse("");
@@ -82,7 +89,8 @@ export function FamilyPanel() {
         <p className="mt-1 text-xs text-slate-400">
           Name and email are managed in the Profile tab. Add your date of birth here for age-based planning.
         </p>
-        <div className="mt-3 flex items-end gap-2">
+        {/* form wrapper for semantic grouping and button submit semantics */}
+        <form onSubmit={handleSaveProfile} className="mt-3 flex items-end gap-2">
           <label className="flex flex-col gap-1 text-xs text-slate-500">
             Date of birth
             <DateField
@@ -90,16 +98,26 @@ export function FamilyPanel() {
               onChange={(iso) => setDob(iso)}
               max={todayInIST()}
               className="w-48"
+              commitOnValidChange
+              onValidityChange={(state) => {
+                setDobValid(state.valid);
+                setDobError(state.message);
+              }}
+              aria-invalid={!dobValid}
+              aria-describedby={!dobValid && dobError ? "profile-dob-error" : undefined}
             />
+            {!dobValid && dobError && (
+              <span id="profile-dob-error" className="text-xs text-red-600">{dobError}</span>
+            )}
           </label>
           <button
-            onClick={handleSaveProfile}
-            disabled={profileUpdate.isPending || !profile}
+            type="submit"
+            disabled={profileUpdate.isPending || !profile || !dobValid}
             className="rounded-md bg-brand-600 px-4 py-1.5 text-sm text-white disabled:opacity-40"
           >
             Save
           </button>
-        </div>
+        </form>
       </section>
 
       {/* Family Members Section */}
@@ -142,7 +160,22 @@ export function FamilyPanel() {
               </label>
               <label className="flex flex-col gap-1 text-xs text-slate-500">
                 Date of birth
-                <DateField value={newDob} onChange={setNewDob} max={todayInIST()} className="w-full" />
+                <DateField
+                  value={newDob}
+                  onChange={setNewDob}
+                  max={todayInIST()}
+                  className="w-full"
+                  commitOnValidChange
+                  onValidityChange={(state) => {
+                    setNewDobValid(state.valid);
+                    setNewDobError(state.message);
+                  }}
+                  aria-invalid={!newDobValid}
+                  aria-describedby={!newDobValid && newDobError ? "new-member-dob-error" : undefined}
+                />
+                {!newDobValid && newDobError && (
+                  <span id="new-member-dob-error" className="text-xs text-red-600">{newDobError}</span>
+                )}
               </label>
               <label className="flex flex-col gap-1 text-xs text-slate-500">
                 Education stage
@@ -206,7 +239,7 @@ export function FamilyPanel() {
             </label>
             <button
               onClick={handleAddMember}
-              disabled={!newName.trim()}
+              disabled={!newName.trim() || !newDobValid}
               className="rounded-md bg-brand-600 px-4 py-1.5 text-sm text-white disabled:opacity-40"
             >
               Save member
@@ -260,6 +293,8 @@ function FamilyMemberRow({
   const [name, setName] = useState(member.name);
   const [relationship, setRelationship] = useState(member.relationship);
   const [dob, setDob] = useState(member.dateOfBirth || "");
+  const [dobValid, setDobValid] = useState(true);
+  const [dobError, setDobError] = useState<string | undefined>();
   const [educationStage, setEducationStage] = useState(member.educationStage);
   const [institution, setInstitution] = useState(member.institution || "");
   const [course, setCourse] = useState(member.courseOrStream || "");
@@ -307,7 +342,22 @@ function FamilyMemberRow({
           </label>
           <label className="flex flex-col gap-1 text-xs text-slate-500">
             Date of birth
-            <DateField value={dob} onChange={setDob} max={todayInIST()} className="w-full" />
+            <DateField
+              value={dob}
+              onChange={setDob}
+              max={todayInIST()}
+              className="w-full"
+              commitOnValidChange
+              onValidityChange={(state) => {
+                setDobValid(state.valid);
+                setDobError(state.message);
+              }}
+              aria-invalid={!dobValid}
+              aria-describedby={!dobValid && dobError ? `edit-member-${member.id}-dob-error` : undefined}
+            />
+            {!dobValid && dobError && (
+              <span id={`edit-member-${member.id}-dob-error`} className="text-xs text-red-600">{dobError}</span>
+            )}
           </label>
           <label className="flex flex-col gap-1 text-xs text-slate-500">
             Education stage
@@ -364,7 +414,11 @@ function FamilyMemberRow({
           />
         </label>
         <div className="flex gap-2">
-          <button onClick={handleSave} className="rounded-md bg-brand-600 px-3 py-1.5 text-sm text-white">
+          <button
+            onClick={handleSave}
+            disabled={!dobValid}
+            className="rounded-md bg-brand-600 px-3 py-1.5 text-sm text-white disabled:opacity-40"
+          >
             Save
           </button>
           <button onClick={onCancelEdit} className="rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-600">
