@@ -16,6 +16,7 @@ import {
   useHoldingMutations,
   useRefreshNav,
 } from "../../lib/wealth-queries.ts";
+import { DateField } from "../../components/DateField.tsx";
 
 // NPS remains labelled here so legacy positions render, but new NPS containers
 // are accounts and are created in Settings.
@@ -341,7 +342,7 @@ function ValuationForm({ onSubmit }: { onSubmit: (b: { date: string; valuePaise:
       className="flex flex-wrap items-end gap-2 text-sm"
     >
       <span className="text-xs font-medium text-slate-600">Update value:</span>
-      <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="input" />
+      <DateField value={date} onChange={(iso) => setDate(iso)} className="w-36" aria-label="Valuation date" />
       <input inputMode="decimal" value={value} onChange={(e) => setValue(e.target.value)} placeholder="current ₹" className="input w-32" />
       <button type="submit" className="rounded-md bg-brand-600 px-3 py-1.5 text-white">Save</button>
     </form>
@@ -372,7 +373,7 @@ function EventForm({ onSubmit }: { onSubmit: (b: CreateHoldingEvent) => void }) 
         <option value="sell">Sell</option>
         <option value="dividend">Dividend</option>
       </select>
-      <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="input" />
+      <DateField value={date} onChange={(iso) => setDate(iso)} className="w-36" aria-label="Event date" />
       <input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="₹ amount" className="input w-28" />
       <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="note" className="input w-36" />
       <button type="submit" className="rounded-md bg-brand-600 px-3 py-1.5 text-white">Add</button>

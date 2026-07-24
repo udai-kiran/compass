@@ -3,6 +3,7 @@ import { formatINR, isBankAccount, type InsurancePolicy } from "@compass/shared"
 import { usePolicyPremiums, useLogPremium } from "../../lib/insurance-queries.ts";
 import { useAccounts } from "../../lib/queries.ts";
 import { toast } from "../../lib/toast.tsx";
+import { DateField } from "../../components/DateField.tsx";
 
 export function PremiumsPanel({ policy }: { policy: InsurancePolicy }) {
   const { data: premiums } = usePolicyPremiums(policy.id, true);
@@ -81,7 +82,7 @@ export function PremiumsPanel({ policy }: { policy: InsurancePolicy }) {
         </label>
         <label className="flex flex-col gap-1 text-xs text-slate-500">
           Date
-          <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="input" />
+          <DateField value={date} onChange={(iso) => setDate(iso)} className="w-full" aria-label="Premium date" />
         </label>
         <label className="flex flex-col gap-1 text-xs text-slate-500">
           Amount (₹)

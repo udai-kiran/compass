@@ -13,6 +13,7 @@ import {
   useStatementMutations,
 } from "../../lib/card-queries.ts";
 import { useCategories } from "../../lib/queries.ts";
+import { DateField } from "../../components/DateField.tsx";
 
 export function CardDetailPage() {
   const { accountId } = useParams();
@@ -205,11 +206,10 @@ function StatementsSection({ accountId }: { accountId: string }) {
       </div>
 
       <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 px-4 py-3">
-        <input
-          type="date"
+        <DateField
           value={period}
-          onChange={(e) => setPeriod(e.target.value)}
-          className="rounded border border-slate-200 px-2 py-1 text-xs text-slate-600"
+          onChange={(iso) => setPeriod(iso)}
+          className="w-36"
           aria-label="Statement period (optional)"
         />
         <label className="cursor-pointer rounded bg-brand-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-brand-700">

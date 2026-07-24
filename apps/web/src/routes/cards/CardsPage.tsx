@@ -26,6 +26,7 @@ import {
   useRewards,
   useStatementPasswordMutation,
 } from "../../lib/card-queries.ts";
+import { DateField } from "../../components/DateField.tsx";
 
 const NETWORK_LABELS: Record<CardNetwork, string> = {
   visa: "Visa",
@@ -605,7 +606,7 @@ function RewardsPanel({ accountId, earnRate }: { accountId: string; earnRate: nu
         {earnRate > 0 && <span className="text-xs text-slate-400">Earning {earnRate} pt / ₹100</span>}
       </div>
       <form onSubmit={submit} className="mb-3 flex flex-wrap items-end gap-2 text-sm">
-        <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="input" />
+        <DateField value={date} onChange={(iso) => setDate(iso)} className="w-36" aria-label="Reward date" />
         <input
           type="number"
           value={points}

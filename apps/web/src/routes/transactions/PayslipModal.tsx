@@ -8,6 +8,7 @@ import {
 } from "@compass/shared";
 import { useAccounts, useCategories, usePayslipMutation } from "../../lib/queries.ts";
 import { toast } from "../../lib/toast.tsx";
+import { DateField } from "../../components/DateField.tsx";
 
 /** A deduction row in the form (rupees as strings while editing). */
 interface DeductionDraft {
@@ -163,11 +164,11 @@ export function PayslipModal({ onClose }: { onClose: () => void }) {
             </label>
             <label className="block">
               <span className="mb-1 block text-xs font-medium text-slate-600">Pay date</span>
-              <input
-                type="date"
+              <DateField
                 value={date}
-                onChange={(e) => setDate(e.target.value)}
-                className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+                onChange={(iso) => setDate(iso)}
+                className="w-full"
+                aria-label="Pay date"
               />
             </label>
           </div>
