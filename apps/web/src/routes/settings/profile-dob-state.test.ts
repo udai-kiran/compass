@@ -9,6 +9,8 @@ import {
   dobSavePayload,
   hasUnsavedDobEdit,
   reportDobValidity,
+  resolveNameField,
+  resolveProfileSave,
   syncDobFromServer,
   UNHYDRATED_DOB,
   type DobState,
@@ -687,4 +689,219 @@ test("INTEGRATION: the Save button is disabled exactly when submitting is refuse
   assert.equal(f.saveDisabled(), true, "in flight");
   f.settleSave();
   assert.equal(f.saveDisabled(), false);
+});
+
+// --- one Save for two endpoints ----------------------------------------------------
+//
+// Regression tests for the defect found in production: the Profile section had two
+// Save buttons. The one beside "Display name" called PATCH /api/auth/profile, which
+// writes only the name, yet toasted the same "Profile updated" as the date-of-birth
+// save. Pressing it after typing a date reported success and stored nothing — the
+// server logs showed a 200 PATCH and no PUT at all.
+
+const storedDob = (server: string): DobState => syncDobFromServer(UNHYDRATED_DOB, server);
+
+test("saving a typed date of birth sends the date-of-birth request", () => {
+  // The exact production scenario: no stored DOB, user types one, clicks Save.
+  const typed = commitDob(storedDob(""), "1990-05-15");
+  const intent = resolveProfileSave(typed, false);
+  assert.equal(intent.saveDob, true, "the date of birth must actually be sent");
+  assert.equal(intent.noop, false, "and it must not be mistaken for 'no changes'");
+  assert.deepEqual(dobSavePayload(typed), { dateOfBirth: "1990-05-15" });
+});
+
+test("editing only the display name does not touch the stored date of birth", () => {
+  const intent = resolveProfileSave(storedDob("1990-05-15"), true);
+  assert.equal(intent.saveName, true);
+  assert.equal(intent.saveDob, false, "an unchanged date must not be rewritten");
+  assert.equal(intent.noop, false);
+});
+
+test("editing both fields sends both requests", () => {
+  const both = commitDob(storedDob("1990-05-15"), "1985-01-01");
+  assert.deepEqual(resolveProfileSave(both, true), {
+    saveName: true,
+    saveDob: true,
+    noop: false,
+  });
+});
+
+test("saving with nothing changed is a no-op, not a false success", () => {
+  assert.deepEqual(resolveProfileSave(storedDob("1990-05-15"), false), {
+    saveName: false,
+    saveDob: false,
+    noop: true,
+  });
+  // Same when there has never been a stored date of birth.
+  assert.deepEqual(resolveProfileSave(storedDob(""), false), {
+    saveName: false,
+    saveDob: false,
+    noop: true,
+  });
+});
+
+test("clearing a stored date of birth is a real change", () => {
+  const cleared = commitDob(storedDob("1990-05-15"), "");
+  const intent = resolveProfileSave(cleared, false);
+  assert.equal(intent.saveDob, true, "clearing must be sent, not treated as a no-op");
+  assert.equal(intent.noop, false);
+  assert.deepEqual(dobSavePayload(cleared), { dateOfBirth: null });
+});
+
+test("an unhydrated field never sends a date-of-birth write", () => {
+  // Save is already refused before hydration; belt and braces so a stray commit
+  // can't turn into a PUT that wipes the stored date.
+  const intent = resolveProfileSave(commitDob(UNHYDRATED_DOB, "1990-05-15"), true);
+  assert.equal(intent.saveDob, false);
+  assert.equal(intent.saveName, true, "the name is independent of DOB hydration");
+});
+
+test("a date-of-birth edit still saves when the name was left alone", () => {
+  // The name is only sent when dirty; that must not suppress the DOB request.
+  const typed = commitDob(storedDob(""), "1990-05-15");
+  assert.deepEqual(resolveProfileSave(typed, false), {
+    saveName: false,
+    saveDob: true,
+    noop: false,
+  });
+});
+
+// --- the display-name field --------------------------------------------------------
+
+test("an untouched display name shows the stored value and is not dirty", () => {
+  const f = resolveNameField(null, "Udai Kiran");
+  assert.equal(f.value, "Udai Kiran", "the stored name is displayed");
+  assert.equal(f.dirty, false);
+  assert.equal(f.empty, false);
+});
+
+test("an untouched name is never dirty, even if the stored name has stray whitespace", () => {
+  // Otherwise merely opening Settings would offer to silently rewrite the name.
+  const f = resolveNameField(null, "  Udai Kiran  ");
+  assert.equal(f.dirty, false, "the user has not touched anything");
+  assert.equal(f.empty, false);
+  // And an untouched, entirely blank stored name is still not an edit.
+  assert.deepEqual(resolveNameField(null, "   "), {
+    value: "   ",
+    trimmed: "",
+    empty: false,
+    dirty: false,
+  });
+});
+
+test("a renamed display name is dirty and submits trimmed", () => {
+  const f = resolveNameField("  Udai K  ", "Udai Kiran");
+  assert.equal(f.dirty, true);
+  assert.equal(f.trimmed, "Udai K", "trailing whitespace is not persisted");
+  assert.equal(f.empty, false);
+});
+
+test("padding the stored name with whitespace is not a change", () => {
+  const f = resolveNameField("  Udai Kiran  ", "Udai Kiran");
+  assert.equal(f.dirty, false, "trimmed equality means nothing to write");
+  assert.equal(f.empty, false);
+});
+
+test("clearing the display name stays visibly empty and is refused", () => {
+  // Regression: the field used to fall back to the stored name, so deleting the last
+  // character snapped the old name back and the edit could not be seen or corrected.
+  const f = resolveNameField("", "Udai Kiran");
+  assert.equal(f.value, "", "the field must not snap back to the stored name");
+  assert.equal(f.empty, true, "an empty name is invalid, not 'unchanged'");
+  assert.equal(f.dirty, false, "and must never be sent to the API");
+});
+
+test("a whitespace-only display name is treated as empty", () => {
+  const f = resolveNameField("   ", "Udai Kiran");
+  assert.equal(f.empty, true);
+  assert.equal(f.dirty, false);
+  assert.equal(f.value, "   ", "but what was typed stays on screen");
+});
+
+test("naming a user who has no stored name yet", () => {
+  const f = resolveNameField("Udai", "");
+  assert.equal(f.dirty, true);
+  assert.equal(f.trimmed, "Udai");
+});
+
+// --- the single Save button's gate -------------------------------------------------
+//
+// The Profile section has one Save for two endpoints. Each field must gate only
+// itself: a rename must go through even when the profile GET failed or the date text
+// is half-typed, and neither field may be blocked by the other's problems.
+
+/** Mirrors the component's submit gate. */
+function canSubmit(opts: {
+  dob: DobState;
+  nameTyped: string | null;
+  storedName: string;
+  dobSaving?: boolean;
+  nameSaving?: boolean;
+}): boolean {
+  const { dob, nameTyped, storedName, dobSaving = false, nameSaving = false } = opts;
+  const nameField = resolveNameField(nameTyped, storedName);
+  const dobOk = canSaveDob(dob, dobSaving);
+  const dobDirty = dobOk && resolveProfileSave(dob, false).saveDob;
+  const saving = dobSaving || nameSaving;
+  return (
+    !saving &&
+    !nameField.empty &&
+    (nameField.dirty || dobDirty || (dob.server !== null && dob.valid))
+  );
+}
+
+test("a rename is not blocked by a date of birth that never loaded", () => {
+  // Regression: the submit guard used the DOB gate for both fields, so a failed
+  // profile GET made it impossible to change your own display name.
+  assert.equal(
+    canSubmit({ dob: UNHYDRATED_DOB, nameTyped: "New Name", storedName: "Old" }),
+    true,
+  );
+});
+
+test("a rename is not blocked by half-typed date text", () => {
+  const invalid = reportDobValidity(storedDob("1990-05-15"), {
+    valid: false,
+    message: "Enter a valid date in DD-MM-YYYY format",
+  });
+  assert.equal(canSubmit({ dob: invalid, nameTyped: "New Name", storedName: "Old" }), true);
+});
+
+test("an invalid date of birth alone still blocks Save", () => {
+  const invalid = reportDobValidity(storedDob("1990-05-15"), {
+    valid: false,
+    message: "Enter a valid date in DD-MM-YYYY format",
+  });
+  assert.equal(canSubmit({ dob: invalid, nameTyped: null, storedName: "Old" }), false);
+});
+
+test("an empty display name blocks Save even with a valid date of birth", () => {
+  const typed = commitDob(storedDob(""), "1990-05-15");
+  assert.equal(canSubmit({ dob: typed, nameTyped: "", storedName: "Old" }), false);
+});
+
+test("Save is blocked while either request is in flight", () => {
+  const typed = commitDob(storedDob(""), "1990-05-15");
+  assert.equal(canSubmit({ dob: typed, nameTyped: "New", storedName: "Old" }), true);
+  assert.equal(
+    canSubmit({ dob: typed, nameTyped: "New", storedName: "Old", dobSaving: true }),
+    false,
+    "a second click must not duplicate the date-of-birth write",
+  );
+  assert.equal(
+    canSubmit({ dob: typed, nameTyped: "New", storedName: "Old", nameSaving: true }),
+    false,
+    "nor the display-name write",
+  );
+});
+
+test("a typed date of birth is submittable with the name untouched", () => {
+  // The production scenario end to end: nothing stored, a date typed, name alone.
+  const typed = commitDob(storedDob(""), "1990-05-15");
+  assert.equal(canSubmit({ dob: typed, nameTyped: null, storedName: "Udai Kiran" }), true);
+  assert.deepEqual(resolveProfileSave(typed, false), {
+    saveName: false,
+    saveDob: true,
+    noop: false,
+  });
 });

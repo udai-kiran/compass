@@ -27,7 +27,14 @@ export function useProfileMutations() {
   const qc = useQueryClient();
   const updateProfile = useMutation({
     mutationFn: (displayName: string) => send("PATCH", "/api/auth/profile", UserSchema, { displayName }),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ["me"] }),
+    // Seed the cache with the user the server echoed back before revalidating.
+    // Invalidating alone leaves the stale name in place until the refetch lands, so
+    // the input — which re-adopts the stored name once saved — would visibly flash
+    // the old value, or keep showing it for good if that refetch failed.
+    onSuccess: (user) => {
+      qc.setQueryData(["me"], user);
+      void qc.invalidateQueries({ queryKey: ["me"] });
+    },
   });
   const changePassword = useMutation({
     mutationFn: (body: { currentPassword: string; newPassword: string }) =>

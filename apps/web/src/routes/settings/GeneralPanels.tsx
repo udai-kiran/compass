@@ -21,6 +21,8 @@ import {
   commitDob,
   dobSavePayload,
   reportDobValidity,
+  resolveNameField,
+  resolveProfileSave,
   syncDobFromServer,
   UNHYDRATED_DOB,
   type DobState,
@@ -92,7 +94,9 @@ export function ProfilePanel() {
     isFetching: profileFetching,
   } = useUserProfile();
   const profileUpdate = useUserProfileMutation();
-  const [name, setName] = useState("");
+  // `null` = untouched (show the stored name). An empty string is a real edit, so
+  // deleting the text leaves the field empty instead of snapping back.
+  const [name, setName] = useState<string | null>(null);
   const [cur, setCur] = useState("");
   const [next, setNext] = useState("");
   // `null` until the profile GET resolves. Hydration is tracked from the response
@@ -109,13 +113,30 @@ export function ProfilePanel() {
   }
   const { value: dob, valid: dobValid, error: dobError } = dobState;
   const dobHydrated = dobState.server !== null;
-  const canSaveDob = canSaveDobState(dobState, profileUpdate.isPending);
 
   const handleDobChange = (iso: string) => setDobState((prev) => commitDob(prev, iso));
   const handleDobValidity = (report: { valid: boolean; message?: string }) =>
     setDobState((prev) => reportDobValidity(prev, report));
 
   const dobSaving = profileUpdate.isPending;
+  const nameSaving = updateProfile.isPending;
+  // Either request in flight must gate the single button, or a second click fires a
+  // duplicate write.
+  const saving = dobSaving || nameSaving;
+
+  const {
+    value: displayedName,
+    trimmed: typedName,
+    empty: nameEmpty,
+    dirty: nameDirty,
+  } = resolveNameField(name, me?.displayName ?? "");
+
+  // Each field gates only itself: the date of birth is written only once its stored
+  // value is known and the text parses, but a rename must never be blocked by the
+  // profile GET failing or by half-typed date text.
+  const canSaveDob = canSaveDobState(dobState, dobSaving);
+  const dobDirty = canSaveDob && resolveProfileSave(dobState, false).saveDob;
+  const canSubmit = !saving && !nameEmpty && (nameDirty || dobDirty || (dobHydrated && dobValid));
 
   // Describe whichever message is actually on screen. Save is disabled while the
   // write is in flight, so the reason has to be announced too — otherwise the
@@ -131,12 +152,50 @@ export function ProfilePanel() {
             ? "profile-dob-saving"
             : undefined;
 
+  /**
+   * Persist the whole Profile section: display name and date of birth.
+   *
+   * These are two separate endpoints (`PATCH /api/auth/profile` writes only the
+   * name, `PUT /api/profile` only the date of birth). They used to sit behind two
+   * buttons whose success toasts were both "Profile updated", so clicking the one
+   * next to the name reported success while silently discarding a typed date of
+   * birth. One button now drives both, and each request reports its own outcome.
+   */
   const handleSaveProfile = (e: React.FormEvent) => {
     e.preventDefault();
     // Guard here and not just on the button: a form can also be submitted with
-    // Enter, and persisting an unhydrated or invalid field would clear the stored
-    // date of birth.
-    if (!canSaveDob) return;
+    // Enter, and a duplicate submit would fire a second write.
+    if (saving) return;
+    if (nameEmpty) {
+      toast("Display name cannot be empty");
+      return;
+    }
+
+    // `canSaveDob` gates only the date of birth. A rename must still go through when
+    // the profile GET failed or the date text is half-typed, so it is not consulted
+    // for the name.
+    const intent = resolveProfileSave(canSaveDob ? dobState : UNHYDRATED_DOB, nameDirty);
+    // Nothing changed: say so rather than firing no-op requests that would toast a
+    // misleading "updated".
+    if (intent.noop) {
+      toast(dobValid ? "No changes to save" : (dobError ?? "No changes to save"));
+      return;
+    }
+
+    // Only send the name when it actually changed, so an untouched field can't
+    // rewrite it and a failure there can't mask a successful date-of-birth save.
+    if (intent.saveName) {
+      updateProfile.mutate(typedName, {
+        onSuccess: () => {
+          toast("Display name updated", "success");
+          // Adopt the stored name so the field goes back to tracking the server.
+          setName(null);
+        },
+        onError: (err: Error) => toast(err.message),
+      });
+    }
+
+    if (!intent.saveDob) return;
     const sent = dobSavePayload(dobState);
     profileUpdate.mutate(sent, {
       // Adopt the stored profile the server echoed back. Without this the edit stays
@@ -154,19 +213,24 @@ export function ProfilePanel() {
       <section className="rounded-lg border border-slate-200 bg-white p-4">
         <h2 className="text-sm font-semibold text-slate-700">Profile</h2>
         <p className="mt-1 text-xs text-slate-400">Signed in as {me?.email}</p>
-        <div className="mt-3 flex items-end gap-2">
-          <label className="flex flex-1 flex-col gap-1 text-xs text-slate-500">
+        {/* Both fields live in one form behind one Save. Two buttons whose toasts
+            both said "Profile updated" made a discarded date of birth look saved. */}
+        <form onSubmit={handleSaveProfile} className="mt-3 space-y-4">
+          <label className="flex flex-col gap-1 text-xs text-slate-500">
             Display name
-            <input value={name || me?.displayName || ""} onChange={(e) => setName(e.target.value)} className="input" />
+            <input
+              value={displayedName}
+              onChange={(e) => setName(e.target.value)}
+              className="input"
+              aria-invalid={nameEmpty}
+              aria-describedby={nameEmpty ? "profile-name-error" : undefined}
+            />
+            {nameEmpty && (
+              <span id="profile-name-error" className="text-xs text-red-600">
+                Display name cannot be empty
+              </span>
+            )}
           </label>
-          <button
-            onClick={() => updateProfile.mutate(name || me?.displayName || "", { onSuccess: () => toast("Profile updated", "success") })}
-            className="rounded-md bg-brand-600 px-4 py-1.5 text-sm text-white"
-          >
-            Save
-          </button>
-        </div>
-        <form onSubmit={handleSaveProfile} className="mt-4 flex items-end gap-2">
           <label className="flex flex-col gap-1 text-xs text-slate-500">
             Date of birth
             <DateField
@@ -193,13 +257,15 @@ export function ProfilePanel() {
           </label>
           <button
             type="submit"
-            disabled={!canSaveDob}
-            aria-busy={dobSaving}
+            disabled={!canSubmit}
+            aria-busy={saving}
             className="rounded-md bg-brand-600 px-4 py-1.5 text-sm text-white disabled:opacity-40"
           >
-            {dobSaving ? "Saving…" : "Save"}
+            {saving ? "Saving…" : "Save"}
           </button>
         </form>
+        {/* The name is stored by a different endpoint than the date of birth, so a
+            partial failure is possible; each request toasts its own result. */}
         {/* The field is disabled until the stored value is known, so say why. */}
         {!dobHydrated && profilePending && (
           <p id="profile-dob-loading" role="status" className="mt-2 text-xs text-slate-400">
@@ -221,9 +287,16 @@ export function ProfilePanel() {
         )}
         {/* Save is disabled while the write is in flight; announce that it's working
             (and that it will give up rather than hang — the PUT is bounded). */}
+        {/* Name only what is actually being written: this is referenced by the date
+            field's aria-describedby, so a name-only save must not claim otherwise. */}
         {dobSaving && (
           <p id="profile-dob-saving" role="status" className="mt-2 text-xs text-slate-400">
             Saving your date of birth…
+          </p>
+        )}
+        {nameSaving && !dobSaving && (
+          <p role="status" className="mt-2 text-xs text-slate-400">
+            Saving your display name…
           </p>
         )}
         <p className="mt-2 text-xs text-slate-400">Your date of birth is used for age-based financial planning.</p>

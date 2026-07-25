@@ -107,3 +107,60 @@ export function canSaveDob(state: DobState, pending: boolean): boolean {
 export function dobSavePayload(state: DobState): { dateOfBirth: string | null } {
   return { dateOfBirth: state.value || null };
 }
+
+/**
+ * What one click of the Profile section's Save must actually send.
+ *
+ * The section spans two endpoints — `PATCH /api/auth/profile` (display name) and
+ * `PUT /api/profile` (date of birth). They were previously two buttons whose
+ * success toasts were both "Profile updated", so pressing the one beside the name
+ * reported success while the typed date of birth was never sent anywhere. Deciding
+ * both requests here keeps that honest: a field is written only when it changed, and
+ * "nothing changed" is distinguishable from "saved".
+ */
+export interface ProfileSaveIntent {
+  /** Send `PATCH /api/auth/profile`. */
+  saveName: boolean;
+  /** Send `PUT /api/profile`. */
+  saveDob: boolean;
+  /** Neither field changed — tell the user rather than firing a no-op request. */
+  noop: boolean;
+}
+
+export function resolveProfileSave(state: DobState, nameDirty: boolean): ProfileSaveIntent {
+  // `server` is `null` only before the GET resolves, and Save is already refused
+  // then; treat it as "no stored value" so the comparison stays total.
+  const stored = state.server || null;
+  const saveDob = state.server !== null && dobSavePayload(state).dateOfBirth !== stored;
+  return { saveName: nameDirty, saveDob, noop: !nameDirty && !saveDob };
+}
+
+/**
+ * State of the display-name input.
+ *
+ * `typed` is `null` while untouched, so the field shows the stored name; an empty
+ * string is a real edit and must stay visibly empty rather than snapping back to the
+ * stored value mid-keystroke. The API rejects an empty name, so that is surfaced as
+ * invalid instead of being silently dropped.
+ */
+export interface NameFieldState {
+  /** What the input should display. */
+  value: string;
+  /** Trimmed value to submit. */
+  trimmed: string;
+  /** Edited to empty — blocks Save with a message. */
+  empty: boolean;
+  /** Differs from the stored name, so it needs writing. */
+  dirty: boolean;
+}
+
+export function resolveNameField(typed: string | null, stored: string): NameFieldState {
+  const value = typed ?? stored;
+  const trimmed = value.trim();
+  const empty = typed !== null && trimmed === "";
+  // An untouched field is never dirty. Comparing the trimmed edit against the raw
+  // stored name would otherwise mark a stored name that has stray whitespace as
+  // changed without the user touching it, and silently rewrite it on the next save.
+  const dirty = typed !== null && !empty && trimmed !== stored.trim();
+  return { value, trimmed, empty, dirty };
+}
