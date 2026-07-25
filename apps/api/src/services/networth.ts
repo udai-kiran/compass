@@ -1,4 +1,4 @@
-import { asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, gte, lt, sql } from "drizzle-orm";
 import type { AccountType, NetWorthReport } from "@compass/shared";
 import type { Db } from "../db/index.ts";
 import { netWorthSnapshots, users } from "../db/schema.ts";
@@ -91,21 +91,260 @@ export async function computeNetWorth(
   return { assetsPaise: assets, liabilitiesPaise: liabilities, breakdown };
 }
 
-/** Nightly job: one snapshot per user per day (idempotent via the unique index). */
-export async function snapshotAllUsers(db: Db): Promise<number> {
-  const today = new Date().toISOString().slice(0, 10);
+/**
+ * The ledger day a snapshot belongs to: `toISOString()` in UTC, matching how
+ * every other date in the balance sheet is derived (computeNetWorth's `asOf`,
+ * getNetWorthReport's `today`). Defined once so callers cannot drift onto local
+ * time and disagree about which day it is.
+ */
+export function snapshotDay(now: Date = new Date()): string {
+  return now.toISOString().slice(0, 10);
+}
+
+/**
+ * The calendar day before `date` (a YYYY-MM-DD string).
+ *
+ * Derived from the date *string*, not by subtracting 86,400,000 ms from the
+ * clock: under a non-UTC TZ, 00:05 local is still the previous date in UTC, so
+ * subtracting a day from the timestamp lands two days back. Stepping the label
+ * itself cannot drift, and `Date.UTC` normalises month and year ends.
+ */
+export function previousDay(date: string): string {
+  return nDaysBefore(date, 1);
+}
+
+/** `date` (YYYY-MM-DD) moved back `n` days, normalised across month/year ends. */
+export function nDaysBefore(date: string, n: number): string {
+  const [y, m, d] = date.split("-").map(Number) as [number, number, number];
+  return new Date(Date.UTC(y, m - 1, d - n)).toISOString().slice(0, 10);
+}
+
+/**
+ * A user-day that could not be snapshotted. Carried out to the caller (rather
+ * than swallowed) so the job can log which row failed and why — a bare count
+ * tells an operator something is wrong but not what to look at.
+ */
+export interface SnapshotFailure {
+  userId: string;
+  date: string;
+  error: unknown;
+}
+
+/**
+ * Outcome of a snapshot pass that isolates per-row failures.
+ *
+ * `processed` is what makes "every single row failed" distinguishable from
+ * "there was nothing to do" — both leave `failures` short of proving anything on
+ * their own, and the jobs must fail loudly only in the first case. Mirrors
+ * autopilot's `{ processed, errors }` fan-out shape.
+ */
+export interface SnapshotPassResult {
+  processed: number;
+  failures: SnapshotFailure[];
+}
+
+/**
+ * Whether a pass failed *systemically* — every row it attempted failed — as
+ * opposed to one user's bad data, which is isolated and merely logged.
+ *
+ * Pure and exported so the boundary is pinned: `processed === 0` is "nothing to
+ * do" (a fresh install has no users) and must not be treated as total failure,
+ * while all-of-N failing means schema drift or a database outage and has to fail
+ * the job loudly, or BullMQ shows green while history quietly stops updating.
+ *
+ * Apply this per pass, never to two passes added together: `processed` counts a
+ * different population in each (users for the daily snapshot, user-days for the
+ * sweep), so a combined total lets a healthy half mask a collapsed one.
+ */
+export function isSystemicFailure(pass: SnapshotPassResult): boolean {
+  return pass.processed > 0 && pass.failures.length === pass.processed;
+}
+
+/**
+ * Snapshot every user's balance sheet for `asOf` (default today), recomputed from
+ * the current ledger and overwriting that day's row rather than keeping whatever
+ * landed first.
+ *
+ * Keeping the first write is what produced the sawtooth net-worth history that
+ * dove toward zero. Two ways a day got frozen wrong, both unrecoverable while
+ * the insert did nothing on conflict:
+ *
+ *  - the scheduled run happens just after midnight, so it recorded balances
+ *    before the day's transactions were entered; and
+ *  - an instance running older code wrote a balance sheet missing whole buckets
+ *    (an account type it had no mapping for contributes nothing — see
+ *    ACCOUNT_BUCKET), so days it won read far too low.
+ *
+ * Overwriting means the *latest* recompute wins, so the row self-heals: the
+ * snapshot is re-taken at the end of the day (see the scheduler in jobs/) and on
+ * every boot. It does mean an instance on stale code can overwrite a good row —
+ * do not point a second, older deployment at a live database.
+ *
+ * `estimated` is reset to false because a recompute is an observation, and must
+ * supersede any earlier estimate from backfillSnapshots.
+ *
+ * One user's failure is isolated and reported, not thrown: `computeNetWorth`
+ * rejects an account type it cannot classify, and letting that escape meant a
+ * single malformed user denied *every* later user their row — and, in the
+ * close-out job, aborted the recompute sweep before it began. Same shape as
+ * autopilot's fan-out reviews (`{ processed, errors }`).
+ */
+export async function snapshotAllUsers(
+  db: Db,
+  asOf: string = snapshotDay(),
+): Promise<SnapshotPassResult & { written: number }> {
   const allUsers = await db.select({ id: users.id }).from(users);
-  let created = 0;
+  let written = 0;
+  const failures: SnapshotFailure[] = [];
   for (const u of allUsers) {
-    const { assetsPaise, liabilitiesPaise, breakdown } = await computeNetWorth(db, u.id, today);
-    const inserted = await db
-      .insert(netWorthSnapshots)
-      .values({ userId: u.id, date: today, assetsPaise, liabilitiesPaise, breakdown })
-      .onConflictDoNothing()
-      .returning({ id: netWorthSnapshots.id });
-    created += inserted.length;
+    try {
+      const { assetsPaise, liabilitiesPaise, breakdown } = await computeNetWorth(db, u.id, asOf);
+      const rows = await db
+        .insert(netWorthSnapshots)
+        .values({ userId: u.id, date: asOf, assetsPaise, liabilitiesPaise, breakdown })
+        .onConflictDoUpdate({
+          target: [netWorthSnapshots.userId, netWorthSnapshots.date],
+          set: {
+            assetsPaise,
+            liabilitiesPaise,
+            breakdown,
+            estimated: false,
+          },
+        })
+        .returning({ id: netWorthSnapshots.id });
+      // An upsert returns a row for the update branch too, so this counts rows
+      // written, not rows created — callers must not report it as "created".
+      written += rows.length;
+    } catch (error) {
+      failures.push({ userId: u.id, date: asOf, error });
+    }
   }
-  return created;
+  return { processed: allUsers.length, written, failures };
+}
+
+/**
+ * How many days back the daily close-out recomputes.
+ *
+ * Sized to cover the realistic backdating window rather than just the finished
+ * day: card statements arrive monthly, and a bank CSV import carries each row's
+ * real date, so entries routinely land weeks after the day they belong to.
+ *
+ * Known limit: a transaction dated *before* this window leaves the snapshots
+ * between it and the window understated for good. Nothing repairs those today —
+ * `POST /api/net-worth/backfill` cannot, because it inserts with
+ * `onConflictDoNothing` and so skips every day that already has a row. Widening
+ * the window is the lever; a targeted "recompute from date X" path would be the
+ * real fix if late imports turn out to be common.
+ *
+ * Cost is bounded but not free: each user-day runs one balance-sheet query plus
+ * `portfolioValue`, which itself issues up to three more (holdings, events,
+ * valuations) and re-scans them per holding. That is ~45 user-days a night, so a
+ * deployment with many users or long valuation histories should measure before
+ * raising this further.
+ */
+export const SNAPSHOT_RECOMPUTE_DAYS = 45;
+
+/**
+ * Recompute the trailing `days` of snapshots, most recent first, ending with the
+ * day before `asOf` (today's row is left to the daily snapshot pass).
+ *
+ * A snapshot is a *derived* figure — `computeNetWorth` sums every transaction
+ * dated on or before the day — so it is only as current as the ledger was when it
+ * was taken. Transactions are very often backdated (bank/statement imports carry
+ * their real dates), which silently invalidates the days they precede. Without a
+ * rolling recompute those days keep an understated value for good, which is the
+ * sawtooth this whole change exists to remove.
+ *
+ * Only days that already have a row are refreshed: absent rows mean the user had
+ * no snapshot then, and inventing history is `backfillSnapshots`'s job, not this.
+ */
+export async function recomputeRecentSnapshots(
+  db: Db,
+  asOf: string = snapshotDay(),
+  days: number = SNAPSHOT_RECOMPUTE_DAYS,
+): Promise<SnapshotPassResult & { refreshed: number }> {
+  const earliest = nDaysBefore(asOf, Math.max(0, days));
+  // Bound the window in SQL: this table grows by one row per user per day and is
+  // never pruned, so selecting it whole to filter in memory would get slower
+  // forever. Today's row is excluded — the daily snapshot pass owns it.
+  const targets = await db
+    .select({ userId: netWorthSnapshots.userId, date: netWorthSnapshots.date })
+    .from(netWorthSnapshots)
+    .where(
+      and(
+        lt(netWorthSnapshots.date, asOf),
+        gte(netWorthSnapshots.date, earliest),
+      ),
+    );
+
+  let refreshed = 0;
+  const failures: SnapshotFailure[] = [];
+  for (const t of targets) {
+    try {
+      const { assetsPaise, liabilitiesPaise, breakdown } = await computeNetWorth(
+        db,
+        t.userId,
+        t.date,
+      );
+      await db
+        .update(netWorthSnapshots)
+        // `estimated` is preserved, not cleared: a recompute re-derives the figure
+        // from the ledger, which is exactly what an estimate already was. Flipping
+        // it to false would relabel a reconstructed month-end as something observed
+        // on the day, destroying the provenance the column exists to record.
+        .set({ assetsPaise, liabilitiesPaise, breakdown })
+        .where(and(eq(netWorthSnapshots.userId, t.userId), eq(netWorthSnapshots.date, t.date)));
+      refreshed += 1;
+    } catch (error) {
+      // One user's bad data must not abort the sweep and leave every later row
+      // stale until tomorrow. Record which row failed and why — a bare count
+      // tells an operator something broke but not what to look at — then carry
+      // on; the next nightly run retries it.
+      failures.push({ userId: t.userId, date: t.date, error });
+    }
+  }
+  return { processed: targets.length, refreshed, failures };
+}
+
+/**
+ * The nightly close-out: re-take the finished day, then refresh the days before it.
+ *
+ * Lives here rather than inline in the BullMQ handler so what it guarantees is
+ * testable. Three properties matter, and each was a bug at some point:
+ *
+ *  - the day closed is `previousDay(snapshotDay())` — derived from the UTC date
+ *    label, not `Date.now() - 86_400_000`, which under a positive-offset TZ closed
+ *    out the day *before* the one that just ended;
+ *  - the close re-takes that day unconditionally, so a day whose 00:30 pass never
+ *    ran still gets a row (the sweep can't supply one — it only refreshes rows
+ *    that already exist); and
+ *  - the sweep's `asOf` is that same closed day, and the window is upper-exclusive,
+ *    so the sweep never touches it and it isn't recomputed twice.
+ *
+ * The two halves therefore cover disjoint dates, and against a fixed database they
+ * commute — so the order is not an invariant worth pinning. It is not a *general*
+ * commutativity: neither half sees a consistent snapshot, so a user created (or a
+ * ledger row imported) between the two calls can land in one ordering and not the
+ * other. Close-first is simply the clearer read.
+ *
+ * Both halves are returned *separately* rather than merged. Merging them meant
+ * adding a user count to a user-day count and judging the total, which let each
+ * half hide the other's collapse: one user with 45 stale rows and a wholly failed
+ * sweep totals 46 processed against 45 failures, so "everything failed" read as
+ * healthy. They are different populations and each has to be judged on its own.
+ */
+export async function closePreviousDay(
+  db: Db,
+  today: string = snapshotDay(),
+): Promise<{
+  date: string;
+  close: SnapshotPassResult & { written: number };
+  sweep: SnapshotPassResult & { refreshed: number };
+}> {
+  const date = previousDay(today);
+  const close = await snapshotAllUsers(db, date);
+  const sweep = await recomputeRecentSnapshots(db, date);
+  return { date, close, sweep };
 }
 
 /** Estimate month-end snapshots from ledger history; never overwrites observed days. */

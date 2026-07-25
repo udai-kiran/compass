@@ -6,7 +6,12 @@ import { evaluateBillReminders } from "../services/bills.ts";
 import { evaluateCardDueReminders, evaluateCardUtilization } from "../services/cards.ts";
 import { evaluateAnomalies } from "../services/anomaly.ts";
 import { runAutopilotReview, runGoalReview } from "../services/autopilot.ts";
-import { snapshotAllUsers } from "../services/networth.ts";
+import {
+  closePreviousDay,
+  isSystemicFailure,
+  snapshotAllUsers,
+  type SnapshotPassResult,
+} from "../services/networth.ts";
 import { createEncryptedBackup } from "../services/backup.ts";
 import { evaluateLargeTransactions, evaluateLowBalance, prefEnabled } from "../services/prefs.ts";
 import { materializeDue } from "../services/recurring.ts";
@@ -58,6 +63,58 @@ export async function enqueueBudgetEvaluation(app: FastifyInstance, userId: stri
   }
 }
 
+/** How many individual snapshot failures get their own log line before sampling. */
+const SNAPSHOT_FAILURE_LOG_LIMIT = 10;
+
+/**
+ * Log the user-days a snapshot pass could not compute.
+ *
+ * Failures are isolated per row so one bad user can't deny everyone else a
+ * snapshot, which means nothing surfaces them unless it happens here. Each gets a
+ * line with its userId, date and error — an aggregate count tells an operator
+ * something broke but not what to look at. Capped, though: a shared-dependency
+ * outage during close-out fails up to 46 user-days *per user*, and drowning the
+ * log is its own outage, so past the limit only the total is reported.
+ */
+function logSnapshotPass(app: FastifyInstance, pass: SnapshotPassResult, what: string): void {
+  for (const f of pass.failures.slice(0, SNAPSHOT_FAILURE_LOG_LIMIT)) {
+    app.log.error({ userId: f.userId, date: f.date, err: f.error, pass: what }, "net-worth snapshot failed for user");
+  }
+  if (pass.failures.length > 0) {
+    app.log.warn(
+      {
+        pass: what,
+        failed: pass.failures.length,
+        processed: pass.processed,
+        logged: Math.min(pass.failures.length, SNAPSHOT_FAILURE_LOG_LIMIT),
+      },
+      "net-worth snapshot failures",
+    );
+  }
+}
+
+/**
+ * Log every pass, then fail the job if any one of them failed *completely*.
+ *
+ * All-failed is systemic (schema drift, database down), not one user's bad data,
+ * so it must throw — otherwise BullMQ shows a green run while history silently
+ * stops updating. Each pass is judged on its own: `processed` counts users in the
+ * daily snapshot and user-days in the sweep, so judging a combined total let a
+ * healthy half mask a collapsed one. Same convention as the autopilot handlers.
+ */
+function reportSnapshotPasses(
+  app: FastifyInstance,
+  passes: Array<{ what: string; pass: SnapshotPassResult }>,
+): void {
+  for (const { what, pass } of passes) logSnapshotPass(app, pass, what);
+  const dead = passes.filter((p) => isSystemicFailure(p.pass));
+  if (dead.length > 0) {
+    throw new Error(
+      dead.map((d) => `${d.what} failed for all ${d.pass.processed} rows`).join("; "),
+    );
+  }
+}
+
 /**
  * BullMQ foundation. Job schedulers are upserted at boot (idempotent), so
  * schedules survive restarts and live in Redis.
@@ -87,11 +144,31 @@ export async function startJobs(app: FastifyInstance): Promise<void> {
     { pattern: "25 0 * * *" },
     { name: "cards.remind" },
   );
-  // nightly net-worth snapshot (one row per user per day, idempotent)
+  // nightly net-worth snapshot (one row per user per day, recomputed in place).
+  //
+  // Pinned to UTC for the same reason as the close-out below: the date a snapshot
+  // is filed under comes from `snapshotDay()`, which is `toISOString()` and so
+  // always UTC. Left to the process timezone this fires at whatever instant local
+  // 00:30 happens to be — under a positive offset (Asia/Kolkata, this app's
+  // audience) that is still the *previous* UTC date, so the row would be stamped
+  // with a day several hours short of ending, and the two net-worth jobs would
+  // disagree about which day "today" is.
   await system.upsertJobScheduler(
     "networth.snapshot",
-    { pattern: "30 0 * * *" },
+    { pattern: "30 0 * * *", tz: "Etc/UTC" },
     { name: "networth.snapshot" },
+  );
+  // ...then close out the day that just ended, once its transactions are all in.
+  // Without this the 00:30 row above is the only record of a day, taken before
+  // anything was entered, so history permanently understates it.
+  //
+  // Also pinned to UTC, so it fires just after the ledger day it closes actually
+  // ends. Left to the process TZ, a positive-offset zone would run this while UTC
+  // is still on the previous date and close out the wrong day.
+  await system.upsertJobScheduler(
+    "networth.snapshot.close",
+    { pattern: "5 0 * * *", tz: "Etc/UTC" },
+    { name: "networth.snapshot.close" },
   );
   // weekly encrypted backup (Sundays 03:00)
   await system.upsertJobScheduler(
@@ -149,8 +226,32 @@ export async function startJobs(app: FastifyInstance): Promise<void> {
           return;
         }
         case "networth.snapshot": {
-          const created = await snapshotAllUsers(app.db);
-          if (created > 0) app.log.info({ created }, "net-worth snapshots created");
+          const pass = await snapshotAllUsers(app.db);
+          if (pass.written > 0) app.log.info({ written: pass.written }, "net-worth snapshots written");
+          // Throws if every user failed, so report last — the successful writes are
+          // worth logging either way.
+          reportSnapshotPasses(app, [{ what: "net-worth snapshot", pass }]);
+          return;
+        }
+        // Close out the day that just ended, then refresh the days before it.
+        // The 00:30 run records a day before its transactions are entered, and
+        // imports routinely backdate entries into days already snapshotted — so a
+        // single-day pass would leave those days understated for good. Snapshots
+        // are derived, so recomputing is always safe.
+        case "networth.snapshot.close": {
+          const { date, close, sweep } = await closePreviousDay(app.db);
+          if (close.written > 0 || sweep.refreshed > 0) {
+            app.log.info(
+              { closed: close.written, refreshed: sweep.refreshed, date },
+              "net-worth snapshots closed out",
+            );
+          }
+          // Judged separately: a healthy close must not mask a sweep that failed
+          // every row, nor the reverse.
+          reportSnapshotPasses(app, [
+            { what: "net-worth day close", pass: close },
+            { what: "net-worth recompute sweep", pass: sweep },
+          ]);
           return;
         }
         case "backup.weekly": {
@@ -230,9 +331,12 @@ export async function startJobs(app: FastifyInstance): Promise<void> {
     app.log.error({ err }, "boot bill reminders failed");
   });
   // ensure today's net-worth snapshot exists
-  await snapshotAllUsers(app.db).catch((err: unknown) => {
-    app.log.error({ err }, "boot net-worth snapshot failed");
-  });
+  // Boot must never be blocked by this, so an all-failed pass is logged, not thrown.
+  await snapshotAllUsers(app.db)
+    .then((pass) => logSnapshotPass(app, pass, "boot net-worth snapshot"))
+    .catch((err: unknown) => {
+      app.log.error({ err }, "boot net-worth snapshot failed");
+    });
 
   app.addHook("onClose", async () => {
     await systemWorker.close();
