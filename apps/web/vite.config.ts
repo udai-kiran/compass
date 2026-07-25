@@ -14,6 +14,7 @@ export default defineConfig({
     port: 5173,
     proxy: {
       // API endpoint is env-configurable; defaults match apps/api dev PORT.
+      // Set VITE_API_URL when running the API on a different port.
       "/api": process.env.VITE_API_URL ?? "http://localhost:3001",
       "/health": process.env.VITE_API_URL ?? "http://localhost:3001",
     },

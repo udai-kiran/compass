@@ -406,8 +406,10 @@ export async function getPortfolio(db: Db, userId: string): Promise<Portfolio> {
 
 /** Total current portfolio value (latest valuation per active holding, cost basis as fallback). */
 export async function portfolioValue(db: Db, userId: string, asOf?: string): Promise<number> {
-  const p = await getPortfolio(db, userId);
-  if (!asOf) return p.totalValuePaise;
+  // Only the no-asOf path needs the full portfolio (positions, allocation, 24
+  // months of growth). Building it for a point-in-time query was pure waste, and
+  // the nightly recompute calls this once per user per day.
+  if (!asOf) return (await getPortfolio(db, userId)).totalValuePaise;
   // point-in-time value for net-worth backfill
   const rows = await db.query.holdings.findMany({ where: eq(holdings.userId, userId) });
   const ids = rows.filter((h) => h.archivedAt === null).map((h) => h.id);
