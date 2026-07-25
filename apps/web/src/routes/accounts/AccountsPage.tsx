@@ -1,17 +1,18 @@
 import { Link } from "react-router";
 import {
   formatINR,
-  type AccountType,
   type AccountWithBalance,
   type BankAccountSubtype,
 } from "@compass/shared";
 import { useAccounts } from "../../lib/queries.ts";
 import { ACCOUNT_TYPE_LABELS, maskAccountNumber } from "../../lib/account-meta.ts";
 import { Icon } from "../../components/icons.tsx";
-
-// Deposit / operating accounts you spend from — the ones with a running ledger.
-// Credit cards, loans and investments have their own sections.
-const OPERATING_TYPES: readonly AccountType[] = ["bank", "cash", "overdraft", "home_loan_od"];
+import {
+  splitAccounts,
+  owedPaise,
+  balanceSummary,
+  type AccountGroup,
+} from "./account-groups.ts";
 
 const SUBTYPE_LABELS: Record<BankAccountSubtype, string> = {
   savings: "Savings",
@@ -27,15 +28,70 @@ function accountKindLabel(a: AccountWithBalance): string {
   return ACCOUNT_TYPE_LABELS[a.type];
 }
 
+function AccountRow({ account }: { account: AccountWithBalance }) {
+  return (
+    <li>
+      <Link
+        to={`/accounts/${account.id}`}
+        className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white p-4 transition hover:border-slate-300 hover:bg-slate-50"
+      >
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-brand-600">
+          <Icon name="wallet" className="h-5 w-5" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="truncate font-medium text-slate-800">{account.name}</p>
+          <p className="truncate text-xs text-slate-400">
+            {[
+              accountKindLabel(account),
+              account.institution,
+              account.accountLast4 && maskAccountNumber(account.accountLast4),
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+          </p>
+        </div>
+        <span
+          className={`shrink-0 tabular-nums font-semibold ${
+            account.balancePaise < 0 ? "text-red-600" : "text-slate-800"
+          }`}
+        >
+          {formatINR(account.balancePaise)}
+        </span>
+      </Link>
+    </li>
+  );
+}
+
+function AccountGroupTile({ title, group, showOwed }: { title: string; group: AccountGroup; showOwed?: boolean }) {
+  const n = group.accounts.length;
+  return (
+    <section className="rounded-lg border border-slate-200 bg-white p-4">
+      <div className="flex items-baseline justify-between gap-3">
+        <h2 className="text-sm font-semibold text-slate-700">{title}</h2>
+        <span className={`tabular-nums font-semibold ${group.totalPaise < 0 ? "text-red-600" : "text-slate-800"}`}>
+          {formatINR(group.totalPaise)}
+        </span>
+      </div>
+      <p className="mt-0.5 text-xs text-slate-400">
+        {showOwed
+          ? `${formatINR(owedPaise(group.totalPaise))} owed · ${n} account${n === 1 ? "" : "s"}`
+          : `${n} account${n === 1 ? "" : "s"}`}
+      </p>
+      <ul className="mt-3 space-y-2">
+        {group.accounts.map((a) => (
+          <AccountRow key={a.id} account={a} />
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 export function AccountsPage() {
   const { data: accounts, isLoading } = useAccounts();
 
   if (isLoading) return <p className="text-sm text-slate-400">Loading…</p>;
 
-  const rows = (accounts ?? [])
-    .filter((a) => !a.archivedAt && OPERATING_TYPES.includes(a.type))
-    .sort((a, b) => a.sortOrder - b.sortOrder);
-  const total = rows.reduce((s, a) => s + a.balancePaise, 0);
+  const groups = splitAccounts(accounts);
 
   return (
     <div className="flex h-full flex-col">
@@ -49,7 +105,7 @@ export function AccountsPage() {
         </Link>
       </div>
 
-      {rows.length === 0 ? (
+      {groups.count === 0 ? (
         <div className="rounded-lg border border-dashed border-slate-300 bg-white p-8 text-center">
           <p className="text-sm text-slate-500">No savings, current or overdraft accounts yet.</p>
           <Link to="/settings" className="mt-2 inline-block text-sm text-brand-600 underline">
@@ -62,49 +118,22 @@ export function AccountsPage() {
             <p className="text-xs font-medium text-slate-500">Total balance</p>
             <p
               className={`mt-1 text-2xl font-semibold tabular-nums ${
-                total < 0 ? "text-red-600" : "text-slate-800"
+                groups.totalPaise < 0 ? "text-red-600" : "text-slate-800"
               }`}
             >
-              {formatINR(total)}
+              {formatINR(groups.totalPaise)}
             </p>
-            <p className="mt-1 text-xs text-slate-400">
-              Across {rows.length} account{rows.length === 1 ? "" : "s"}
-            </p>
+            <p className="mt-1 text-xs text-slate-400">{balanceSummary(groups)}</p>
           </div>
 
-          <ul className="space-y-2">
-            {rows.map((a) => (
-              <li key={a.id}>
-                <Link
-                  to={`/accounts/${a.id}`}
-                  className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white p-4 transition hover:border-slate-300 hover:bg-slate-50"
-                >
-                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-brand-600">
-                    <Icon name="wallet" className="h-5 w-5" />
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate font-medium text-slate-800">{a.name}</p>
-                    <p className="truncate text-xs text-slate-400">
-                      {[
-                        accountKindLabel(a),
-                        a.institution,
-                        a.accountLast4 && maskAccountNumber(a.accountLast4),
-                      ]
-                        .filter(Boolean)
-                        .join(" · ")}
-                    </p>
-                  </div>
-                  <span
-                    className={`shrink-0 tabular-nums font-semibold ${
-                      a.balancePaise < 0 ? "text-red-600" : "text-slate-800"
-                    }`}
-                  >
-                    {formatINR(a.balancePaise)}
-                  </span>
-                </Link>
-              </li>
-            ))}
-          </ul>
+          <div className="grid gap-4 lg:grid-cols-2">
+            {groups.savings.accounts.length > 0 && (
+              <AccountGroupTile title="Savings accounts" group={groups.savings} />
+            )}
+            {groups.loans.accounts.length > 0 && (
+              <AccountGroupTile title="Loans" group={groups.loans} showOwed />
+            )}
+          </div>
         </>
       )}
     </div>
