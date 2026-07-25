@@ -116,6 +116,42 @@ function reportSnapshotPasses(
 }
 
 /**
+ * Cron timezone for every job whose handler derives a `YYYY-MM-DD` "today" from
+ * `toISOString()` — i.e. a UTC date label.
+ *
+ * Those two things have to agree. Left on the process timezone, a "00:10" cron
+ * fires at whatever instant local midnight is: under a positive offset
+ * (Asia/Kolkata, this app's audience) that is 18:40 UTC the *previous* day, so
+ * the handler stamps a UTC date that still has hours left to run, and the
+ * nightly chain executes in a different order than the clock times suggest.
+ *
+ * Pinning the cron is the smaller change; the alternative is threading a
+ * timezone through every date derivation in every service.
+ */
+const LEDGER_DAY_TZ = "Etc/UTC";
+
+/**
+ * Which nightly schedulers must share `LEDGER_DAY_TZ`, and which must not.
+ *
+ * Exported for the test that pins this: the schedulers themselves are registered
+ * inside `startJobs`, which needs a live Redis, so the invariant would otherwise
+ * be unverifiable. Keep this in sync with the `upsertJobScheduler` calls below —
+ * the test asserts every id listed here appears there with the matching timezone.
+ */
+export const LEDGER_DAY_SCHEDULERS = [
+  "recurring.materialize",
+  "bills.remind",
+  "cards.remind",
+  "networth.snapshot",
+  "networth.snapshot.close",
+  "autopilot.review",
+  "autopilot.goals",
+] as const;
+
+/** Schedulers with no ledger-date dependency, deliberately left on local time. */
+export const LOCAL_TIME_SCHEDULERS = ["backup.weekly"] as const;
+
+/**
  * BullMQ foundation. Job schedulers are upserted at boot (idempotent), so
  * schedules survive restarts and live in Redis.
  */
@@ -126,67 +162,68 @@ export async function startJobs(app: FastifyInstance): Promise<void> {
   const system = new Queue("system", { connection });
   system.on("error", (err) => app.log.error({ err }, "bullmq queue error"));
   await system.upsertJobScheduler("system.heartbeat", { every: 60_000 }, { name: "heartbeat" });
+  // The nightly chain below runs in ascending clock order and every step compares
+  // against a UTC date label, so all of them are pinned to LEDGER_DAY_TZ. The
+  // ordering is deliberate — materialize, then remind, then snapshot, then review
+  // — and only holds if they share one timezone.
+  //
   // materialize due recurring transactions shortly after midnight, plus on boot (catch-up)
   await system.upsertJobScheduler(
     "recurring.materialize",
-    { pattern: "10 0 * * *" },
+    { pattern: "10 0 * * *", tz: LEDGER_DAY_TZ },
     { name: "recurring.materialize" },
   );
   // bill/subscription due-date reminders, after materialization has advanced pointers
   await system.upsertJobScheduler(
     "bills.remind",
-    { pattern: "20 0 * * *" },
+    { pattern: "20 0 * * *", tz: LEDGER_DAY_TZ },
     { name: "bills.remind" },
   );
   // credit-card payment due-date reminders
   await system.upsertJobScheduler(
     "cards.remind",
-    { pattern: "25 0 * * *" },
+    { pattern: "25 0 * * *", tz: LEDGER_DAY_TZ },
     { name: "cards.remind" },
   );
   // nightly net-worth snapshot (one row per user per day, recomputed in place).
-  //
-  // Pinned to UTC for the same reason as the close-out below: the date a snapshot
-  // is filed under comes from `snapshotDay()`, which is `toISOString()` and so
-  // always UTC. Left to the process timezone this fires at whatever instant local
-  // 00:30 happens to be — under a positive offset (Asia/Kolkata, this app's
-  // audience) that is still the *previous* UTC date, so the row would be stamped
-  // with a day several hours short of ending, and the two net-worth jobs would
-  // disagree about which day "today" is.
+  // The date it files under comes from `snapshotDay()`, i.e. `toISOString()`.
   await system.upsertJobScheduler(
     "networth.snapshot",
-    { pattern: "30 0 * * *", tz: "Etc/UTC" },
+    { pattern: "30 0 * * *", tz: LEDGER_DAY_TZ },
     { name: "networth.snapshot" },
   );
   // ...then close out the day that just ended, once its transactions are all in.
   // Without this the 00:30 row above is the only record of a day, taken before
-  // anything was entered, so history permanently understates it.
-  //
-  // Also pinned to UTC, so it fires just after the ledger day it closes actually
-  // ends. Left to the process TZ, a positive-offset zone would run this while UTC
-  // is still on the previous date and close out the wrong day.
+  // anything was entered, so history permanently understates it. Runs at 00:05 so
+  // it lands just after the ledger day it closes actually ends.
   await system.upsertJobScheduler(
     "networth.snapshot.close",
-    { pattern: "5 0 * * *", tz: "Etc/UTC" },
+    { pattern: "5 0 * * *", tz: LEDGER_DAY_TZ },
     { name: "networth.snapshot.close" },
   );
-  // weekly encrypted backup (Sundays 03:00)
+  // weekly encrypted backup (Sundays 03:00). Deliberately NOT pinned: it dumps
+  // whatever is in the database at the time and only uses a timestamp to name the
+  // file, so it has no ledger-date to agree with — a host that wants its backup at
+  // local 03:00 should get local 03:00.
   await system.upsertJobScheduler(
     "backup.weekly",
     { pattern: "0 3 * * 0" },
     { name: "backup.weekly" },
   );
   // Autopilot review: forward-looking heads-ups (cash-flow shortfall), after the
-  // net-worth snapshot has refreshed today's balances
+  // net-worth snapshot has refreshed today's balances — which requires sharing the
+  // snapshot's timezone, or "after" is only true on a UTC host.
   await system.upsertJobScheduler(
     "autopilot.review",
-    { pattern: "40 0 * * *" },
+    { pattern: "40 0 * * *", tz: LEDGER_DAY_TZ },
     { name: "autopilot.review" },
   );
-  // Weekly goal review: asset-allocation + contribution proposals (Mondays 06:00)
+  // Weekly goal review: asset-allocation + contribution proposals (Mondays 06:00).
+  // Pinned too: it keys dedupe state by ISO week, so a drifting day boundary would
+  // let one week's proposal fire twice.
   await system.upsertJobScheduler(
     "autopilot.goals",
-    { pattern: "0 6 * * 1" },
+    { pattern: "0 6 * * 1", tz: LEDGER_DAY_TZ },
     { name: "autopilot.goals" },
   );
 
