@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ddmmyyyyToISO, formatDisplayDate, isoToDDMMYYYY, todayInIST } from "@compass/shared";
+import { formatDisplayDate, isoToDDMMYYYY, todayInIST } from "@compass/shared";
+import { resolveDateInput } from "./date-field-commit.ts";
 
 export interface DateFieldProps {
   value: string; // ISO YYYY-MM-DD, or "" for empty
@@ -22,7 +23,11 @@ export interface DateFieldProps {
   autoFocus?: boolean;
   /** fired whenever the popover closes — lets an inline editor exit edit mode */
   onClose?: () => void;
-  /** opt-in: commit valid dates to parent immediately on typing, not just on blur/calendar-click */
+  /**
+   * opt-in: commit valid dates to parent immediately on typing, not just on
+   * blur/calendar-click, and keep invalid text on blur (reporting it via
+   * `onValidityChange`) instead of silently reverting to the last valid value.
+   */
   commitOnValidChange?: boolean;
   /** fired when typed text is invalid (parse/range failure) — lets parent show validation errors */
   onValidityChange?: (state: { valid: boolean; message?: string }) => void;
@@ -134,40 +139,36 @@ export function DateField({
     }
   }, [open, value]);
 
-  /** Generate an appropriate error message for an invalid date input */
-  const getValidationMessage = (parsed: string | null): string => {
-    if (!parsed) {
-      return "Enter a valid date in DD-MM-YYYY format";
+  // The trigger is disabled, but an already-open popover would stay clickable and
+  // could commit a date the parent has locked. Close it instead.
+  useEffect(() => {
+    if (disabled && open) close();
+  }, [disabled, open]);
+
+  /**
+   * Apply one text event through the shared resolver. Invalid input is never
+   * silently discarded for opted-in fields: the text stays put and the parent is
+   * told it's invalid, so "Save" can block instead of persisting a null.
+   */
+  const applyTextEvent = (text: string, event: "change" | "blur") => {
+    const result = resolveDateInput({
+      text,
+      committedValue: value,
+      min,
+      max,
+      event,
+      keepInvalid: commitOnValidChange,
+    });
+    setLocalText(result.text);
+    if (result.commit !== null) onChange(result.commit);
+    if (result.report) {
+      onValidityChange?.(
+        result.valid ? { valid: true } : { valid: false, message: result.message },
+      );
     }
-    // parsed is valid ISO but out of range
-    if (max && parsed > max) {
-      return `Date must be on or before ${isoToDDMMYYYY(max)}`;
-    }
-    if (min && parsed < min) {
-      return `Date must be on or after ${isoToDDMMYYYY(min)}`;
-    }
-    return "Enter a valid date in DD-MM-YYYY format";
   };
 
-  const handleBlur = () => {
-    const trimmed = localText.trim();
-    if (trimmed === "") {
-      onChange("");
-      setLocalText("");
-      onValidityChange?.({ valid: true });
-      return;
-    }
-    const parsed = ddmmyyyyToISO(trimmed);
-    if (parsed && isInRange(parsed)) {
-      onChange(parsed);
-      setLocalText(isoToDDMMYYYY(parsed)); // normalize display
-      onValidityChange?.({ valid: true });
-    } else {
-      // revert to last valid value — field is now back to valid committed state
-      setLocalText(value ? isoToDDMMYYYY(value) : "");
-      onValidityChange?.({ valid: true });
-    }
-  };
+  const handleBlur = () => applyTextEvent(localText, "blur");
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter") {
@@ -187,7 +188,14 @@ export function DateField({
   const today = todayInIST();
 
   const handleDayClick = (iso: string) => {
+    // Belt and braces: the popover is closed and its buttons disabled when the field
+    // is, but a click already in progress must not slip a value past the parent.
+    if (disabled) return;
     if (!isInRange(iso)) return;
+    // Set the text here as well as via the value effect: picking the date that is
+    // already committed doesn't change `value`, so the effect wouldn't fire and
+    // any half-typed text would linger while we report the field as valid.
+    setLocalText(isoToDDMMYYYY(iso));
     onChange(iso);
     onValidityChange?.({ valid: true });
     close();
@@ -288,28 +296,7 @@ export function DateField({
         required={required}
         disabled={disabled}
         value={localText}
-        onChange={(e) => {
-          const newText = e.target.value;
-          setLocalText(newText);
-          if (commitOnValidChange) {
-            const trimmed = newText.trim();
-            if (trimmed === "") {
-              onChange("");
-              onValidityChange?.({ valid: true });
-            } else {
-              const parsed = ddmmyyyyToISO(trimmed);
-              if (parsed && isInRange(parsed)) {
-                onChange(parsed);
-                onValidityChange?.({ valid: true });
-              } else {
-                // Invalid: either parse failure or out of range
-                // Don't call onChange — wait for blur or valid input
-                const message = getValidationMessage(parsed);
-                onValidityChange?.({ valid: false, message });
-              }
-            }
-          }
-        }}
+        onChange={(e) => applyTextEvent(e.target.value, "change")}
         onBlur={handleBlur}
         onKeyDown={handleKeyDown}
         placeholder={placeholder}
@@ -334,6 +321,7 @@ export function DateField({
       </button>
 
       {open &&
+        !disabled &&
         pos &&
         createPortal(
           <div

@@ -20,8 +20,15 @@ export function useUserProfile() {
 export function useUserProfileMutation() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: UpdateUserProfile) => apiPut("/api/profile", UserProfileSchema, body),
-    onSuccess: (profile) => {
+    // Bounded so a request that never settles can't leave `isPending` stuck true,
+    // which would keep the Save button disabled until the page was reloaded.
+    mutationFn: (body: UpdateUserProfile) =>
+      apiPut("/api/profile", UserProfileSchema, body, { timeoutMs: 20_000 }),
+    // Cancel any GET still in flight before caching the response: a request that
+    // started before the write can resolve after it and overwrite the saved profile
+    // with pre-save data, making the form visibly revert to the old date of birth.
+    onSuccess: async (profile) => {
+      await qc.cancelQueries({ queryKey: ["user-profile"] });
       qc.setQueryData(["user-profile"], profile);
       toast("Profile updated", "success");
     },

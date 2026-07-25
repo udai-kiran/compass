@@ -3,18 +3,19 @@ import assert from "node:assert/strict";
 import { ddmmyyyyToISO } from "./date.ts";
 
 /**
- * Reproduction test for the "profile DOB not saved" bug.
+ * Parser-contract test underpinning the "profile DOB not saved" bug.
  *
- * Root cause: DateField.handleBlur only calls onChange when the typed text
- * successfully parses (ddmmyyyyToISO) AND passes range validation (isInRange).
- * If either fails, onChange is NEVER called, the field reverts to the previous
- * value, and the parent state stays at "" — resulting in `{ dateOfBirth: null }`
- * being sent to the API.
+ * Root cause: DateField only committed a value when the typed text parsed
+ * (ddmmyyyyToISO) AND passed the range check. Anything else was reverted on blur
+ * while still reporting the field as valid — and since clicking Save blurs the
+ * input first, the submit that followed sent `{ dateOfBirth: null }`.
  *
- * This test documents which inputs the parser (ddmmyyyyToISO) rejects (returns null)
- * vs accepts. For opted-in DateField instances (commitOnValidChange=true), invalid
- * input now reports invalidity via onValidityChange during typing, rather than
- * being silently dropped without feedback.
+ * This file pins down which inputs the parser rejects vs accepts. The commit /
+ * validity decision built on top of it now lives in
+ * `apps/web/src/components/date-field-commit.ts`, which keeps invalid text and
+ * reports invalidity for opted-in fields (commitOnValidChange) so the parent can
+ * block Save instead of silently persisting a null. See
+ * `date-field-commit.test.ts` for that behaviour.
  */
 
 test("ddmmyyyyToISO returns null for ISO format (user typing 1990-05-15 in a DD-MM-YYYY field)", () => {
@@ -73,17 +74,19 @@ test("DateField isInRange would reject future dates when max={todayInIST()}", ()
 });
 
 /**
- * SCENARIO WALKTHROUGH:
- * 1. User opens Settings → Family, profile DOB field is empty (dob = "")
+ * ORIGINAL FAILING SCENARIO (now fixed):
+ * 1. User opens Settings → Profile, DOB field is empty (dob = "")
  * 2. User types "1990-05-15" (ISO format, natural for some users)
  * 3. User clicks Save
- * 4. Input's onBlur fires -> handleBlur runs
+ * 4. The input's onBlur fires first
  * 5. ddmmyyyyToISO("1990-05-15") returns NULL (not DD-MM-YYYY format)
- * 6. handleBlur reverts localText to isoToDDMMYYYY("") = ""
- * 7. onChange is NEVER called -> parent dob stays ""
- * 8. handleSaveProfile sends { dateOfBirth: "" || null } = { dateOfBirth: null }
- * 9. API overwrites with NULL
- * 10. User sees: "not saved / it cleared it"
+ * 6. blur reverted localText to "" and reported the field as VALID
+ * 7. onChange was never called -> parent dob stayed ""
+ * 8. The submit sent { dateOfBirth: "" || null } = { dateOfBirth: null }
+ * 9. API stored NULL
+ * 10. User saw: "not saved / it cleared it" with the field back to DD-MM-YYYY
  *
  * Same failure for: partial dates, impossible dates, 2-digit years, future dates.
+ * resolveDateInput now returns { commit: null, valid: false } for all of these,
+ * keeping the typed text on screen and disabling Save.
  */
