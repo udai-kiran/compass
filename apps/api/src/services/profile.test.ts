@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { toFamilyMember } from "./profile.ts";
+import { toFamilyMember, getUserProfile, updateUserProfile } from "./profile.ts";
+import type { Db } from "../db/index.ts";
 import {
   CreateFamilyMemberSchema,
   UpdateFamilyMemberSchema,
@@ -143,4 +144,81 @@ test("UpdateFamilyMemberSchema accepts expectedCompletionYear in range", () => {
 
   const valid2050 = UpdateFamilyMemberSchema.parse({ expectedCompletionYear: 2050 });
   assert.equal(valid2050.expectedCompletionYear, 2050);
+});
+
+test("UpdateUserProfileSchema round-trips a dateOfBirth", () => {
+  const input = { dateOfBirth: "1985-07-15" };
+  const parsed = UpdateUserProfileSchema.parse(input);
+  assert.deepEqual(parsed, { dateOfBirth: "1985-07-15" });
+});
+
+test("UpdateUserProfileSchema rejects an empty string for dateOfBirth", () => {
+  const input = { dateOfBirth: "" };
+  // Empty string is not a valid ISO date — the frontend must send null to clear
+  assert.throws(() => UpdateUserProfileSchema.parse(input));
+});
+
+test("UpdateUserProfileSchema accepts null to clear dateOfBirth", () => {
+  const input = { dateOfBirth: null };
+  const parsed = UpdateUserProfileSchema.parse(input);
+  assert.deepEqual(parsed, { dateOfBirth: null });
+});
+
+test("User profile DOB save/reload flow: round-trip through service layer", async () => {
+  // Regression test for "DOB not saved" — ensures save + reload actually works at service layer.
+  // This repo has no test DB; we use a minimal in-memory fake that models the upsert + query.
+
+  // Fake Db that implements only the exact query shapes used by getUserProfile and updateUserProfile
+  const store = new Map<string, { userId: string; dateOfBirth: string | null; updatedAt: Date }>();
+
+  const fakeDb = {
+    query: {
+      userProfiles: {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Drizzle where clause is internal
+        findFirst: ({ where }: { where: any }) => {
+          // Drizzle's eq() returns an object with queryChunks array.
+          // For eq(userProfiles.userId, userId), queryChunks[3] is a Param object with .value.
+          const userId = where?.queryChunks?.[3]?.value;
+          const row = store.get(userId);
+          return Promise.resolve(row ?? undefined);
+        },
+      },
+    },
+    insert: () => ({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Drizzle values type is internal
+      values: (data: any) => ({
+        onConflictDoUpdate: () => ({
+          returning: () => {
+            const existing = store.get(data.userId);
+            const row = { ...data, updatedAt: existing ? new Date() : new Date() };
+            store.set(data.userId, row);
+            return Promise.resolve([row]);
+          },
+        }),
+      }),
+    }),
+  } as unknown as Db;
+
+  const userId = "test-user-123";
+  const otherUserId = "other-user-456";
+
+  // Save a DOB
+  const saved = await updateUserProfile(fakeDb, userId, { dateOfBirth: "1985-07-15" });
+  assert.deepEqual(saved, { dateOfBirth: "1985-07-15" });
+
+  // Reload — must read back the same value
+  const loaded = await getUserProfile(fakeDb, userId);
+  assert.deepEqual(loaded, { dateOfBirth: "1985-07-15" });
+
+  // Clear the DOB (set to null)
+  const cleared = await updateUserProfile(fakeDb, userId, { dateOfBirth: null });
+  assert.deepEqual(cleared, { dateOfBirth: null });
+
+  // Reload after clearing — must return null, not the old value
+  const loadedAfterClear = await getUserProfile(fakeDb, userId);
+  assert.deepEqual(loadedAfterClear, { dateOfBirth: null });
+
+  // Scoping: different user should not see the first user's data
+  const otherProfile = await getUserProfile(fakeDb, otherUserId);
+  assert.deepEqual(otherProfile, { dateOfBirth: null });
 });

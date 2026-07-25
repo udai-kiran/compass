@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { formatINR, type NotificationType } from "@compass/shared";
+import { formatINR, todayInIST, type NotificationType } from "@compass/shared";
 import { toast } from "../../lib/toast.tsx";
 import { useMe } from "../../lib/auth.ts";
 import { ThemeSelect } from "../../components/ThemeSelect.tsx";
+import { DateField } from "../../components/DateField.tsx";
 import {
   useCapabilities,
   useNotificationPrefs,
@@ -13,6 +14,7 @@ import {
   useSessionRevoke,
   useSessions,
 } from "../../lib/settings-queries.ts";
+import { useUserProfile, useUserProfileMutation } from "../../lib/family-queries.ts";
 
 export function ProjectionsPanel() {
   const { data } = useProjectionSettings();
@@ -72,9 +74,23 @@ export function ProjectionsPanel() {
 export function ProfilePanel() {
   const { data: me } = useMe();
   const { updateProfile, changePassword } = useProfileMutations();
+  const { data: profile } = useUserProfile();
+  const profileUpdate = useUserProfileMutation();
   const [name, setName] = useState("");
   const [cur, setCur] = useState("");
   const [next, setNext] = useState("");
+  const [dob, setDob] = useState("");
+  const [dobValid, setDobValid] = useState(true);
+  const [dobError, setDobError] = useState<string | undefined>();
+
+  useEffect(() => {
+    setDob(profile?.dateOfBirth ?? "");
+  }, [profile?.dateOfBirth]);
+
+  const handleSaveProfile = (e: React.FormEvent) => {
+    e.preventDefault();
+    profileUpdate.mutate({ dateOfBirth: dob || null });
+  };
 
   return (
     <div className="mt-4 max-w-lg space-y-6">
@@ -93,6 +109,35 @@ export function ProfilePanel() {
             Save
           </button>
         </div>
+        <form onSubmit={handleSaveProfile} className="mt-4 flex items-end gap-2">
+          <label className="flex flex-col gap-1 text-xs text-slate-500">
+            Date of birth
+            <DateField
+              value={dob}
+              onChange={(iso) => setDob(iso)}
+              max={todayInIST()}
+              className="w-48"
+              commitOnValidChange
+              onValidityChange={(state) => {
+                setDobValid(state.valid);
+                setDobError(state.message);
+              }}
+              aria-invalid={!dobValid}
+              aria-describedby={!dobValid && dobError ? "profile-dob-error" : undefined}
+            />
+            {!dobValid && dobError && (
+              <span id="profile-dob-error" className="text-xs text-red-600">{dobError}</span>
+            )}
+          </label>
+          <button
+            type="submit"
+            disabled={profileUpdate.isPending || !profile || !dobValid}
+            className="rounded-md bg-brand-600 px-4 py-1.5 text-sm text-white disabled:opacity-40"
+          >
+            Save
+          </button>
+        </form>
+        <p className="mt-2 text-xs text-slate-400">Your date of birth is used for age-based financial planning.</p>
       </section>
 
       <section className="rounded-lg border border-slate-200 bg-white p-4">

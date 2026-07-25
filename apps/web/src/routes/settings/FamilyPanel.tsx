@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   calculateAge,
   EducationStageSchema,
@@ -7,23 +7,12 @@ import {
   type FamilyMember,
 } from "@compass/shared";
 import { DateField } from "../../components/DateField.tsx";
-import { useFamilyMembers, useFamilyMutations, useUserProfile, useUserProfileMutation } from "../../lib/family-queries.ts";
+import { useFamilyMembers, useFamilyMutations } from "../../lib/family-queries.ts";
 
 export function FamilyPanel() {
-  const { data: profile } = useUserProfile();
-  const profileUpdate = useUserProfileMutation();
   const { data: members, isLoading: membersLoading } = useFamilyMembers();
   const { create, update, remove } = useFamilyMutations();
 
-  const [dob, setDob] = useState("");
-  const [dobValid, setDobValid] = useState(true);
-  const [dobError, setDobError] = useState<string | undefined>();
-
-  useEffect(() => {
-    if (profile?.dateOfBirth) {
-      setDob(profile.dateOfBirth);
-    }
-  }, [profile?.dateOfBirth]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [showAddForm, setShowAddForm] = useState(false);
 
@@ -38,11 +27,6 @@ export function FamilyPanel() {
   const [newCourse, setNewCourse] = useState("");
   const [newExpectedYear, setNewExpectedYear] = useState("");
   const [newNotes, setNewNotes] = useState("");
-
-  const handleSaveProfile = (e: React.FormEvent) => {
-    e.preventDefault();
-    profileUpdate.mutate({ dateOfBirth: dob || null });
-  };
 
   const handleAddMember = () => {
     if (!newName.trim()) return;
@@ -83,43 +67,6 @@ export function FamilyPanel() {
 
   return (
     <div className="mt-4 max-w-3xl space-y-6">
-      {/* User Profile Section */}
-      <section className="rounded-lg border border-slate-200 bg-white p-4">
-        <h2 className="text-sm font-semibold text-slate-700">Your profile</h2>
-        <p className="mt-1 text-xs text-slate-400">
-          Name and email are managed in the Profile tab. Add your date of birth here for age-based planning.
-        </p>
-        {/* form wrapper for semantic grouping and button submit semantics */}
-        <form onSubmit={handleSaveProfile} className="mt-3 flex items-end gap-2">
-          <label className="flex flex-col gap-1 text-xs text-slate-500">
-            Date of birth
-            <DateField
-              value={dob}
-              onChange={(iso) => setDob(iso)}
-              max={todayInIST()}
-              className="w-48"
-              commitOnValidChange
-              onValidityChange={(state) => {
-                setDobValid(state.valid);
-                setDobError(state.message);
-              }}
-              aria-invalid={!dobValid}
-              aria-describedby={!dobValid && dobError ? "profile-dob-error" : undefined}
-            />
-            {!dobValid && dobError && (
-              <span id="profile-dob-error" className="text-xs text-red-600">{dobError}</span>
-            )}
-          </label>
-          <button
-            type="submit"
-            disabled={profileUpdate.isPending || !profile || !dobValid}
-            className="rounded-md bg-brand-600 px-4 py-1.5 text-sm text-white disabled:opacity-40"
-          >
-            Save
-          </button>
-        </form>
-      </section>
-
       {/* Family Members Section */}
       <section className="rounded-lg border border-slate-200 bg-white p-4">
         <div className="flex items-center justify-between">
@@ -131,6 +78,9 @@ export function FamilyPanel() {
             {showAddForm ? "Cancel" : "Add member"}
           </button>
         </div>
+        <p className="mt-1 text-xs text-slate-400">
+          Record spouse, children, parents, or others for planning. Your own profile details are in the Profile tab.
+        </p>
 
         {showAddForm && (
           <div className="mt-4 space-y-3 rounded-md border border-slate-200 bg-slate-50 p-3">
