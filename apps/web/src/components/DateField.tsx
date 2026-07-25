@@ -14,12 +14,18 @@ export interface DateFieldProps {
   max?: string; // ISO upper bound (inclusive), optional
   placeholder?: string; // default "DD-MM-YYYY"
   "aria-label"?: string;
+  "aria-invalid"?: boolean;
+  "aria-describedby"?: string;
   /** open the calendar popover on mount (used by the inline click-to-edit cell) */
   defaultOpen?: boolean;
   /** focus the text input on mount (used by the inline click-to-edit cell) */
   autoFocus?: boolean;
   /** fired whenever the popover closes — lets an inline editor exit edit mode */
   onClose?: () => void;
+  /** opt-in: commit valid dates to parent immediately on typing, not just on blur/calendar-click */
+  commitOnValidChange?: boolean;
+  /** fired when typed text is invalid (parse/range failure) — lets parent show validation errors */
+  onValidityChange?: (state: { valid: boolean; message?: string }) => void;
 }
 
 /** Fixed-position coordinates for the portalled popover, anchored to the trigger button. */
@@ -83,9 +89,13 @@ export function DateField({
   max,
   placeholder = "DD-MM-YYYY",
   "aria-label": ariaLabel,
+  "aria-invalid": ariaInvalid,
+  "aria-describedby": ariaDescribedBy,
   defaultOpen = false,
   autoFocus = false,
   onClose,
+  commitOnValidChange = false,
+  onValidityChange,
 }: DateFieldProps) {
   // Local text state for in-progress typing
   const [localText, setLocalText] = useState<string>(() => (value ? isoToDDMMYYYY(value) : ""));
@@ -124,20 +134,38 @@ export function DateField({
     }
   }, [open, value]);
 
+  /** Generate an appropriate error message for an invalid date input */
+  const getValidationMessage = (parsed: string | null): string => {
+    if (!parsed) {
+      return "Enter a valid date in DD-MM-YYYY format";
+    }
+    // parsed is valid ISO but out of range
+    if (max && parsed > max) {
+      return `Date must be on or before ${isoToDDMMYYYY(max)}`;
+    }
+    if (min && parsed < min) {
+      return `Date must be on or after ${isoToDDMMYYYY(min)}`;
+    }
+    return "Enter a valid date in DD-MM-YYYY format";
+  };
+
   const handleBlur = () => {
     const trimmed = localText.trim();
     if (trimmed === "") {
       onChange("");
       setLocalText("");
+      onValidityChange?.({ valid: true });
       return;
     }
     const parsed = ddmmyyyyToISO(trimmed);
     if (parsed && isInRange(parsed)) {
       onChange(parsed);
       setLocalText(isoToDDMMYYYY(parsed)); // normalize display
+      onValidityChange?.({ valid: true });
     } else {
-      // revert to last valid
+      // revert to last valid value — field is now back to valid committed state
       setLocalText(value ? isoToDDMMYYYY(value) : "");
+      onValidityChange?.({ valid: true });
     }
   };
 
@@ -161,6 +189,7 @@ export function DateField({
   const handleDayClick = (iso: string) => {
     if (!isInRange(iso)) return;
     onChange(iso);
+    onValidityChange?.({ valid: true });
     close();
   };
 
@@ -259,11 +288,34 @@ export function DateField({
         required={required}
         disabled={disabled}
         value={localText}
-        onChange={(e) => setLocalText(e.target.value)}
+        onChange={(e) => {
+          const newText = e.target.value;
+          setLocalText(newText);
+          if (commitOnValidChange) {
+            const trimmed = newText.trim();
+            if (trimmed === "") {
+              onChange("");
+              onValidityChange?.({ valid: true });
+            } else {
+              const parsed = ddmmyyyyToISO(trimmed);
+              if (parsed && isInRange(parsed)) {
+                onChange(parsed);
+                onValidityChange?.({ valid: true });
+              } else {
+                // Invalid: either parse failure or out of range
+                // Don't call onChange — wait for blur or valid input
+                const message = getValidationMessage(parsed);
+                onValidityChange?.({ valid: false, message });
+              }
+            }
+          }
+        }}
         onBlur={handleBlur}
         onKeyDown={handleKeyDown}
         placeholder={placeholder}
         aria-label={ariaLabel}
+        aria-invalid={ariaInvalid}
+        aria-describedby={ariaDescribedBy}
         className="flex-1 rounded-l-md border border-r-0 border-slate-300 bg-white px-2 py-1.5 text-sm disabled:opacity-50"
       />
       <button
