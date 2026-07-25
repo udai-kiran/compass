@@ -15,6 +15,16 @@ import {
   useSessions,
 } from "../../lib/settings-queries.ts";
 import { useUserProfile, useUserProfileMutation } from "../../lib/family-queries.ts";
+import {
+  acceptSavedDob,
+  canSaveDob as canSaveDobState,
+  commitDob,
+  dobSavePayload,
+  reportDobValidity,
+  syncDobFromServer,
+  UNHYDRATED_DOB,
+  type DobState,
+} from "./profile-dob-state.ts";
 
 export function ProjectionsPanel() {
   const { data } = useProjectionSettings();
@@ -74,22 +84,69 @@ export function ProjectionsPanel() {
 export function ProfilePanel() {
   const { data: me } = useMe();
   const { updateProfile, changePassword } = useProfileMutations();
-  const { data: profile } = useUserProfile();
+  const {
+    data: profile,
+    isPending: profilePending,
+    isError: profileError,
+    refetch: refetchProfile,
+    isFetching: profileFetching,
+  } = useUserProfile();
   const profileUpdate = useUserProfileMutation();
   const [name, setName] = useState("");
   const [cur, setCur] = useState("");
   const [next, setNext] = useState("");
-  const [dob, setDob] = useState("");
-  const [dobValid, setDobValid] = useState(true);
-  const [dobError, setDobError] = useState<string | undefined>();
+  // `null` until the profile GET resolves. Hydration is tracked from the response
+  // rather than from the field's own value: "the field has a value" is not the same
+  // as "we know the stored value", and saving before the response lands would
+  // persist the empty initial value and wipe the stored date of birth.
+  const serverDob = profile ? (profile.dateOfBirth ?? "") : null;
+  const [dobState, setDobState] = useState<DobState>(UNHYDRATED_DOB);
+  // Sync during render (React's "adjusting state when a prop changes" pattern) so
+  // there is never a paint showing the server value next to stale validity state.
+  // Guarded by the `server` comparison, so it settles after one extra render.
+  if (serverDob !== null && serverDob !== dobState.server) {
+    setDobState(syncDobFromServer(dobState, serverDob));
+  }
+  const { value: dob, valid: dobValid, error: dobError } = dobState;
+  const dobHydrated = dobState.server !== null;
+  const canSaveDob = canSaveDobState(dobState, profileUpdate.isPending);
 
-  useEffect(() => {
-    setDob(profile?.dateOfBirth ?? "");
-  }, [profile?.dateOfBirth]);
+  const handleDobChange = (iso: string) => setDobState((prev) => commitDob(prev, iso));
+  const handleDobValidity = (report: { valid: boolean; message?: string }) =>
+    setDobState((prev) => reportDobValidity(prev, report));
+
+  const dobSaving = profileUpdate.isPending;
+
+  // Describe whichever message is actually on screen. Save is disabled while the
+  // write is in flight, so the reason has to be announced too — otherwise the
+  // button just goes dead with no explanation.
+  const dobFieldDescribedBy =
+    !dobValid && dobError
+      ? "profile-dob-error"
+      : !dobHydrated && profileError
+        ? "profile-dob-load-error"
+        : !dobHydrated && profilePending
+          ? "profile-dob-loading"
+          : dobSaving
+            ? "profile-dob-saving"
+            : undefined;
 
   const handleSaveProfile = (e: React.FormEvent) => {
     e.preventDefault();
-    profileUpdate.mutate({ dateOfBirth: dob || null });
+    // Guard here and not just on the button: a form can also be submitted with
+    // Enter, and persisting an unhydrated or invalid field would clear the stored
+    // date of birth.
+    if (!canSaveDob) return;
+    const sent = dobSavePayload(dobState);
+    profileUpdate.mutate(sent, {
+      // Adopt the stored profile the server echoed back. Without this the edit stays
+      // "unsaved" whenever the response differs from what was sent, so later
+      // refetches would be ignored and the field could sit out of sync. `sent` lets
+      // it tell "this is my save landing" from "the user typed something new while
+      // it was in flight", which must not be discarded.
+      onSuccess: (saved) =>
+        setDobState((prev) => acceptSavedDob(prev, sent.dateOfBirth ?? "", saved.dateOfBirth ?? "")),
+    });
   };
 
   return (
@@ -114,16 +171,21 @@ export function ProfilePanel() {
             Date of birth
             <DateField
               value={dob}
-              onChange={(iso) => setDob(iso)}
+              onChange={handleDobChange}
               max={todayInIST()}
               className="w-48"
+              // Not editable until the stored value is known, so a pre-load edit can
+              // never be mistaken for the user's intent once the GET resolves. It
+              // stays editable while saving — a request that never settles would
+              // otherwise leave the field permanently stuck — and `acceptSavedDob`
+              // keeps any edit made in the meantime.
+              disabled={!dobHydrated}
               commitOnValidChange
-              onValidityChange={(state) => {
-                setDobValid(state.valid);
-                setDobError(state.message);
-              }}
+              onValidityChange={handleDobValidity}
               aria-invalid={!dobValid}
-              aria-describedby={!dobValid && dobError ? "profile-dob-error" : undefined}
+              // Point at whichever message is on screen, so the reason the field is
+              // invalid — or disabled — is announced with it.
+              aria-describedby={dobFieldDescribedBy}
             />
             {!dobValid && dobError && (
               <span id="profile-dob-error" className="text-xs text-red-600">{dobError}</span>
@@ -131,12 +193,39 @@ export function ProfilePanel() {
           </label>
           <button
             type="submit"
-            disabled={profileUpdate.isPending || !profile || !dobValid}
+            disabled={!canSaveDob}
+            aria-busy={dobSaving}
             className="rounded-md bg-brand-600 px-4 py-1.5 text-sm text-white disabled:opacity-40"
           >
-            Save
+            {dobSaving ? "Saving…" : "Save"}
           </button>
         </form>
+        {/* The field is disabled until the stored value is known, so say why. */}
+        {!dobHydrated && profilePending && (
+          <p id="profile-dob-loading" role="status" className="mt-2 text-xs text-slate-400">
+            Loading your date of birth…
+          </p>
+        )}
+        {!dobHydrated && profileError && (
+          <p id="profile-dob-load-error" role="alert" className="mt-2 text-xs text-red-600">
+            Couldn’t load your date of birth.{" "}
+            <button
+              type="button"
+              onClick={() => void refetchProfile()}
+              disabled={profileFetching}
+              className="underline disabled:opacity-40"
+            >
+              {profileFetching ? "Retrying…" : "Retry"}
+            </button>
+          </p>
+        )}
+        {/* Save is disabled while the write is in flight; announce that it's working
+            (and that it will give up rather than hang — the PUT is bounded). */}
+        {dobSaving && (
+          <p id="profile-dob-saving" role="status" className="mt-2 text-xs text-slate-400">
+            Saving your date of birth…
+          </p>
+        )}
         <p className="mt-2 text-xs text-slate-400">Your date of birth is used for age-based financial planning.</p>
       </section>
 
