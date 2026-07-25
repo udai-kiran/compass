@@ -1,5 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { SQL } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
 import { AccountTypeSchema } from "@compass/shared";
@@ -8,12 +10,16 @@ import {
   backfillSnapshots,
   closePreviousDay,
   isSystemicFailure,
+  MAX_RECOMPUTE_SINCE_DAYS,
   nDaysBefore,
   previousDay,
   recomputeRecentSnapshots,
+  recomputeSnapshotsSince,
+  repairSnapshots,
   snapshotAllUsers,
   snapshotDay,
 } from "./networth.ts";
+import { HttpError } from "../lib/errors.ts";
 
 test("every account type is classified for net worth", () => {
   // A type missing here (undefined) contributes to neither assets nor
@@ -73,13 +79,60 @@ function dateParams(clause: unknown): string[] {
   return sqlParams(clause).filter((p) => /^\d{4}-\d{2}-\d{2}$/.test(p));
 }
 
+/** The SQL text a clause compiles to — what Postgres would actually receive. */
+function sqlText(clause: unknown): string {
+  return new PgDialect().sqlToQuery(clause as SQL).sql;
+}
+
+/**
+ * A row filter built from the compiled SQL, rather than from an assumption about
+ * which operators the service used.
+ *
+ * This distinction is the whole value of the stub. Hardcoding `date <= upper`
+ * here made the stub report an inclusive window no matter what the service
+ * compiled, so the test claiming the window was inclusive of both ends kept
+ * passing after the service switched to an exclusive `<` — it was asserting on a
+ * query the test had rebuilt itself. Reading the operators back out of the
+ * compiled SQL means a changed bound changes which rows come back, which is what
+ * a caller would actually see.
+ */
+function compiledRowFilter(clause: unknown): (row: { userId: string; date: string }) => boolean {
+  const { sql, params } = new PgDialect().sqlToQuery(clause as SQL);
+  const checks: Array<(row: { userId: string; date: string }) => boolean> = [];
+  const cmp = /"date"\s*(>=|<=|>|<)\s*\$(\d+)/g;
+  let m: RegExpExecArray | null;
+  while ((m = cmp.exec(sql)) !== null) {
+    const op = m[1]!;
+    const value = params[Number(m[2]) - 1] as string;
+    checks.push((row) => {
+      if (op === ">=") return row.date >= value;
+      if (op === "<=") return row.date <= value;
+      if (op === ">") return row.date > value;
+      return row.date < value;
+    });
+  }
+  const userEq = /"user_id"\s*=\s*\$(\d+)/.exec(sql);
+  if (userEq) {
+    const uid = params[Number(userEq[1]!) - 1] as string;
+    checks.push((row) => row.userId === uid);
+  }
+  return (row) => checks.every((c) => c(row));
+}
+
 function stubDb(
   rows: Array<{ userId: string; date: string }> = [],
-  opts: { users?: string[]; failFor?: string; failForDates?: string[] } = {},
+  opts: {
+    users?: string[];
+    failFor?: string;
+    failForDates?: string[];
+    /** fires on each balance-sheet query, so a test can perturb state mid-pass */
+    onExecute?: () => void;
+  } = {},
 ) {
   const users = opts.users ?? ["user-1"];
   const conflicts: string[] = [];
   const bounds: Array<{ upper?: string; lower?: string }> = [];
+  const scopedBounds: Array<{ userId: string; from?: string; to?: string; sql: string }> = [];
   const insertedValues: Array<Record<string, unknown>> = [];
   const updated: Array<{ set: Record<string, unknown> }> = [];
   const returning = () => Promise.resolve([{ id: "row" }]);
@@ -108,11 +161,18 @@ function stubDb(
       // apply them, so a service that dropped or widened a bound fails here.
       const result = {
         where: (clause: unknown) => {
-          const [upper, lower] = dateParams(clause);
-          bounds.push({ upper, lower });
-          return Promise.resolve(
-            rows.filter((r) => (upper ? r.date < upper : true) && (lower ? r.date >= lower : true)),
-          );
+          // Record what was actually bound, so a test can assert the window
+          // really reached SQL, then filter the way the compiled SQL says to.
+          const dates = dateParams(clause);
+          const userId = sqlParams(clause).find((p) => !/^\d{4}-\d{2}-\d{2}$/.test(p));
+          if (userId !== undefined) {
+            const [from, to] = dates;
+            scopedBounds.push({ userId, from, to, sql: sqlText(clause) });
+          } else {
+            const [upper, lower] = dates;
+            bounds.push({ upper, lower });
+          }
+          return Promise.resolve(rows.filter(compiledRowFilter(clause)));
         },
       };
       return { from: () => result };
@@ -130,6 +190,7 @@ function stubDb(
     // `failFor` makes it reject for one user, standing in for the real failure
     // mode: computeNetWorth throws on an account type it cannot classify.
     execute: (clause?: unknown) => {
+      opts.onExecute?.();
       const bound = sqlParams(clause);
       const hit =
         (opts.failFor !== undefined && bound.includes(opts.failFor)) ||
@@ -149,7 +210,7 @@ function stubDb(
       },
     }),
   };
-  return { db, conflicts, updates, targets, insertedValues, updated, bounds };
+  return { db, conflicts, updates, targets, insertedValues, updated, bounds, scopedBounds };
 }
 
 test("the nightly snapshot overwrites the day's row instead of keeping the first write", async () => {
@@ -461,4 +522,425 @@ test("a backfilled estimate never overwrites an observed day", async () => {
     [true],
     "backfilled rows must be marked estimated",
   );
+});
+
+test("the targeted repair refreshes stale days the nightly sweep can no longer reach", async () => {
+  // These days are ~200 days old, far outside SNAPSHOT_RECOMPUTE_DAYS, which is
+  // the whole point.
+  const { db, updated } = stubDb([
+    { userId: "user-1", date: "2026-01-10" },
+    { userId: "user-1", date: "2026-02-15" },
+    { userId: "user-1", date: "2026-07-20" },
+  ]);
+  const { refreshed, failures } = await recomputeSnapshotsSince(
+    db as never,
+    "user-1",
+    "2026-01-10",
+    "2026-07-25",
+  );
+
+  assert.equal(refreshed, 3);
+  assert.deepEqual(failures, []);
+  assert.equal(updated.length, 3);
+  for (const u of updated) {
+    for (const col of ["assetsPaise", "liabilitiesPaise", "breakdown"] as const) {
+      assert.ok(col in u.set, `the refresh must rewrite ${col}`);
+    }
+    // Provenance must survive — same rule as the sweep.
+    assert.ok(!("estimated" in u.set), "a recompute must not relabel an estimate as observed");
+  }
+});
+
+test("the targeted repair is scoped to the requesting user", async () => {
+  // Every user-facing query filters by the session's user; a repair that
+  // recomputed other users' rows would be a cross-tenant write.
+  const { db, updated, scopedBounds } = stubDb([
+    { userId: "user-1", date: "2026-02-15" },
+    { userId: "user-1", date: "2026-07-20" },
+    { userId: "user-2", date: "2026-03-10" },
+    { userId: "user-2", date: "2026-07-19" },
+  ]);
+  const { refreshed } = await recomputeSnapshotsSince(db as never, "user-1", "2026-01-10", "2026-07-25");
+
+  assert.equal(refreshed, 2, "only user-1's rows are refreshed");
+  assert.equal(updated.length, 2);
+  assert.equal(scopedBounds.length, 1);
+  assert.equal(scopedBounds[0]!.userId, "user-1");
+});
+
+test("the repair window reaches SQL, inclusive of both ends", async () => {
+  const { db, scopedBounds, updated } = stubDb([
+    { userId: "user-1", date: "2026-02-09" }, // before `from`
+    { userId: "user-1", date: "2026-02-10" }, // exactly at `from`
+    { userId: "user-1", date: "2026-07-25" }, // exactly at `today`
+    { userId: "user-1", date: "2026-07-26" }, // after `today`
+  ]);
+  await recomputeSnapshotsSince(db as never, "user-1", "2026-02-10", "2026-07-25");
+
+  assert.equal(scopedBounds.length, 1);
+  assert.equal(scopedBounds[0]!.from, "2026-02-10");
+  assert.equal(scopedBounds[0]!.to, "2026-07-25");
+  // Assert the operator, not just the bound value. An exclusive upper bound would
+  // silently drop today's own row — the one most likely to be stale — and the
+  // bound value alone cannot tell the two apart.
+  assert.match(
+    scopedBounds[0]!.sql,
+    /"date"\s*<=\s*\$\d+/,
+    "the upper bound must be inclusive so today's own row is refreshed",
+  );
+  assert.doesNotMatch(
+    scopedBounds[0]!.sql,
+    /"date"\s*<\s*\$\d+/,
+    "an exclusive upper bound would skip today",
+  );
+  assert.equal(updated.length, 2, "only the two in-range rows were refreshed (boundary inclusive)");
+});
+
+test("a from-date older than the ceiling is clamped, and says so", async () => {
+  // The cost is one balance-sheet query plus portfolioValue per day,
+  // synchronously, so an unbounded range would hang the request; a silent clamp
+  // would tell the user their range was covered when it wasn't.
+  const { db } = stubDb([
+    { userId: "user-1", date: "2023-01-01" },
+    { userId: "user-1", date: "2026-07-20" },
+  ]);
+
+  const old = await recomputeSnapshotsSince(db as never, "user-1", "2019-01-01", "2026-07-25");
+  assert.equal(old.clamped, true);
+  assert.equal(old.from, nDaysBefore("2026-07-25", MAX_RECOMPUTE_SINCE_DAYS));
+
+  const recent = await recomputeSnapshotsSince(db as never, "user-1", "2026-06-01", "2026-07-25");
+  assert.equal(recent.clamped, false);
+  assert.equal(recent.from, "2026-06-01");
+});
+
+test("one unrecomputable day does not abort the rest of the repair", async () => {
+  // Same isolation rule as the nightly sweep — a manual repair must not stop
+  // dead on one bad day.
+  const { db, updated } = stubDb(
+    [
+      { userId: "user-1", date: "2026-03-01" },
+      { userId: "user-1", date: "2026-03-03" },
+      { userId: "user-1", date: "2026-03-05" },
+    ],
+    { failForDates: ["2026-03-03"] },
+  );
+  const { refreshed, failures } = await recomputeSnapshotsSince(
+    db as never,
+    "user-1",
+    "2026-03-01",
+    "2026-07-25",
+  );
+
+  assert.equal(refreshed, 2, "the other two were refreshed");
+  assert.equal(updated.length, 2);
+  assert.equal(failures.length, 1);
+  assert.equal(failures[0]!.date, "2026-03-03");
+  assert.equal(failures[0]!.userId, "user-1");
+});
+
+test("a from-date in the future is a harmless no-op, not an inverted window", async () => {
+  // `from` arrives from a request. Nothing rejects a future date, and an inverted
+  // window must simply match no rows rather than being reordered into a range
+  // that recomputes days the caller never asked for.
+  const { db, updated } = stubDb([
+    { userId: "user-1", date: "2026-07-20" },
+    { userId: "user-1", date: "2026-07-25" },
+  ]);
+  const pass = await recomputeSnapshotsSince(db as never, "user-1", "2027-01-01", "2026-07-25");
+
+  assert.equal(pass.processed, 0);
+  assert.equal(pass.refreshed, 0);
+  assert.deepEqual(pass.failures, []);
+  assert.equal(updated.length, 0, "no day may be rewritten");
+});
+
+/**
+ * Minimal Redis stand-in driven by the arguments production actually passes.
+ *
+ * The point is to avoid re-implementing the semantics the code under test is
+ * supposed to request. An earlier version applied NX-and-compare-and-delete from
+ * its own code, so it would have reported success even if the real call had
+ * dropped `NX` — the flag that makes the lock a lock. So `set` honours the flags
+ * it was given, and `eval` INTERPRETS the supplied Lua rather than assuming what
+ * it says.
+ *
+ * `taken` preloads a lock another request already holds, which is what makes a
+ * genuine `SET NX` return null.
+ */
+function stubRedis(opts: { taken?: boolean } = {}) {
+  const calls: Array<{ op: string; key: string }> = [];
+  const tokens: string[] = [];
+  const setArgs: unknown[][] = [];
+  const evalArgs: Array<{ script: string; numKeys: number; args: string[] }> = [];
+  let value: string | null = opts.taken ? "someone-elses-token" : null;
+  const redis = {
+    set: (key: string, token: string, ...rest: unknown[]) => {
+      calls.push({ op: "set", key });
+      tokens.push(token);
+      setArgs.push([key, token, ...rest]);
+      // Honour NX rather than assuming it: without it, Redis would overwrite an
+      // existing lock and every caller would "acquire" it.
+      const nx = rest.some((a) => typeof a === "string" && a.toUpperCase() === "NX");
+      if (nx && value !== null) return Promise.resolve(null);
+      value = token;
+      return Promise.resolve("OK");
+    },
+    /**
+     * Interpret the supplied Lua instead of assuming it compares tokens.
+     *
+     * Only the shape this codebase uses is understood: a GET on KEYS[1] compared
+     * against ARGV[1] guarding a DEL. A script that does not match that shape
+     * falls through to an unconditional delete — which is what an unguarded
+     * release would really do, so a wrong script fails the ownership tests
+     * instead of quietly passing them.
+     */
+    eval: (script: string, numKeys: number, ...args: string[]) => {
+      const key = args[0] ?? "";
+      calls.push({ op: "eval", key });
+      evalArgs.push({ script, numKeys, args });
+      const comparesToken =
+        /redis\.call\(\s*["']get["']\s*,\s*KEYS\[1\]\s*\)\s*==\s*ARGV\[1\]/.test(script) &&
+        /redis\.call\(\s*["']del["']\s*,\s*KEYS\[1\]\s*\)/.test(script);
+      if (comparesToken && value !== args[1]) return Promise.resolve(0);
+      value = null;
+      return Promise.resolve(1);
+    },
+  };
+  return {
+    redis,
+    calls,
+    tokens,
+    setArgs,
+    evalArgs,
+    held: () => value,
+    /** install another holder's lock directly, as an expiry-then-reacquire would */
+    force: (token: string) => {
+      value = token;
+    },
+  };
+}
+
+test("a repair reports what it managed to do, not just that it returned", async () => {
+  // The counts are the only way a caller distinguishes "repaired" from "attempted and failed".
+  const { db } = stubDb([
+    { userId: "user-1", date: "2026-07-23" },
+    { userId: "user-1", date: "2026-07-24" },
+    { userId: "user-1", date: "2026-07-25" },
+  ]);
+  const { redis, calls } = stubRedis();
+  const result = await repairSnapshots(db as never, redis as never, "user-1", "2026-07-23");
+
+  assert.deepEqual(result, {
+    from: "2026-07-23",
+    clamped: false,
+    processed: 3,
+    refreshed: 3,
+    failed: 0,
+  });
+  // Also assert the lock is released on success.
+  assert.deepEqual(calls, [
+    { op: "set", key: "nw:repair:user-1" },
+    { op: "eval", key: "nw:repair:user-1" },
+  ]);
+});
+
+test("a partly failed repair still returns 200-worthy counts, with the failures counted", async () => {
+  // The days that were repaired are real progress; `failed` is how the caller learns about the rest.
+  const { db } = stubDb(
+    [
+      { userId: "user-1", date: "2026-07-23" },
+      { userId: "user-1", date: "2026-07-24" },
+      { userId: "user-1", date: "2026-07-25" },
+    ],
+    { failForDates: ["2026-07-24"] },
+  );
+  const { redis } = stubRedis();
+  const result = await repairSnapshots(db as never, redis as never, "user-1", "2026-07-23");
+
+  assert.equal(result.processed, 3);
+  assert.equal(result.refreshed, 2);
+  assert.equal(result.failed, 1);
+});
+
+test("a repair that fails every day throws instead of reporting success", async () => {
+  // All-failed is systemic, and a fresh report would claim history was repaired when nothing was written.
+  const { db } = stubDb(
+    [
+      { userId: "user-1", date: "2026-07-24" },
+      { userId: "user-1", date: "2026-07-25" },
+    ],
+    { failForDates: ["2026-07-24", "2026-07-25"] },
+  );
+  const { redis } = stubRedis();
+
+  await assert.rejects(
+    repairSnapshots(db as never, redis as never, "user-1", "2026-07-24"),
+    (err: unknown) => err instanceof HttpError && err.statusCode === 500,
+  );
+  const { updated } = stubDb(
+    [
+      { userId: "user-1", date: "2026-07-24" },
+      { userId: "user-1", date: "2026-07-25" },
+    ],
+    { failForDates: ["2026-07-24", "2026-07-25"] },
+  );
+  // Verify no days were rewritten.
+  assert.equal(updated.length, 0);
+});
+
+test("a second concurrent repair for the same user is refused, not queued", async () => {
+  // Each repair can issue ~1,500 queries and the write rate limit allows 120 requests a minute,
+  // so the lock is what keeps one caller from stacking overlapping full-window recomputes.
+  const { db, updated } = stubDb([{ userId: "user-1", date: "2026-07-24" }]);
+  const { redis } = stubRedis({ taken: true });
+
+  await assert.rejects(
+    repairSnapshots(db as never, redis as never, "user-1", "2026-07-24"),
+    (err: unknown) => err instanceof HttpError && err.statusCode === 409,
+  );
+  assert.equal(updated.length, 0);
+});
+
+test("the repair lock is released even when the repair fails", async () => {
+  // A failed repair must not lock the user out until the TTL expires.
+  const { db } = stubDb(
+    [{ userId: "user-1", date: "2026-07-24" }],
+    { failForDates: ["2026-07-24"] },
+  );
+  const { redis, calls } = stubRedis();
+
+  try {
+    await repairSnapshots(db as never, redis as never, "user-1", "2026-07-24");
+  } catch {
+    // Ignore the expected error
+  }
+
+  assert.deepEqual(
+    calls.filter((c) => c.op === "eval"),
+    [{ op: "eval", key: "nw:repair:user-1" }],
+  );
+});
+
+test("the maximum repair window is small enough to survive one request", () => {
+  // The ceiling is a request-budget decision — each day costs ~4 sequential queries,
+  // so a ceiling that drifts upward silently reintroduces the timeout risk this bounds.
+  assert.ok(MAX_RECOMPUTE_SINCE_DAYS <= 400);
+});
+
+test("a repair whose lock expired mid-flight does not destroy its successor's lock", async () => {
+  // The interleaving the ownership check exists for: A is still running when its
+  // lock expires, B acquires the freed key, then A finishes. An unconditional DEL
+  // would delete B's lock here, letting a third repair start while B is still
+  // running — the mutual exclusion silently stops holding. So A's release must be
+  // a no-op once it no longer owns the key.
+  const { redis, held, force } = stubRedis();
+  // Install B's lock partway through A's repair, standing in for "A's TTL expired
+  // and B took the key".
+  const { db } = stubDb([{ userId: "user-1", date: "2026-07-20" }], {
+    onExecute: () => force("b-token"),
+  });
+
+  await repairSnapshots(db as never, redis as never, "user-1", "2026-07-01");
+
+  assert.equal(held(), "b-token", "the successor's lock must survive A's release");
+});
+
+test("a repair releases the lock it does own", async () => {
+  // The other half of the same rule: ownership-checked release must still actually
+  // release, or one repair would lock a user out until the TTL expires.
+  const { db } = stubDb([{ userId: "user-1", date: "2026-07-20" }]);
+  const { redis, held } = stubRedis();
+
+  await repairSnapshots(db as never, redis as never, "user-1", "2026-07-01");
+
+  assert.equal(held(), null, "a holder must release its own lock");
+});
+
+test("a repair blocked by another holder leaves that holder's lock untouched", async () => {
+  // A refused request must not clear the lock that refused it. This is why the 409
+  // is thrown before the try: a request that never acquired the lock must never
+  // reach the release path.
+  const { db, updated } = stubDb([{ userId: "user-1", date: "2026-07-20" }]);
+  const { redis, held } = stubRedis({ taken: true });
+
+  await assert.rejects(
+    repairSnapshots(db as never, redis as never, "user-1", "2026-07-01"),
+    (err: unknown) => err instanceof HttpError && err.statusCode === 409,
+  );
+  assert.equal(held(), "someone-elses-token", "another holder's lock must survive");
+  assert.equal(updated.length, 0, "and no day may be recomputed");
+});
+
+test("each repair holds the lock under its own token", async () => {
+  // Compare-and-delete only distinguishes holders if their tokens differ. A shared
+  // constant would make every holder's token match every other's, degrading release
+  // back to an unconditional DEL — the exact defect the token exists to prevent,
+  // and one that no assertion about a single repair can catch.
+  const { db } = stubDb([{ userId: "user-1", date: "2026-07-20" }]);
+  const { redis, tokens } = stubRedis();
+
+  await repairSnapshots(db as never, redis as never, "user-1", "2026-07-01");
+  await repairSnapshots(db as never, redis as never, "user-1", "2026-07-01");
+
+  assert.equal(tokens.length, 2);
+  assert.notEqual(tokens[0], tokens[1], "two repairs must not share a lock token");
+  for (const t of tokens) {
+    assert.ok(t.length >= 16, `a lock token must be unguessable, got "${t}"`);
+  }
+});
+
+test("the repair lock outlives a full-window repair", async () => {
+  // An expiring lock is how mutual exclusion silently stops holding: the holder
+  // overruns, a second repair starts, and now two run at once. The TTL must exceed
+  // the slowest plausible repair (MAX_RECOMPUTE_SINCE_DAYS days, ~4 sequential
+  // queries each) by a wide margin.
+  const seconds = Number(
+    /REPAIR_LOCK_TTL_SECONDS\s*=\s*(\d+)/.exec(
+      readFileSync(join(import.meta.dirname, "networth.ts"), "utf8"),
+    )?.[1],
+  );
+  assert.ok(Number.isFinite(seconds), "REPAIR_LOCK_TTL_SECONDS not found");
+  // 370 days at ~100ms per day is ~37s; an hour leaves roughly two orders of
+  // magnitude of headroom.
+  assert.ok(
+    seconds >= 3600,
+    `the repair lock TTL (${seconds}s) must comfortably exceed a full-window repair`,
+  );
+});
+
+test("the repair lock is acquired with NX and an expiry, and released by token", async () => {
+  // The stub can only model a lock if the real call asks for one. NX is what makes
+  // acquisition exclusive — without it every caller overwrites the key and
+  // "acquires" a lock that never blocks anyone — and EX is what stops a killed
+  // process holding it forever. Neither is visible in the pass/fail of a repair, so
+  // assert the arguments themselves.
+  const { db } = stubDb([{ userId: "user-1", date: "2026-07-20" }]);
+  const { redis, setArgs, evalArgs } = stubRedis();
+
+  await repairSnapshots(db as never, redis as never, "user-1", "2026-07-01");
+
+  assert.equal(setArgs.length, 1);
+  const [key, token, ...flags] = setArgs[0]!;
+  assert.equal(key, "nw:repair:user-1");
+  const upper = flags.map((f) => (typeof f === "string" ? f.toUpperCase() : f));
+  assert.ok(upper.includes("NX"), `the lock must be acquired with NX, got ${JSON.stringify(flags)}`);
+  assert.ok(upper.includes("EX"), `the lock must carry an expiry, got ${JSON.stringify(flags)}`);
+  // The TTL follows EX and must be a positive number of seconds.
+  const ttl = flags[upper.indexOf("EX") + 1];
+  assert.equal(typeof ttl, "number");
+  assert.ok((ttl as number) > 0, "the lock TTL must be positive");
+
+  // Release must name exactly one key and pass this holder's token as its only
+  // argument, or the compare-and-delete has nothing to compare.
+  assert.equal(evalArgs.length, 1);
+  const release = evalArgs[0]!;
+  assert.equal(release.numKeys, 1, "the release script must declare exactly one KEYS entry");
+  assert.deepEqual(release.args, ["nw:repair:user-1", token]);
+  assert.match(
+    release.script,
+    /redis\.call\(\s*["']get["']\s*,\s*KEYS\[1\]\s*\)\s*==\s*ARGV\[1\]/,
+    "release must compare the stored token before deleting",
+  );
+  assert.match(release.script, /redis\.call\(\s*["']del["']\s*,\s*KEYS\[1\]\s*\)/);
 });

@@ -637,6 +637,55 @@ export const NetWorthReportSchema = z.object({
 });
 export type NetWorthReport = z.infer<typeof NetWorthReportSchema>;
 
+/**
+ * Body for `POST /api/net-worth/backfill`.
+ *
+ * `from` is optional and selects a different operation: absent means "estimate
+ * month-end history that does not exist yet", present means "recompute the days
+ * that do exist, from this date forward". Optional so callers that only send
+ * `{ months }` keep working.
+ */
+export const NetWorthBackfillRequestSchema = z.object({
+  months: z.number().int().min(1).max(60).default(12),
+  from: z.iso.date().optional(),
+});
+export type NetWorthBackfillRequest = z.infer<typeof NetWorthBackfillRequestSchema>;
+
+/**
+ * What a repair actually managed to do.
+ *
+ * Reported rather than logged-and-dropped: days are recomputed with per-day
+ * failure isolation, so a repair can partly fail and still return 200. Without
+ * these counts the caller cannot tell "42 days repaired" from "42 days attempted,
+ * every one of them failed". `clamped` says the requested range was wider than
+ * the server will do in one request, so the caller knows it got less than it
+ * asked for.
+ */
+export const SnapshotRepairSchema = z.object({
+  /** the effective earliest day repaired, after clamping */
+  from: z.iso.date(),
+  /** true when `from` was older than the server's maximum window and moved forward */
+  clamped: z.boolean(),
+  /** days the repair attempted */
+  processed: z.number().int(),
+  /** days it successfully rewrote */
+  refreshed: z.number().int(),
+  /** days it could not compute; these keep their stale values */
+  failed: z.number().int(),
+});
+export type SnapshotRepair = z.infer<typeof SnapshotRepairSchema>;
+
+/**
+ * The backfill/repair response: the refreshed report, plus what the repair did.
+ *
+ * `repair` is null when no `from` was given (the estimate-missing-history path),
+ * so the field's presence mirrors the request.
+ */
+export const NetWorthBackfillResultSchema = NetWorthReportSchema.extend({
+  repair: SnapshotRepairSchema.nullable(),
+});
+export type NetWorthBackfillResult = z.infer<typeof NetWorthBackfillResultSchema>;
+
 // ---------- Net worth grouped by goal ----------
 
 /** One tagged asset within a goal group. Liabilities carry a negative valuePaise. */

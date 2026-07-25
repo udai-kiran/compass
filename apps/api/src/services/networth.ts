@@ -1,6 +1,9 @@
-import { and, asc, eq, gte, lt, sql } from "drizzle-orm";
-import type { AccountType, NetWorthReport } from "@compass/shared";
+import { randomUUID } from "node:crypto";
+import { and, asc, eq, gte, lt, lte, sql } from "drizzle-orm";
+import type { AccountType, NetWorthReport, SnapshotRepair } from "@compass/shared";
 import type { Db } from "../db/index.ts";
+import type { Redis } from "ioredis";
+import { HttpError } from "../lib/errors.ts";
 import { netWorthSnapshots, users } from "../db/schema.ts";
 import { portfolioValue } from "./holdings.ts";
 
@@ -229,12 +232,11 @@ export async function snapshotAllUsers(
  * day: card statements arrive monthly, and a bank CSV import carries each row's
  * real date, so entries routinely land weeks after the day they belong to.
  *
- * Known limit: a transaction dated *before* this window leaves the snapshots
- * between it and the window understated for good. Nothing repairs those today —
- * `POST /api/net-worth/backfill` cannot, because it inserts with
- * `onConflictDoNothing` and so skips every day that already has a row. Widening
- * the window is the lever; a targeted "recompute from date X" path would be the
- * real fix if late imports turn out to be common.
+ * A transaction dated *before* this window still leaves the days between it and
+ * the window understated, since the nightly pass never revisits them. That is
+ * what `recomputeSnapshotsSince` is for — an on-demand repair for one user,
+ * reachable from `POST /api/net-worth/backfill`. This constant only sizes the
+ * automatic nightly sweep.
  *
  * Cost is bounded but not free: each user-day runs one balance-sheet query plus
  * `portfolioValue`, which itself issues up to three more (holdings, events,
@@ -277,6 +279,20 @@ export async function recomputeRecentSnapshots(
       ),
     );
 
+  return refreshSnapshotRows(db, targets);
+}
+
+/**
+ * Recompute an explicit list of (user, day) snapshot rows in place.
+ *
+ * Shared by the nightly sweep and the on-demand repair so both cannot drift on
+ * the two things that matter: `estimated` is preserved, and one bad row never
+ * aborts the rest.
+ */
+async function refreshSnapshotRows(
+  db: Db,
+  targets: Array<{ userId: string; date: string }>,
+): Promise<SnapshotPassResult & { refreshed: number }> {
   let refreshed = 0;
   const failures: SnapshotFailure[] = [];
   for (const t of targets) {
@@ -296,14 +312,157 @@ export async function recomputeRecentSnapshots(
         .where(and(eq(netWorthSnapshots.userId, t.userId), eq(netWorthSnapshots.date, t.date)));
       refreshed += 1;
     } catch (error) {
-      // One user's bad data must not abort the sweep and leave every later row
-      // stale until tomorrow. Record which row failed and why — a bare count
-      // tells an operator something broke but not what to look at — then carry
-      // on; the next nightly run retries it.
+      // One user's bad data must not abort the pass and leave every later row
+      // stale. Record which row failed and why — a bare count tells an operator
+      // something broke but not what to look at — then carry on; the next
+      // nightly run retries it.
       failures.push({ userId: t.userId, date: t.date, error });
     }
   }
   return { processed: targets.length, refreshed, failures };
+}
+
+/**
+ * The furthest back one on-demand recompute may reach, in days.
+ *
+ * Each day costs a balance-sheet query plus `portfolioValue` (up to three more),
+ * all sequential inside a single HTTP request, so the ceiling is a request-budget
+ * decision rather than a domain one: at ~4 queries per day, 370 days is already
+ * ~1,500 queries. Two years was too many — it put a plausible request timeout and
+ * a large resource-exhaustion multiplier behind one click.
+ *
+ * A little over a year is the right size for what this exists for: repairing an
+ * import that backdated entries past the nightly sweep's window. A caller needing
+ * more calls it again with an earlier `from`, and `clamped` tells them they need
+ * to.
+ */
+export const MAX_RECOMPUTE_SINCE_DAYS = 370;
+
+/**
+ * Repair one user's snapshots from `from` (inclusive) through today.
+ *
+ * The nightly sweep only reaches back `SNAPSHOT_RECOMPUTE_DAYS`, so an import
+ * that backdated entries further than that leaves every later day understated
+ * with nothing to fix it: `backfillSnapshots` inserts `onConflictDoNothing` and
+ * so skips any day that already has a row, and the daily pass only ever touches
+ * today. This is the targeted repair for exactly that.
+ *
+ * Scoped to one `userId` — it is reached from a request, and every user-facing
+ * query in this codebase filters by the session's user. Only days that already
+ * have a row are refreshed; conjuring absent history remains
+ * `backfillSnapshots`' job.
+ *
+ * Returns `clamped: true` when `from` was older than `MAX_RECOMPUTE_SINCE_DAYS`
+ * and got pulled forward, so a caller can tell the user their whole range was
+ * not covered rather than silently reporting success.
+ */
+export async function recomputeSnapshotsSince(
+  db: Db,
+  userId: string,
+  from: string,
+  today: string = snapshotDay(),
+): Promise<SnapshotPassResult & { refreshed: number; from: string; clamped: boolean }> {
+  const earliest = nDaysBefore(today, MAX_RECOMPUTE_SINCE_DAYS);
+  const clamped = from < earliest;
+  const start = clamped ? earliest : from;
+  // Bounded in SQL and filtered by user: this table grows by a row per user per
+  // day and is never pruned, so neither bound may be applied in memory.
+  const targets = await db
+    .select({ userId: netWorthSnapshots.userId, date: netWorthSnapshots.date })
+    .from(netWorthSnapshots)
+    .where(
+      and(
+        eq(netWorthSnapshots.userId, userId),
+        gte(netWorthSnapshots.date, start),
+        lte(netWorthSnapshots.date, today),
+      ),
+    );
+  const pass = await refreshSnapshotRows(db, targets);
+  return { ...pass, from: start, clamped };
+}
+
+/**
+ * How long the per-user repair lock lives, in seconds.
+ *
+ * Sized to outlast the slowest plausible full-window repair — 370 days at roughly
+ * four sequential queries each — with a wide margin, because an expiring lock is
+ * what breaks mutual exclusion: a holder that overruns its TTL leaves a second
+ * repair free to start. It still expires, so a process killed mid-repair cannot
+ * lock a user out permanently.
+ *
+ * The margin is the safeguard, not the only one: release is ownership-checked, so
+ * even an overrun cannot make one repair cancel another's lock.
+ */
+const REPAIR_LOCK_TTL_SECONDS = 3600;
+
+/** Redis key for one user's in-flight repair. */
+function repairLockKey(userId: string): string {
+  return `nw:repair:${userId}`;
+}
+
+/**
+ * Release a lock only if this holder still owns it.
+ *
+ * An unconditional `DEL` is unsafe: if holder A overruns the TTL, B acquires the
+ * freed key, and A then deletes *B's* lock — so a third repair can start while B
+ * is still running, which is precisely what the lock exists to prevent. Comparing
+ * the token and deleting must also be atomic, or the same interleaving fits
+ * between a GET and a DEL.
+ */
+const RELEASE_LOCK_SCRIPT = `
+if redis.call("get", KEYS[1]) == ARGV[1] then
+  return redis.call("del", KEYS[1])
+end
+return 0
+`;
+
+/**
+ * Run a targeted repair for one user under a lock, and report what it did.
+ *
+ * The lock is the load control that makes this endpoint safe to expose. The
+ * per-IP write rate limit allows 120 requests a minute, and each repair can issue
+ * ~1,500 queries, so without an admission gate one caller could stack dozens of
+ * overlapping full-window recomputes — all of them fighting over the same rows
+ * and the same connection pool. Holding at most one repair per user bounds the
+ * concurrent cost by the number of users rather than by the request rate.
+ *
+ * A repair where *every* day failed throws instead of returning 200: that is
+ * systemic (schema drift, database down), not one day's bad data, and returning a
+ * cheerful report with a fresh net-worth figure would tell the caller their
+ * history was repaired when nothing was written. Partial failure does return 200,
+ * with the counts, because the days that did get repaired are real progress —
+ * `failed` is how the caller sees the rest.
+ */
+export async function repairSnapshots(
+  db: Db,
+  redis: Pick<Redis, "set" | "eval">,
+  userId: string,
+  from: string,
+): Promise<SnapshotRepair> {
+  const key = repairLockKey(userId);
+  // A token unique to this holder, so release can prove ownership.
+  const token = randomUUID();
+  const acquired = await redis.set(key, token, "EX", REPAIR_LOCK_TTL_SECONDS, "NX");
+  if (acquired !== "OK") {
+    throw new HttpError(409, "A net-worth repair is already running — wait for it to finish");
+  }
+  try {
+    const pass = await recomputeSnapshotsSince(db, userId, from);
+    if (isSystemicFailure(pass)) {
+      throw new HttpError(500, `Net-worth repair failed for all ${pass.processed} days`);
+    }
+    return {
+      from: pass.from,
+      clamped: pass.clamped,
+      processed: pass.processed,
+      refreshed: pass.refreshed,
+      failed: pass.failures.length,
+    };
+  } finally {
+    // Released even when the repair threw — a failed repair must not lock the user
+    // out until the TTL expires — but only if this holder still owns the lock.
+    await redis.eval(RELEASE_LOCK_SCRIPT, 1, key, token);
+  }
 }
 
 /**
