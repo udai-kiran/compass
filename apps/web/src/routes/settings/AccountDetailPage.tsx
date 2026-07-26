@@ -7,6 +7,7 @@ import {
   formatINR,
   IfscSchema,
   isBankAccount,
+  isLiabilityAccount,
   isOverdraftAccount,
   isRetirementAccount,
   UpiIdSchema,
@@ -30,6 +31,11 @@ import { useAccountMutations, useAccounts } from "../../lib/queries.ts";
 import { useCardHolders, useStatementPasswordMutation } from "../../lib/card-queries.ts";
 import { toast } from "../../lib/toast.tsx";
 import { DateField } from "../../components/DateField.tsx";
+import {
+  editsOpeningBalanceAsAmount,
+  openingBalanceFromInput,
+  openingBalanceToInput,
+} from "./opening-balance.ts";
 
 const SUBTYPE_LABELS: Record<BankAccountSubtype, string> = {
   savings: "Savings",
@@ -98,6 +104,7 @@ function AccountDetail({ account }: { account: AccountWithBalance }) {
       </header>
 
       <IdentitySection account={account} />
+      <OpeningBalanceSection account={account} />
       {supportsUpi && <UpiSection account={account} />}
       {/* Keyed by type so a change within a family (e.g. PPF→EPF) remounts the
           section with fresh state rather than keeping the old scheme's values. */}
@@ -280,6 +287,80 @@ function IdentitySection({ account }: { account: AccountWithBalance }) {
         </Field>
         <div className="pt-1">
           <SaveButton dirty={dirty} disabled={name.trim() === ""} pending={update.isPending} />
+        </div>
+      </Section>
+    </form>
+  );
+}
+
+function OpeningBalanceSection({ account }: { account: AccountWithBalance }) {
+  const { update } = useAccountMutations();
+  const [text, setText] = useState(() => openingBalanceToInput(account.openingBalancePaise, account.type));
+  // Follow the server after a save: updateAccount normalizes what it stores, so
+  // the field must show the stored truth rather than keep the typed text.
+  useEffect(() => {
+    setText(openingBalanceToInput(account.openingBalancePaise, account.type));
+  }, [account.openingBalancePaise, account.type]);
+  const parsed = openingBalanceFromInput(text, account.type);
+  const error = parsed === null ? "must be an amount in rupees" : null;
+  const dirty = parsed !== null && parsed !== account.openingBalancePaise;
+
+  function submit(e: FormEvent) {
+    e.preventDefault();
+    if (error || parsed === null) return;
+    update.mutate(
+      { id: account.id, openingBalancePaise: parsed },
+      { onSuccess: () => toast("Opening balance saved", "success") },
+    );
+  }
+
+  // Bank/cash keep their opening balance as a real ledger transaction, so the
+  // column here is pinned at 0 and would never round-trip — point at the ledger.
+  if (!editsOpeningBalanceAsAmount(account.type, account.openingBalancePaise)) {
+    return (
+      <Section
+        title="Opening balance"
+        hint="This account's opening balance is a real ledger entry, so the running balance reconciles."
+      >
+        <p className="text-sm text-slate-500">
+          Correct it in the{" "}
+          <Link to={`/transactions?accountId=${account.id}`} className="text-brand-600 underline">
+            account's ledger
+          </Link>
+          : edit the earliest "Opening balance" entry, or add one if the ledger
+          starts mid-life.
+        </p>
+      </Section>
+    );
+  }
+
+  return (
+    <form onSubmit={submit}>
+      <Section
+        title="Opening balance"
+        hint="What this account held before your first recorded transaction. Set it when the ledger starts mid-life, so balances aren't short by the amount carried in."
+      >
+        <Field label={isLiabilityAccount(account.type) ? "Owed at start" : "Opening balance"} error={error}>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-slate-400">₹</span>
+            <input
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              inputMode="decimal"
+              aria-invalid={error !== null}
+              className={`${inputClass} tabular-nums ${error ? "border-red-400" : ""}`}
+            />
+          </div>
+        </Field>
+        <div className="space-y-2 rounded-md bg-slate-50 p-3">
+          <DerivedRow
+            label="Current balance"
+            value={formatINR(account.balancePaise)}
+            hint="opening balance plus every transaction"
+          />
+        </div>
+        <div className="pt-1">
+          <SaveButton dirty={dirty} disabled={error !== null} pending={update.isPending} />
         </div>
       </Section>
     </form>
