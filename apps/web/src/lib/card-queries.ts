@@ -126,6 +126,27 @@ export function useReconciliations(accountId: string | null) {
   });
 }
 
+/**
+ * Re-check a cycle against the ledger. The extractor matched it once, when the
+ * statement arrived — usually before its spends were accepted — so a cycle can
+ * read as uncleared long after the ledger caught up.
+ */
+export function useRecomputeReconciliation(accountId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      send(
+        "POST",
+        `/api/cards/${accountId}/reconciliations/${id}/recompute`,
+        StatementReconciliationSchema,
+      ),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["reconciliations", accountId] });
+      void qc.invalidateQueries({ queryKey: ["card-activity", accountId] });
+    },
+  });
+}
+
 export function useRewardMutations(accountId: string) {
   const qc = useQueryClient();
   const invalidate = () => {

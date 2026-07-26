@@ -21,6 +21,7 @@ import {
   listCardHolders,
   listReconciliations,
   listRewards,
+  recomputeReconciliation,
   setCardStatementPassword,
   upsertCardDetails,
   upsertIssuerSettings,
@@ -104,6 +105,16 @@ export async function cardRoutes(app: FastifyInstance) {
     "/api/cards/:accountId/reconciliations",
     { schema: { params: AccountParams, response: { 200: z.array(StatementReconciliationSchema) } } },
     async (req) => listReconciliations(app.db, req.session!.userId, req.params.accountId),
+  );
+
+  // Re-derive a cycle's match stats from the current ledger. The extractor's
+  // snapshot is point-in-time, so accepting the statement's lines afterwards
+  // leaves it stale; this is the repair path.
+  r.post(
+    "/api/cards/:accountId/reconciliations/:id/recompute",
+    { schema: { params: RewardParams, response: { 200: StatementReconciliationSchema } } },
+    async (req) =>
+      recomputeReconciliation(app.db, req.session!.userId, req.params.accountId, req.params.id),
   );
 
   r.post(
