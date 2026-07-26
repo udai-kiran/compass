@@ -13,6 +13,7 @@ import { Meter } from "../../lib/viz.tsx";
 import { toast } from "../../lib/toast.tsx";
 import { UpiQr, upiPayUri } from "../../components/UpiQr.tsx";
 import { bankSupportsBillVpa, cardBillVpa } from "../../lib/card-billpay.ts";
+import { needsStatementPassword } from "./card-warnings.ts";
 import {
   InstitutionDatalist,
   InstitutionIcon,
@@ -160,9 +161,14 @@ function CardTile({ card, billMobile }: { card: CardSummary; billMobile: string 
   const [showPay, setShowPay] = useState(false);
   const owed = Math.max(0, -card.balancePaise);
   const canPay = bankSupportsBillVpa(card.bankName);
+  const missingPassword = needsStatementPassword(card);
 
   return (
-    <div className="flex flex-col rounded-lg border border-slate-200 bg-white">
+    <div
+      className={`flex flex-col rounded-lg border bg-white ${
+        missingPassword ? "border-red-400" : "border-slate-200"
+      }`}
+    >
       <div className="flex items-start justify-between gap-2 border-b border-slate-100 p-3">
         <div className="min-w-0">
           <h3 className="truncate text-sm font-semibold">
@@ -184,6 +190,11 @@ function CardTile({ card, billMobile }: { card: CardSummary; billMobile: string 
           <p className="mt-0.5 text-sm text-slate-600">
             {owed > 0 ? `${formatINR(owed)} owed` : "Nothing owed"}
           </p>
+          {missingPassword && (
+            <p className="mt-1 text-xs font-medium text-red-700">
+              No statement password saved
+            </p>
+          )}
         </div>
         <button
           onClick={() => setEditing((v) => !v)}
