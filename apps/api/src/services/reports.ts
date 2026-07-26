@@ -1,6 +1,13 @@
 import { eq, sql } from "drizzle-orm";
-import type { Report, ReportPeriod } from "@compass/shared";
-import { formatINR } from "@compass/shared";
+import type { Report, ReportQuery } from "@compass/shared";
+import {
+  formatINR,
+  inclusiveDayCount,
+  isRealIsoDate,
+  MAX_REPORT_RANGE_DAYS,
+  MONTH_KEY_RE,
+  YEAR_KEY_RE,
+} from "@compass/shared";
 import type { Db } from "../db/index.ts";
 import { toCsv } from "../lib/csv.ts";
 import { categories } from "../db/schema.ts";
@@ -8,17 +15,48 @@ import { incomeExpense, periodRange, spentByCategory } from "./periods.ts";
 import { savingRatePct } from "./insights.ts";
 
 /**
+ * Resolve a validated `ReportQuery` into a concrete `from`/`to`/`periodKey`.
+ * Throws rather than using `!` non-null assertions: `buildReport` is also
+ * called directly from `services/ai/tools.ts` and `services/ai/summary.ts`,
+ * which construct their own query objects and bypass Zod entirely. The rules
+ * enforced here are equivalent to `ReportQuerySchema`'s: `MONTH_KEY_RE`,
+ * `YEAR_KEY_RE`, `MAX_REPORT_RANGE_DAYS` and `inclusiveDayCount` are shared
+ * directly, while date validity is checked with the shared `isRealIsoDate`
+ * because the schema's `z.iso.date()` never runs on these bypass paths.
+ */
+export function resolveReportRange(q: ReportQuery): { from: string; to: string; periodKey: string } {
+  if (q.period === "custom") {
+    if (!q.from || !q.to || !isRealIsoDate(q.from) || !isRealIsoDate(q.to)) {
+      throw new Error("A custom report range requires valid from/to calendar dates");
+    }
+    if (q.from > q.to) {
+      throw new Error("A custom report range requires from <= to");
+    }
+    if (inclusiveDayCount(q.from, q.to) > MAX_REPORT_RANGE_DAYS) {
+      throw new Error(`A custom report range must not exceed ${MAX_REPORT_RANGE_DAYS} days`);
+    }
+    return { from: q.from, to: q.to, periodKey: `${q.from}..${q.to}` };
+  }
+  if (!q.key) {
+    throw new Error(`A period key is required for a ${q.period} report`);
+  }
+  if (q.period === "annual" && !YEAR_KEY_RE.test(q.key)) {
+    throw new Error(`An annual report key must be YYYY, got "${q.key}"`);
+  }
+  if (q.period === "monthly" && !MONTH_KEY_RE.test(q.key)) {
+    throw new Error(`A monthly report key must be YYYY-MM, got "${q.key}"`);
+  }
+  const { from, to } = periodRange(q.period, q.key);
+  return { from, to, periodKey: q.key };
+}
+
+/**
  * Period report: income/expense/net + savings rate, category breakdown, and top
  * merchants. Reuses the same aggregation helpers as the dashboard so totals
  * reconcile exactly.
  */
-export async function buildReport(
-  db: Db,
-  userId: string,
-  period: ReportPeriod,
-  key: string,
-): Promise<Report> {
-  const { from, to } = periodRange(period === "annual" ? "annual" : "monthly", key);
+export async function buildReport(db: Db, userId: string, query: ReportQuery): Promise<Report> {
+  const { from, to, periodKey } = resolveReportRange(query);
   const [{ incomePaise, expensePaise }, byCat, catRows, merchants] = await Promise.all([
     incomeExpense(db, userId, from, to),
     spentByCategory(db, userId, from, to),
@@ -43,8 +81,8 @@ export async function buildReport(
     .sort((a, b) => b.spentPaise - a.spentPaise);
 
   return {
-    period,
-    periodKey: key,
+    period: query.period,
+    periodKey,
     from,
     to,
     incomePaise,

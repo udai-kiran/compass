@@ -46,7 +46,7 @@ const TOOLS: Tool[] = [
     schema: PeriodSchema,
     async run(ctx, input) {
       const { period } = PeriodSchema.parse(input);
-      const r = await buildReport(ctx.db, ctx.userId, "monthly", monthOr(period));
+      const r = await buildReport(ctx.db, ctx.userId, { period: "monthly", key: monthOr(period) });
       return {
         period: r.periodKey,
         income: formatINR(r.incomePaise),

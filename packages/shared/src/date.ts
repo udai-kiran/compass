@@ -136,6 +136,28 @@ export function calculateAge(isoDateOfBirth: string | null, now: Date = new Date
 }
 
 /**
+ * True when `iso` is `YYYY-MM-DD`-shaped AND a real calendar date (rejects `2026-02-30`).
+ * Single shared definition used by the API, the report schema, and the web client
+ * so date-range validation cannot drift between them.
+ */
+export function isRealIsoDate(iso: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return false;
+  const d = new Date(`${iso}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === iso;
+}
+
+/**
+ * Inclusive day count between two ISO dates, via UTC epoch arithmetic.
+ * Single shared definition used by the API, the report schema, and the web client
+ * so date-range validation cannot drift between them.
+ */
+export function inclusiveDayCount(from: string, to: string): number {
+  const fromMs = Date.parse(`${from}T00:00:00Z`);
+  const toMs = Date.parse(`${to}T00:00:00Z`);
+  return Math.round((toMs - fromMs) / 86_400_000) + 1;
+}
+
+/**
  * Parse Indian date format `DD-MM-YYYY` (or `DD/MM/YYYY` or `DD.MM.YYYY`) to ISO `YYYY-MM-DD`.
  * Returns null if input is not a valid complete date.
  *
