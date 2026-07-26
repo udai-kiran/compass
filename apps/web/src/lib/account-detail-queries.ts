@@ -31,6 +31,8 @@ export function useBankDetailsMutation(accountId: string) {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["bank-details", accountId] });
       // The account number drives accounts.account_last4 — the list is now stale.
+      // This also covers the AMB (queryKey ["accounts", "average-balance"]) by
+      // prefix, since the required AMB lives on bank details too.
       void qc.invalidateQueries({ queryKey: ["accounts"] });
     },
   });

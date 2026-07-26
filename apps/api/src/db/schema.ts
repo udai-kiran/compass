@@ -843,6 +843,8 @@ export const bankDetails = pgTable("bank_details", {
   ifsc: text("ifsc").notNull().default(""),
   branch: text("branch").notNull().default(""),
   subtype: bankAccountSubtype("subtype"),
+  /** Required Average Monthly Balance for this account, in integer paise. 0 = no requirement set. */
+  requiredAmbPaise: bigint("required_amb_paise", { mode: "number" }).notNull().default(0),
   /** last 4 of the debit card linked to this account; matches debit-card alert emails */
   debitCardLast4: text("debit_card_last4").notNull().default(""),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

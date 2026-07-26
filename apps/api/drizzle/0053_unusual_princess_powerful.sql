@@ -1,0 +1,1 @@
+ALTER TABLE "bank_details" ADD COLUMN "required_amb_paise" bigint DEFAULT 0 NOT NULL;

@@ -7,6 +7,7 @@ import {
 } from "@tanstack/react-query";
 import { z } from "zod";
 import {
+  AccountAverageBalanceSchema,
   AccountSchema,
   AccountWithBalanceSchema,
   AttachmentSchema,
@@ -38,6 +39,18 @@ export function useAccounts() {
   return useQuery({
     queryKey: ["accounts"],
     queryFn: () => apiGet("/api/accounts", z.array(AccountWithBalanceSchema)),
+  });
+}
+
+export function useAccountAverageBalances() {
+  return useQuery({
+    // Deliberately nested under ["accounts"] — TanStack Query matches by key
+    // prefix, so every existing invalidateQueries({ queryKey: ["accounts"] })
+    // (there are many, across transactions/imports/inbox/transfers/etc.) also
+    // refreshes the AMB, which changes whenever a balance does.
+    queryKey: ["accounts", "average-balance"],
+    queryFn: () =>
+      apiGet("/api/accounts/average-balance", z.array(AccountAverageBalanceSchema)),
   });
 }
 

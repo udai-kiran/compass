@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
 import {
+  AccountAverageBalanceSchema,
   AccountSchema,
   AccountWithBalanceSchema,
   CreateAccountSchema,
@@ -13,6 +14,7 @@ import {
   listAccounts,
   updateAccount,
 } from "../services/accounts.ts";
+import { accountAverageBalances } from "../services/average-balance.ts";
 
 const IdParams = z.object({ id: z.uuid() });
 
@@ -23,6 +25,12 @@ export async function accountRoutes(app: FastifyInstance) {
     "/api/accounts",
     { schema: { response: { 200: z.array(AccountWithBalanceSchema) } } },
     async (req) => listAccounts(app.db, req.session!.userId),
+  );
+
+  r.get(
+    "/api/accounts/average-balance",
+    { schema: { response: { 200: z.array(AccountAverageBalanceSchema) } } },
+    async (req) => accountAverageBalances(app.db, req.session!.userId),
   );
 
   r.post(
