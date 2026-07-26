@@ -287,6 +287,11 @@ export function DateField({
         }
       }}
     >
+      {/* A flex child defaults to min-width:auto, and a text input's intrinsic
+          width is ~20 characters, so without min-w-0 the input overflows a
+          narrow container width (e.g. w-36) and pushes the calendar button
+          on top of the next control. w-full ties its preferred width to the
+          container instead of that intrinsic default. */}
       <input
         ref={inputRef}
         type="text"
@@ -303,7 +308,7 @@ export function DateField({
         aria-label={ariaLabel}
         aria-invalid={ariaInvalid}
         aria-describedby={ariaDescribedBy}
-        className="flex-1 rounded-l-md border border-r-0 border-slate-300 bg-white px-2 py-1.5 text-sm disabled:opacity-50"
+        className="w-full min-w-0 flex-1 rounded-l-md border border-r-0 border-slate-300 bg-white px-2 py-1.5 text-sm disabled:opacity-50"
       />
       <button
         type="button"
