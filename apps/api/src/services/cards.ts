@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, isNull, lte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
 import type {
   CardActivity,
   CardActivityTxn,
@@ -19,6 +19,7 @@ import {
   alertLedger,
   cardDetails,
   cardIssuerSettings,
+  extractedTransactions,
   rewardEntries,
   statementReconciliations,
   transactions,
@@ -99,6 +100,80 @@ function lastStatementClose(ref: string, cycleDay: number): string {
   const close = lastOccurrence(ref, cycleDay);
   const daysSince = (Date.parse(`${ref}T00:00:00Z`) - Date.parse(`${close}T00:00:00Z`)) / 86_400_000;
   return daysSince >= STATEMENT_GEN_LAG_DAYS ? close : lastOccurrence(dayBefore(close), cycleDay);
+}
+
+/** The statement cycle in force as of a reference date. */
+export interface CardCycle {
+  /** first day this statement bills — the previous cycle's close day */
+  start: string;
+  /** last day this statement bills (the day before `close`) */
+  end: string;
+  /** this statement's close/generation date, and the first day of the next cycle */
+  close: string;
+}
+
+/**
+ * The cycle a card closing on `cycleDay` is billing as of `ref`.
+ *
+ * A cycle runs `[start, close)` — the close day itself opens the *next* cycle.
+ * That is what issuers actually bill: an HDFC statement dated 20 Jul lists spends
+ * from 20 Jun through 19 Jul, so a charge dated on the close day lands on the
+ * following statement, never the one closing that day. Treating the window as
+ * `(start, close]` instead silently drops every charge dated on the start day.
+ *
+ * Consecutive cycles therefore partition the calendar exactly: each date is
+ * billed by exactly one statement, with no gap and no double-count.
+ */
+export function cardCycle(ref: string, cycleDay: number): CardCycle {
+  const close = lastStatementClose(ref, cycleDay);
+  return { start: lastOccurrence(dayBefore(close), cycleDay), end: dayBefore(close), close };
+}
+
+/** Whether a transaction date is billed by this cycle — `[start, close)`. */
+export function isBilledIn(date: string, cycle: CardCycle): boolean {
+  return date >= cycle.start && date < cycle.close;
+}
+
+/** The date window a card's activity view covers, as half-open bounds. */
+export interface ActivityWindow {
+  /** first date to list — inclusive, so a charge dated on it is not dropped */
+  fromInclusive: string;
+  /** exclusive upper bound of "already billed": the close day bills next cycle */
+  billedBefore: string;
+}
+
+/**
+ * The bounds both card views query with. Kept in one place because the two
+ * halves have to agree: `fromInclusive` is the cycle's first billed day, so the
+ * SQL that loads rows must be inclusive of it (`>=`, never `>`) or the billed
+ * split silently loses every charge dated on the start day.
+ *
+ * With no cycle configured there is no statement window: list the last ~45 days
+ * and treat everything up to and including today as billed, hence `ref + 1`.
+ */
+export function activityWindow(cycle: CardCycle | null, ref: string): ActivityWindow {
+  return {
+    fromInclusive: cycle?.start ?? shiftDays(ref, -45),
+    billedBefore: cycle ? cycle.close : shiftDays(ref, 1),
+  };
+}
+
+/**
+ * Partition rows into the statement that bills them and what is still unbilled.
+ * Every row lands in exactly one bucket: `[start, close)` bills, `close` onward
+ * does not. With no cycle nothing is billed yet, so it is all unbilled.
+ */
+export function splitByCycle<T extends { date: string }>(
+  rows: T[],
+  cycle: CardCycle | null,
+): { billed: T[]; unbilled: T[] } {
+  const billed: T[] = [];
+  const unbilled: T[] = [];
+  for (const row of rows) {
+    if (cycle && isBilledIn(row.date, cycle)) billed.push(row);
+    else unbilled.push(row);
+  }
+  return { billed, unbilled };
 }
 
 async function ownedCardAccount(db: Db, userId: string, accountId: string) {
@@ -270,14 +345,14 @@ export async function listCardHolders(
   for (const acc of cards) {
     if (acc.archivedAt) continue;
     const d = detailsByAccount.get(acc.id);
-    // The last generated statement's close (or today when the card has no cycle).
-    const stmtClose = d ? lastStatementClose(ref, d.cycleDay) : ref;
+    const cycle = d ? cardCycle(ref, d.cycleDay) : null;
+    const { billedBefore } = activityWindow(cycle, ref);
 
     const sums = await db.execute(sql`
       select
         coalesce(sum(amount_paise), 0)::bigint as total,
-        coalesce(sum(amount_paise) filter (where date <= ${stmtClose}), 0)::bigint as at_close,
-        coalesce(sum(amount_paise) filter (where amount_paise < 0 and date > ${stmtClose}), 0)::bigint as current_spend
+        coalesce(sum(amount_paise) filter (where date < ${billedBefore}), 0)::bigint as at_close,
+        coalesce(sum(amount_paise) filter (where amount_paise < 0 and date >= ${billedBefore}), 0)::bigint as current_spend
       from transactions
       where account_id = ${acc.id} and user_id = ${userId} and deleted_at is null and date <= ${ref}
     `);
@@ -289,8 +364,6 @@ export async function listCardHolders(
       .from(rewardEntries)
       .where(eq(rewardEntries.accountId, acc.id));
 
-    const lastClose = d ? stmtClose : null;
-    const prevClose = d && lastClose ? lastOccurrence(dayBefore(lastClose), d.cycleDay) : null;
     const owedAtClose = -(acc.openingBalancePaise + Number(row.at_close));
     built.push({
       institution: issuerKey(acc.institution),
@@ -302,10 +375,10 @@ export async function listCardHolders(
         last4: acc.accountLast4,
         details: d ? toDetails(d) : null,
         balancePaise: balance,
-        statementStart: prevClose,
-        statementEnd: lastClose,
+        statementStart: cycle?.start ?? null,
+        statementEnd: cycle?.end ?? null,
         amountDuePaise: Math.max(0, owedAtClose),
-        dueDate: d && lastClose ? nextOccurrence(lastClose, d.dueDay) : null,
+        dueDate: d && cycle ? nextOccurrence(cycle.close, d.dueDay) : null,
         currentSpendPaise: -Number(row.current_spend),
         rewardPoints: rewards[0]!.points,
       },
@@ -370,30 +443,29 @@ export async function getCardActivity(
     where: and(eq(cardDetails.accountId, accountId), eq(cardDetails.userId, userId)),
   });
 
-  const lastClose = d ? lastStatementClose(ref, d.cycleDay) : null;
-  const prevClose = d && lastClose ? lastOccurrence(dayBefore(lastClose), d.cycleDay) : null;
-  const dueDate = d && lastClose ? nextOccurrence(lastClose, d.dueDay) : null;
-  const listFrom = prevClose ?? shiftDays(ref, -45);
+  const cycle = d ? cardCycle(ref, d.cycleDay) : null;
+  const dueDate = d && cycle ? nextOccurrence(cycle.close, d.dueDay) : null;
+  const { fromInclusive, billedBefore } = activityWindow(cycle, ref);
 
   // Headline balances: owed now, and owed as of the last statement close.
   const sums = await db.execute(sql`
     select
       coalesce(sum(amount_paise), 0)::bigint as total,
-      coalesce(sum(amount_paise) filter (where date <= ${lastClose ?? ref}), 0)::bigint as at_close
+      coalesce(sum(amount_paise) filter (where date < ${billedBefore}), 0)::bigint as at_close
     from transactions
     where account_id = ${accountId} and user_id = ${userId} and deleted_at is null and date <= ${ref}
   `);
   const agg = sums.rows[0] as { total: string; at_close: string };
   const balancePaise = acc.openingBalancePaise + Number(agg.total);
   const owedAtClose = -(acc.openingBalancePaise + Number(agg.at_close));
-  const totalDuePaise = Math.max(0, lastClose ? owedAtClose : -balancePaise);
+  const totalDuePaise = Math.max(0, cycle ? owedAtClose : -balancePaise);
 
   const rows = await db.query.transactions.findMany({
     where: and(
       eq(transactions.accountId, accountId),
       eq(transactions.userId, userId),
       isNull(transactions.deletedAt),
-      gt(transactions.date, listFrom),
+      gte(transactions.date, fromInclusive),
       lte(transactions.date, ref),
     ),
     orderBy: [desc(transactions.date), desc(transactions.id)],
@@ -414,12 +486,9 @@ export async function getCardActivity(
     categoryId: t.categoryId,
     reconciledStatementId: t.reconciledStatementId,
   });
-  // Split by the statement close: on/before → billed, after → unbilled.
-  const billed =
-    lastClose && prevClose
-      ? rows.filter((t) => t.date > prevClose && t.date <= lastClose).map(toTxn)
-      : [];
-  const unbilled = rows.filter((t) => (lastClose ? t.date > lastClose : true)).map(toTxn);
+  const split = splitByCycle(rows, cycle);
+  const billed = split.billed.map(toTxn);
+  const unbilled = split.unbilled.map(toTxn);
   const unbilledSpendPaise = unbilled.reduce(
     (s, t) => s + (t.amountPaise < 0 ? -t.amountPaise : 0),
     0,
@@ -430,8 +499,8 @@ export async function getCardActivity(
     name: acc.name,
     bankName: acc.institution,
     last4: acc.accountLast4,
-    statementStart: prevClose,
-    statementEnd: lastClose,
+    statementStart: cycle?.start ?? null,
+    statementEnd: cycle?.end ?? null,
     dueDate,
     totalDuePaise,
     unbilledSpendPaise,
@@ -512,6 +581,27 @@ export async function listRewards(db: Db, userId: string, accountId: string): Pr
   return rows.map((r) => ({ id: r.id, accountId: r.accountId, date: r.date, points: r.points, note: r.note }));
 }
 
+type ReconciliationRow = typeof statementReconciliations.$inferSelect;
+
+function toReconciliationDto(r: ReconciliationRow): StatementReconciliation {
+  return {
+    id: r.id,
+    accountId: r.accountId,
+    period: r.period,
+    statementDate: r.statementDate,
+    totalDuePaise: r.totalDuePaise,
+    minDuePaise: r.minDuePaise,
+    rewardClosing: r.rewardClosing,
+    lineCount: r.lineCount,
+    lineDebitPaise: r.lineDebitPaise,
+    matchedCount: r.matchedCount,
+    matchedPaise: r.matchedPaise,
+    unmatchedCount: r.unmatchedCount,
+    deltaPaise: Math.max(0, r.lineDebitPaise - r.matchedPaise),
+    updatedAt: r.updatedAt.toISOString(),
+  };
+}
+
 /**
  * A card's statement reconciliations, newest cycle first. `deltaPaise` — the
  * listed spend not yet cleared in the ledger — is derived here so the client
@@ -532,22 +622,7 @@ export async function listReconciliations(
     orderBy: [desc(statementReconciliations.period)],
     limit: 24,
   });
-  return rows.map((r) => ({
-    id: r.id,
-    accountId: r.accountId,
-    period: r.period,
-    statementDate: r.statementDate,
-    totalDuePaise: r.totalDuePaise,
-    minDuePaise: r.minDuePaise,
-    rewardClosing: r.rewardClosing,
-    lineCount: r.lineCount,
-    lineDebitPaise: r.lineDebitPaise,
-    matchedCount: r.matchedCount,
-    matchedPaise: r.matchedPaise,
-    unmatchedCount: r.unmatchedCount,
-    deltaPaise: Math.max(0, r.lineDebitPaise - r.matchedPaise),
-    updatedAt: r.updatedAt.toISOString(),
-  }));
+  return rows.map(toReconciliationDto);
 }
 
 export async function addRewardEntry(
@@ -578,4 +653,222 @@ export async function deleteRewardEntry(
     )
     .returning({ id: rewardEntries.id });
   if (rows.length === 0) throw new HttpError(404, "Entry not found");
+}
+
+// ---------- statement reconciliation: recompute ----------
+
+/** One statement line plus the live ledger transaction it is tied to, if any. */
+export interface StatementLineState {
+  direction: "debit" | "credit";
+  /** positive magnitude, as extracted */
+  amountPaise: number;
+  /** the live ledger transaction this line is tied to, or null when it isn't */
+  ledgerTxnId: string | null;
+}
+
+/** Recomputed match stats over a statement's lines. Mirrors the extractor's shape. */
+export interface RecomputedStats {
+  lineCount: number;
+  lineDebitPaise: number;
+  matchedCount: number;
+  matchedPaise: number;
+  unmatchedCount: number;
+  matchedTxnIds: string[];
+}
+
+/**
+ * What the statement itself said — the issuer's own totals, as first extracted.
+ * These are facts about the bill, not about our ledger, so a recompute preserves
+ * them verbatim.
+ */
+export interface StatementFacts {
+  lineCount: number;
+  lineDebitPaise: number;
+}
+
+/**
+ * Re-derive a cycle's match stats from the links recorded on its statement lines,
+ * keeping the issuer's own totals untouched.
+ *
+ * This deliberately does NOT re-run fuzzy matching. The extractor matches once,
+ * at extraction time, against the ledger as it stood then — so a statement that
+ * arrives before its spends are accepted records zero matches forever. By then the
+ * link is no longer a guess: the line was either auto-matched to a transaction or
+ * accepted into one. Recomputing from that recorded link is both cheaper and more
+ * truthful than guessing again.
+ *
+ * `lineCount` and `lineDebitPaise` are carried over from `facts` rather than
+ * recounted, because the surviving lines are not the whole statement: the
+ * extractor skips inserting a line whose spend was already captured from a
+ * real-time alert (`on conflict (user_id, dedupe_hash) do nothing`). Recounting
+ * would quietly replace what the issuer billed with whatever rows happen to
+ * remain — on a fully-deduplicated statement, zero.
+ *
+ * A skipped line is therefore invisible here and counts as unmatched, which
+ * overstates what is left to review rather than claiming a false all-clear.
+ *
+ * Only matched *debits* add to `matchedPaise`, exactly as the extractor does — a
+ * cleared refund is not cleared spend and must not shrink the spend delta.
+ */
+export function summarizeStatementLines(
+  facts: StatementFacts,
+  lines: StatementLineState[],
+): RecomputedStats {
+  let matchedCount = 0;
+  let matchedPaise = 0;
+  const matchedTxnIds: string[] = [];
+  for (const line of lines) {
+    if (line.ledgerTxnId === null) continue;
+    matchedCount += 1;
+    if (line.direction === "debit") matchedPaise += line.amountPaise;
+    matchedTxnIds.push(line.ledgerTxnId);
+  }
+  return {
+    lineCount: facts.lineCount,
+    lineDebitPaise: facts.lineDebitPaise,
+    matchedCount,
+    matchedPaise,
+    // Never negative: a statement may carry more recorded links than the issuer
+    // listed lines if a line was re-extracted after a replay.
+    unmatchedCount: Math.max(0, facts.lineCount - matchedCount),
+    matchedTxnIds,
+  };
+}
+
+/**
+ * Re-derive one cycle's reconciliation from the ledger as it stands now, and
+ * re-stamp the transactions it cleared.
+ *
+ * The extractor's snapshot is a point-in-time reading; accepting the statement's
+ * lines afterwards (the normal flow) leaves it understating what is cleared.
+ * This is the repair path — read-only with respect to the statement lines
+ * themselves, so it can be run as often as the user likes.
+ */
+export async function recomputeReconciliation(
+  db: Db,
+  userId: string,
+  accountId: string,
+  id: string,
+): Promise<StatementReconciliation> {
+  await ownedCardAccount(db, userId, accountId);
+  const updated = await db.transaction(async (tx) => {
+    // Lock the snapshot for the duration: the extractor upserts this same row by
+    // (account_id, period), and without the lock a concurrent statement run could
+    // leave a hybrid of its ingestion and our stats.
+    const [snapshot] = await tx
+      .select()
+      .from(statementReconciliations)
+      .where(
+        and(
+          eq(statementReconciliations.id, id),
+          eq(statementReconciliations.accountId, accountId),
+          eq(statementReconciliations.userId, userId),
+        ),
+      )
+      .for("update");
+    if (!snapshot) throw new HttpError(404, "Reconciliation not found");
+    // The snapshot names the statement email its lines came from. Without it there
+    // is nothing to recompute against (the ingestion was deleted).
+    if (!snapshot.ingestionId) {
+      throw new HttpError(409, "This statement's email is no longer available to re-check");
+    }
+
+    const lines = await tx
+      .select({
+        direction: extractedTransactions.direction,
+        amountPaise: extractedTransactions.amountPaise,
+        transactionId: extractedTransactions.transactionId,
+        matchedTransactionId: extractedTransactions.matchedTransactionId,
+      })
+      .from(extractedTransactions)
+      .where(
+        and(
+          eq(extractedTransactions.ingestionId, snapshot.ingestionId),
+          eq(extractedTransactions.userId, userId),
+          // One email can in principle carry more than one card's lines; only this
+          // card's belong to this cycle.
+          eq(extractedTransactions.suggestedAccountId, accountId),
+        ),
+      );
+
+    // A link is only real if the transaction is still there, still this user's, and
+    // still on this card: a since-deleted or moved row must not count as cleared.
+    const candidateIds = [
+      ...new Set(
+        lines.flatMap((l) =>
+          [l.matchedTransactionId, l.transactionId].filter((v): v is string => v !== null),
+        ),
+      ),
+    ];
+    const live =
+      candidateIds.length === 0
+        ? []
+        : await tx
+            .select({ id: transactions.id })
+            .from(transactions)
+            .where(
+              and(
+                inArray(transactions.id, candidateIds),
+                eq(transactions.userId, userId),
+                eq(transactions.accountId, accountId),
+                isNull(transactions.deletedAt),
+              ),
+            );
+    const liveIds = new Set(live.map((t) => t.id));
+    const stats = summarizeStatementLines(
+      { lineCount: snapshot.lineCount, lineDebitPaise: snapshot.lineDebitPaise },
+      lines.map((l) => {
+        // The duplicate link is the stronger claim; fall back to the accepted one.
+        const linked = [l.matchedTransactionId, l.transactionId].find(
+          (v): v is string => v !== null && liveIds.has(v),
+        );
+        return { direction: l.direction, amountPaise: l.amountPaise, ledgerTxnId: linked ?? null };
+      }),
+    );
+
+    const [row] = await tx
+      .update(statementReconciliations)
+      .set({
+        matchedCount: stats.matchedCount,
+        matchedPaise: stats.matchedPaise,
+        unmatchedCount: stats.unmatchedCount,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(statementReconciliations.id, id),
+          eq(statementReconciliations.accountId, accountId),
+          eq(statementReconciliations.userId, userId),
+        ),
+      )
+      .returning();
+    // Re-stamp as the extractor does: drop this cycle's prior stamps so a recompute
+    // that clears fewer rows leaves none stale, then mark the current set. Both
+    // writes stay scoped to this user's rows on this card.
+    await tx
+      .update(transactions)
+      .set({ reconciledStatementId: null })
+      .where(
+        and(
+          eq(transactions.reconciledStatementId, id),
+          eq(transactions.userId, userId),
+          eq(transactions.accountId, accountId),
+        ),
+      );
+    if (stats.matchedTxnIds.length > 0) {
+      await tx
+        .update(transactions)
+        .set({ reconciledStatementId: id })
+        .where(
+          and(
+            inArray(transactions.id, stats.matchedTxnIds),
+            eq(transactions.userId, userId),
+            eq(transactions.accountId, accountId),
+            isNull(transactions.deletedAt),
+          ),
+        );
+    }
+    return row!;
+  });
+  return toReconciliationDto(updated);
 }

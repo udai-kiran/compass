@@ -9,6 +9,7 @@ import {
 import {
   useCardActivity,
   useCardStatements,
+  useRecomputeReconciliation,
   useReconciliations,
   useStatementMutations,
 } from "../../lib/card-queries.ts";
@@ -117,6 +118,7 @@ function formatPeriod(period: string): string {
  */
 function ReconciliationSection({ accountId }: { accountId: string }) {
   const { data: cycles } = useReconciliations(accountId);
+  const recompute = useRecomputeReconciliation(accountId);
 
   return (
     <section className="rounded-lg border border-slate-200 bg-white">
@@ -129,6 +131,9 @@ function ReconciliationSection({ accountId }: { accountId: string }) {
         </div>
         <span className="text-xs text-slate-400">{cycles?.length ?? 0} cycles</span>
       </div>
+      {recompute.isError && (
+        <p className="px-4 pt-2 text-xs text-rose-600">{(recompute.error as Error).message}</p>
+      )}
       {!cycles || cycles.length === 0 ? (
         <p className="px-4 py-6 text-center text-sm text-slate-400">
           No statements reconciled yet.
@@ -136,7 +141,12 @@ function ReconciliationSection({ accountId }: { accountId: string }) {
       ) : (
         <ul>
           {cycles.map((c) => (
-            <ReconciliationRow key={c.id} cycle={c} />
+            <ReconciliationRow
+              key={c.id}
+              cycle={c}
+              onRecheck={() => recompute.mutate(c.id)}
+              pending={recompute.isPending && recompute.variables === c.id}
+            />
           ))}
         </ul>
       )}
@@ -144,17 +154,35 @@ function ReconciliationSection({ accountId }: { accountId: string }) {
   );
 }
 
-function ReconciliationRow({ cycle }: { cycle: StatementReconciliation }) {
+function ReconciliationRow({
+  cycle,
+  onRecheck,
+  pending,
+}: {
+  cycle: StatementReconciliation;
+  onRecheck: () => void;
+  pending: boolean;
+}) {
   const fullyCleared = cycle.lineCount > 0 && cycle.unmatchedCount === 0;
   return (
     <li className="border-b border-slate-50 px-4 py-2.5 text-sm last:border-0">
       <div className="flex items-baseline justify-between gap-3">
         <p className="font-medium text-slate-800">{formatPeriod(cycle.period)}</p>
-        {cycle.totalDuePaise !== null && (
-          <span className="tabular-nums text-slate-500">
-            {formatINR(cycle.totalDuePaise)} due
-          </span>
-        )}
+        <div className="flex items-baseline gap-3">
+          {cycle.totalDuePaise !== null && (
+            <span className="tabular-nums text-slate-500">
+              {formatINR(cycle.totalDuePaise)} due
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={onRecheck}
+            disabled={pending}
+            className="text-xs text-slate-500 underline hover:text-slate-700 disabled:opacity-50"
+          >
+            {pending ? "Re-checking…" : "Re-check"}
+          </button>
+        </div>
       </div>
       <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
         <span>
