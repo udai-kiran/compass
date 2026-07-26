@@ -1,4 +1,4 @@
-import { and, eq, or, sql } from "drizzle-orm";
+import { and, eq, isNull, or, sql } from "drizzle-orm";
 import type {
   Account,
   AccountWithBalance,
@@ -14,8 +14,12 @@ import { assertOwnedGoal } from "./ownership.ts";
 /** Only these carry their opening balance as a ledger transaction; other types
  * (cards/loans/schemes) keep it on the accounts.opening_balance_paise column,
  * which their statement/valuation logic reads directly. */
+function carriesOpeningAsTransaction(type: AccountType): boolean {
+  return type === "bank" || type === "cash";
+}
+
 function seedsOpeningTransaction(type: AccountType, openingBalancePaise: number): boolean {
-  return (type === "bank" || type === "cash") && openingBalancePaise !== 0;
+  return carriesOpeningAsTransaction(type) && openingBalancePaise !== 0;
 }
 
 /**
@@ -37,6 +41,92 @@ export function openingBalanceRow(
     merchant: "Opening balance",
     isOpening: true,
   };
+}
+
+function dayBefore(iso: string): string {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
+
+/** What to do with an account's "Opening balance" ledger row when the opening balance is corrected. */
+export type OpeningBalanceTxnAction =
+  | { kind: "none" }
+  | { kind: "insert"; amountPaise: number; date: string }
+  | { kind: "update"; id: string; amountPaise: number }
+  | { kind: "delete"; id: string };
+
+export type OpeningBalancePlan = {
+  /** what accounts.opening_balance_paise must become */
+  columnPaise: number;
+  txn: OpeningBalanceTxnAction;
+};
+
+/**
+ * Correcting an opening balance has to preserve the invariant createAccount sets
+ * up, because every balance is `opening_balance_paise + Σtx`: a bank/cash account
+ * keeps the amount in its `is_opening` transaction with the column pinned at 0,
+ * and every other type keeps it on the column with no such row. Writing both
+ * would double-count. Pure/DB-free so the rule is testable without a database.
+ *
+ * A leftover opening row on a type that no longer carries one (a bank later
+ * switched to a card, say) is removed, so the amount can never be counted twice.
+ * A newly inserted row is dated before the account's earliest activity — an
+ * opening balance that sorts after a spend would misreport every historical
+ * balance in between.
+ */
+export function planOpeningBalanceChange(input: {
+  type: AccountType;
+  requestedPaise: number;
+  existing: { id: string; amountPaise: number } | null;
+  earliestTxnDate: string | null;
+  today: string;
+}): OpeningBalancePlan {
+  const { type, requestedPaise, existing, earliestTxnDate, today } = input;
+
+  if (!carriesOpeningAsTransaction(type)) {
+    return {
+      columnPaise: requestedPaise,
+      txn: existing ? { kind: "delete", id: existing.id } : { kind: "none" },
+    };
+  }
+  if (requestedPaise === 0) {
+    return { columnPaise: 0, txn: existing ? { kind: "delete", id: existing.id } : { kind: "none" } };
+  }
+  if (existing) {
+    return {
+      columnPaise: 0,
+      txn:
+        existing.amountPaise === requestedPaise
+          ? { kind: "none" }
+          : { kind: "update", id: existing.id, amountPaise: requestedPaise },
+    };
+  }
+  return {
+    columnPaise: 0,
+    txn: {
+      kind: "insert",
+      amountPaise: requestedPaise,
+      date: earliestTxnDate ? dayBefore(earliestTxnDate) : today,
+    },
+  };
+}
+
+/**
+ * The opening balance to reconcile toward. An explicit request wins; otherwise
+ * this is a type change carrying the existing amount across, so take it from
+ * wherever the old type kept it — the ledger row for bank/cash, the column for
+ * everything else — and let planOpeningBalanceChange move it to the new type's
+ * home. Reading the row first matters: a carrier type pins its column at 0, so
+ * trusting the column would silently zero the balance on every bank -> card change.
+ */
+export function openingBalanceToReconcile(input: {
+  requestedPaise: number | undefined;
+  existingRowPaise: number | null;
+  columnPaise: number;
+}): number {
+  if (input.requestedPaise !== undefined) return input.requestedPaise;
+  return input.existingRowPaise ?? input.columnPaise;
 }
 
 type AccountRow = typeof accounts.$inferSelect;
@@ -204,7 +294,7 @@ export async function updateAccount(
   id: string,
   input: UpdateAccount,
 ): Promise<Account> {
-  const { archived, ...fields } = input;
+  const { archived, openingBalancePaise, ...fields } = input;
 
   return db.transaction(async (tx) => {
     // Lock the account row first — this is what serializes against a
@@ -259,10 +349,95 @@ export async function updateAccount(
         throw new HttpError(400, "Last 4 is derived from the account number — edit that instead");
       }
     }
+
+    // Correcting the opening balance must keep the column and the "Opening
+    // balance" row from both carrying the amount — see planOpeningBalanceChange.
+    let openingColumn: { openingBalancePaise: number } | Record<string, never> = {};
+    // Also on a bare type change: the new type keeps its opening balance
+    // somewhere else (column vs ledger row), so leaving it put would drift from
+    // the invariant and force the user to edit the amount just to migrate it.
+    if (openingBalancePaise !== undefined || typeChanged) {
+      // `is_opening` is not settable through any route or schema — only
+      // createAccount, this function and the demo seed ever write it, each at most
+      // once per account — so there is normally exactly one row. Ordered anyway so
+      // that if one ever did exist twice, the row this may delete is deterministic.
+      const existingRow = await tx.query.transactions.findFirst({
+        where: and(
+          eq(transactions.accountId, id),
+          eq(transactions.userId, userId),
+          eq(transactions.isOpening, true),
+          isNull(transactions.deletedAt),
+        ),
+        orderBy: (t, { asc }) => [asc(t.date), asc(t.id)],
+        columns: { id: true, amountPaise: true },
+      });
+      const earliest = await tx
+        .select({ min: sql<string | null>`min(${transactions.date})` })
+        .from(transactions)
+        .where(
+          and(
+            eq(transactions.accountId, id),
+            eq(transactions.userId, userId),
+            eq(transactions.isOpening, false),
+            isNull(transactions.deletedAt),
+          ),
+        );
+      const plan = planOpeningBalanceChange({
+        type: nextType,
+        requestedPaise: openingBalanceToReconcile({
+          requestedPaise: openingBalancePaise,
+          existingRowPaise: existingRow?.amountPaise ?? null,
+          columnPaise: current.openingBalancePaise,
+        }),
+        existing: existingRow ? { id: existingRow.id, amountPaise: existingRow.amountPaise } : null,
+        earliestTxnDate: earliest[0]?.min ?? null,
+        today: new Date().toISOString().slice(0, 10),
+      });
+      openingColumn = { openingBalancePaise: plan.columnPaise };
+      if (plan.txn.kind === "insert") {
+        await tx.insert(transactions).values({
+          userId,
+          accountId: id,
+          date: plan.txn.date,
+          amountPaise: plan.txn.amountPaise,
+          merchant: "Opening balance",
+          isOpening: true,
+        });
+      } else if (plan.txn.kind === "update") {
+        await tx
+          .update(transactions)
+          .set({ amountPaise: plan.txn.amountPaise, updatedAt: new Date() })
+          .where(
+            and(
+              eq(transactions.id, plan.txn.id),
+              eq(transactions.accountId, id),
+              eq(transactions.userId, userId),
+            ),
+          );
+      } else if (plan.txn.kind === "delete") {
+        // Soft-delete, like every other user-transaction removal (see
+        // transactions.ts) — a hard delete would cascade away the row's splits,
+        // transfer link and attachment metadata while leaving the stored
+        // attachment files orphaned. Every balance surface filters
+        // `deleted_at is null`, so the amount stops counting either way.
+        await tx
+          .update(transactions)
+          .set({ deletedAt: new Date(), updatedAt: new Date() })
+          .where(
+            and(
+              eq(transactions.id, plan.txn.id),
+              eq(transactions.accountId, id),
+              eq(transactions.userId, userId),
+            ),
+          );
+      }
+    }
+
     const rows = await tx
       .update(accounts)
       .set({
         ...fields,
+        ...openingColumn,
         ...(archived === undefined ? {} : { archivedAt: archived ? new Date() : null }),
         updatedAt: new Date(),
       })

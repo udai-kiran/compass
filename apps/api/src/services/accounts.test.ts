@@ -4,6 +4,8 @@ import {
   assessAccountEditAgainstSips,
   last4Of,
   openingBalanceRow,
+  openingBalanceToReconcile,
+  planOpeningBalanceChange,
   sipSourceBlockedMessage,
   sipTargetArchiveBlockedMessage,
   sipTargetGoalBlockedMessage,
@@ -202,4 +204,264 @@ test("sipTargetArchiveBlockedMessage: names the SIP count", () => {
     sipTargetArchiveBlockedMessage(4),
     "Account is the target of 4 SIP(s) — delete or repoint them before archiving",
   );
+});
+
+// ---------- planOpeningBalanceChange (Fix: correctable opening balance without double-count) ----------
+// These tests pin the no-double-count invariant: a bank/cash account keeps its opening balance
+// in an is_opening transaction with the column pinned at 0, and every other type keeps it on the
+// column with no such row. Writing both would double-count (opening_balance_paise + Σtx).
+
+test("a card's opening balance lives on the column, with no ledger row", () => {
+  const plan = planOpeningBalanceChange({
+    type: "credit_card",
+    requestedPaise: -4559100,
+    existing: null,
+    earliestTxnDate: "2026-06-20",
+    today: "2026-07-26",
+  });
+  assert.deepEqual(plan, { columnPaise: -4559100, txn: { kind: "none" } });
+});
+
+test("a bank's opening balance lives in the ledger row, with the column pinned at 0", () => {
+  const plan = planOpeningBalanceChange({
+    type: "bank",
+    requestedPaise: 5000000,
+    existing: null,
+    earliestTxnDate: null,
+    today: "2026-07-26",
+  });
+  assert.deepEqual(plan, {
+    columnPaise: 0,
+    txn: { kind: "insert", amountPaise: 5000000, date: "2026-07-26" },
+  });
+});
+
+test("a new bank opening row is dated before the account's earliest activity", () => {
+  const plan = planOpeningBalanceChange({
+    type: "cash",
+    requestedPaise: 600000,
+    existing: null,
+    earliestTxnDate: "2026-06-01",
+    today: "2026-07-26",
+  });
+  assert.deepEqual(plan, {
+    columnPaise: 0,
+    txn: { kind: "insert", amountPaise: 600000, date: "2026-05-31" },
+  });
+});
+
+test("the opening row date rolls back across a month boundary", () => {
+  const plan = planOpeningBalanceChange({
+    type: "bank",
+    requestedPaise: 100,
+    existing: null,
+    earliestTxnDate: "2026-03-01",
+    today: "2026-07-26",
+  });
+  assert.deepEqual(plan, {
+    columnPaise: 0,
+    txn: { kind: "insert", amountPaise: 100, date: "2026-02-28" },
+  });
+});
+
+test("changing a bank's opening balance updates the existing row instead of adding one", () => {
+  const plan = planOpeningBalanceChange({
+    type: "bank",
+    requestedPaise: 7500000,
+    existing: { id: "t1", amountPaise: 5000000 },
+    earliestTxnDate: null,
+    today: "2026-07-26",
+  });
+  assert.deepEqual(plan, {
+    columnPaise: 0,
+    txn: { kind: "update", id: "t1", amountPaise: 7500000 },
+  });
+});
+
+test("resubmitting the same bank opening balance changes nothing", () => {
+  const plan = planOpeningBalanceChange({
+    type: "bank",
+    requestedPaise: 5000000,
+    existing: { id: "t1", amountPaise: 5000000 },
+    earliestTxnDate: null,
+    today: "2026-07-26",
+  });
+  assert.deepEqual(plan, {
+    columnPaise: 0,
+    txn: { kind: "none" },
+  });
+});
+
+test("zeroing a bank's opening balance removes the ledger row", () => {
+  const plan = planOpeningBalanceChange({
+    type: "bank",
+    requestedPaise: 0,
+    existing: { id: "t1", amountPaise: 5000000 },
+    earliestTxnDate: null,
+    today: "2026-07-26",
+  });
+  assert.deepEqual(plan, {
+    columnPaise: 0,
+    txn: { kind: "delete", id: "t1" },
+  });
+});
+
+test("a leftover opening row is removed when the type no longer carries one", () => {
+  // This is the bank→card type-change case. Leaving the row would double-count
+  // (column + row both carrying the amount).
+  const plan = planOpeningBalanceChange({
+    type: "credit_card",
+    requestedPaise: -4559100,
+    existing: { id: "t1", amountPaise: 5000000 },
+    earliestTxnDate: null,
+    today: "2026-07-26",
+  });
+  assert.deepEqual(plan, {
+    columnPaise: -4559100,
+    txn: { kind: "delete", id: "t1" },
+  });
+});
+
+test("a bank opening balance is never written to both the column and the row", () => {
+  // The anti-double-count invariant: for bank/cash, columnPaise === 0 and the
+  // txn carries the amount; for other types, the column carries it and txn.kind === "none".
+  const bankPlan = planOpeningBalanceChange({
+    type: "bank",
+    requestedPaise: 3250000,
+    existing: null,
+    earliestTxnDate: null,
+    today: "2026-07-26",
+  });
+  assert.equal(bankPlan.columnPaise, 0);
+  assert.equal(bankPlan.txn.kind, "insert");
+  if (bankPlan.txn.kind === "insert") {
+    assert.equal(bankPlan.txn.amountPaise, 3250000);
+  }
+
+  const cardPlan = planOpeningBalanceChange({
+    type: "credit_card",
+    requestedPaise: -1800000,
+    existing: null,
+    earliestTxnDate: null,
+    today: "2026-07-26",
+  });
+  assert.equal(cardPlan.columnPaise, -1800000);
+  assert.equal(cardPlan.txn.kind, "none");
+});
+
+test("zeroing an opening balance that has no row is a no-op beyond the column", () => {
+  const plan = planOpeningBalanceChange({
+    type: "bank",
+    requestedPaise: 0,
+    existing: null,
+    earliestTxnDate: "2026-06-01",
+    today: "2026-07-26",
+  });
+  assert.deepEqual(plan, {
+    columnPaise: 0,
+    txn: { kind: "none" },
+  });
+});
+
+test("a negative bank opening balance is kept as a ledger row like any other", () => {
+  const plan = planOpeningBalanceChange({
+    type: "bank",
+    requestedPaise: -750000,
+    existing: null,
+    earliestTxnDate: "2026-06-01",
+    today: "2026-07-26",
+  });
+  assert.equal(plan.columnPaise, 0);
+  assert.deepEqual(plan.txn, {
+    kind: "insert",
+    amountPaise: -750000,
+    date: "2026-05-31",
+  });
+});
+
+test("a bank still carrying a stale column amount moves it into the ledger row", () => {
+  // The column is always re-pinned at 0 for a carrier type (bank/cash), so a
+  // stale nonzero column cannot survive a save and be double-counted.
+  const plan = planOpeningBalanceChange({
+    type: "bank",
+    requestedPaise: 5000000,
+    existing: null,
+    earliestTxnDate: null,
+    today: "2026-07-26",
+  });
+  assert.equal(plan.columnPaise, 0);
+  assert.deepEqual(plan.txn, {
+    kind: "insert",
+    amountPaise: 5000000,
+    date: "2026-07-26",
+  });
+});
+
+// ---------- openingBalanceToReconcile (Fix: type-change opening-balance migration) ----------
+
+test("an explicit opening-balance request wins over whatever is stored", () => {
+  assert.equal(
+    openingBalanceToReconcile({ requestedPaise: -4559100, existingRowPaise: 5000000, columnPaise: 0 }),
+    -4559100,
+  );
+  // Including an explicit zero — that's a deliberate clearing, not "unspecified".
+  assert.equal(
+    openingBalanceToReconcile({ requestedPaise: 0, existingRowPaise: 5000000, columnPaise: 0 }),
+    0,
+  );
+});
+
+test("a bank changing type carries the amount out of its ledger row, not its zeroed column", () => {
+  // The whole point: a carrier type pins the column at 0, so reading the column
+  // here would silently zero the balance on every bank -> card change.
+  assert.equal(
+    openingBalanceToReconcile({ requestedPaise: undefined, existingRowPaise: 5000000, columnPaise: 0 }),
+    5000000,
+  );
+});
+
+test("a card changing type carries the amount off its column", () => {
+  assert.equal(
+    openingBalanceToReconcile({ requestedPaise: undefined, existingRowPaise: null, columnPaise: -4559100 }),
+    -4559100,
+  );
+});
+
+test("a type change with nothing stored anywhere reconciles to zero", () => {
+  assert.equal(
+    openingBalanceToReconcile({ requestedPaise: undefined, existingRowPaise: null, columnPaise: 0 }),
+    0,
+  );
+});
+
+test("a type change round-trips an amount through both storage homes intact", () => {
+  // bank -> credit_card: out of the row, onto the column.
+  const toCard = planOpeningBalanceChange({
+    type: "credit_card",
+    requestedPaise: openingBalanceToReconcile({
+      requestedPaise: undefined,
+      existingRowPaise: 5000000,
+      columnPaise: 0,
+    }),
+    existing: { id: "t1", amountPaise: 5000000 },
+    earliestTxnDate: "2026-06-01",
+    today: "2026-07-26",
+  });
+  assert.equal(toCard.columnPaise, 5000000);
+  assert.deepEqual(toCard.txn, { kind: "delete", id: "t1" });
+
+  // credit_card -> bank: off the column, into a row, column re-pinned at 0.
+  const toBank = planOpeningBalanceChange({
+    type: "bank",
+    requestedPaise: openingBalanceToReconcile({
+      requestedPaise: undefined,
+      existingRowPaise: null,
+      columnPaise: 5000000,
+    }),
+    existing: null,
+    earliestTxnDate: "2026-06-01",
+    today: "2026-07-26",
+  });
+  assert.equal(toBank.columnPaise, 0);
+  assert.deepEqual(toBank.txn, { kind: "insert", amountPaise: 5000000, date: "2026-05-31" });
 });
