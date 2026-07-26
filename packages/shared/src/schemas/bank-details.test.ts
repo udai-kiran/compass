@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   AccountNumberSchema,
   IfscSchema,
+  MAX_REQUIRED_AMB_PAISE,
   UpiIdSchema,
   UpiIdsSchema,
   UpsertBankDetailsSchema,
@@ -86,6 +87,29 @@ test("empty string clears a bank detail rather than failing validation", () => {
     debitCardLast4: "",
   });
   assert.equal(UpsertBankDetailsSchema.safeParse({ ifsc: "" }).success, true);
+});
+
+test("omitting requiredAmbPaise leaves it undefined, so a stored requirement is preserved", () => {
+  // No default on this field (unlike the rest): the service must be able to
+  // tell "the caller sent nothing" apart from "the caller sent 0", because 0
+  // means "clear the requirement" while an absent key means "leave it alone".
+  const parsed = UpsertBankDetailsSchema.parse({});
+  assert.equal(parsed.requiredAmbPaise, undefined);
+  assert.equal("requiredAmbPaise" in parsed, false);
+});
+
+test("requiredAmbPaise at the cap is accepted, one paisa above is rejected", () => {
+  // The cap keeps `requiredPaise * days` in the AMB comparison well inside
+  // JavaScript's exact-integer range — a typo or pasted long number must fail
+  // validation instead of silently producing a wrong "ok"/"short" verdict.
+  assert.equal(
+    UpsertBankDetailsSchema.safeParse({ requiredAmbPaise: MAX_REQUIRED_AMB_PAISE }).success,
+    true,
+  );
+  assert.equal(
+    UpsertBankDetailsSchema.safeParse({ requiredAmbPaise: MAX_REQUIRED_AMB_PAISE + 1 }).success,
+    false,
+  );
 });
 
 test("a half-typed IFSC is still rejected when other fields are fine", () => {

@@ -128,10 +128,21 @@ export const BankDetailsSchema = z.object({
   ifsc: z.string(),
   branch: z.string(),
   subtype: BankAccountSubtypeSchema.nullable(),
+  /** Required Average Monthly Balance for this account, in integer paise. 0 = no requirement set. */
+  requiredAmbPaise: z.number().int(),
   /** last 4 of the linked debit card; "" when none recorded */
   debitCardLast4: z.string(),
 });
 export type BankDetails = z.infer<typeof BankDetailsSchema>;
+
+/**
+ * Upper bound for a required AMB, in paise (₹1,00,00,000 — one crore, far above
+ * any real bank's minimum balance). It exists so `requiredPaise * days` in the
+ * AMB comparison stays well inside JavaScript's exact-integer range: a typo or a
+ * pasted long number must fail validation rather than silently produce a wrong
+ * "ok"/"short" verdict.
+ */
+export const MAX_REQUIRED_AMB_PAISE = 1_000_000_000;
 
 /** Empty string clears a field — the forms send "" for "I don't want this recorded". */
 export const UpsertBankDetailsSchema = z.object({
@@ -139,6 +150,8 @@ export const UpsertBankDetailsSchema = z.object({
   ifsc: z.union([IfscSchema, z.literal("")]).default(""),
   branch: z.string().max(120).default(""),
   subtype: BankAccountSubtypeSchema.nullable().default(null),
+  /** Required AMB in paise; 0 clears it. Omitted entirely = leave unchanged. */
+  requiredAmbPaise: z.number().int().min(0).max(MAX_REQUIRED_AMB_PAISE).optional(),
   debitCardLast4: z
     .union([z.string().regex(/^\d{4}$/, "must be exactly 4 digits"), z.literal("")])
     .default(""),
@@ -189,6 +202,38 @@ export const AccountWithBalanceSchema = AccountSchema.extend({
   subtype: BankAccountSubtypeSchema.nullable().default(null),
 });
 export type AccountWithBalance = z.infer<typeof AccountWithBalanceSchema>;
+
+/** How an account's month-to-date Average Monthly Balance compares with its requirement. */
+export const AmbStatusSchema = z.enum(["none", "ok", "short"]);
+export type AmbStatus = z.infer<typeof AmbStatusSchema>;
+
+export const AccountAverageBalanceSchema = z.object({
+  accountId: z.uuid(),
+  /** first day averaged, inclusive — YYYY-MM-DD */
+  from: z.string(),
+  /** last day averaged, inclusive — YYYY-MM-DD */
+  to: z.string(),
+  /** the divisor: how many days were averaged (`to` - `from` + 1) */
+  days: z.number().int(),
+  /** days in the whole calendar month, so the UI can tell a partial window */
+  daysInMonth: z.number().int(),
+  /** sum of daily closing balances / days, in integer paise */
+  averagePaise: z.number().int(),
+  /** the account's requirement, integer paise; 0 = none set */
+  requiredPaise: z.number().int(),
+  status: AmbStatusSchema,
+  /** how far below the requirement, integer paise; 0 unless status is "short" */
+  shortfallPaise: z.number().int(),
+  /**
+   * True when the ledger's first entry falls after the 1st, so the days
+   * earlier in the month have no known balance and were not averaged. The
+   * result can therefore be OVERSTATED relative to the bank's own figure — if
+   * the real balance was lower in those unseen days, a genuine breach can be
+   * hidden.
+   */
+  partialHistory: z.boolean(),
+});
+export type AccountAverageBalance = z.infer<typeof AccountAverageBalanceSchema>;
 
 export const CreateAccountSchema = z.object({
   name: z.string().min(1),

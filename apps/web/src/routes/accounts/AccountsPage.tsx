@@ -1,12 +1,14 @@
 import { Link } from "react-router";
 import {
   formatINR,
+  type AccountAverageBalance,
   type AccountWithBalance,
   type BankAccountSubtype,
 } from "@compass/shared";
-import { useAccounts } from "../../lib/queries.ts";
+import { useAccountAverageBalances, useAccounts } from "../../lib/queries.ts";
 import { ACCOUNT_TYPE_LABELS, maskAccountNumber } from "../../lib/account-meta.ts";
 import { Icon } from "../../components/icons.tsx";
+import { ambSummary, ambWindowNote } from "./amb-display.ts";
 import {
   splitAccounts,
   owedPaise,
@@ -28,7 +30,8 @@ function accountKindLabel(a: AccountWithBalance): string {
   return ACCOUNT_TYPE_LABELS[a.type];
 }
 
-function AccountRow({ account }: { account: AccountWithBalance }) {
+function AccountRow({ account, amb }: { account: AccountWithBalance; amb?: AccountAverageBalance }) {
+  const summary = amb ? ambSummary(amb) : null;
   return (
     <li>
       <Link
@@ -50,19 +53,41 @@ function AccountRow({ account }: { account: AccountWithBalance }) {
               .join(" · ")}
           </p>
         </div>
-        <span
-          className={`shrink-0 tabular-nums font-semibold ${
-            account.balancePaise < 0 ? "text-red-600" : "text-slate-800"
-          }`}
-        >
-          {formatINR(account.balancePaise)}
-        </span>
+        <div className="flex shrink-0 flex-col items-end">
+          <span
+            className={`tabular-nums font-semibold ${
+              account.balancePaise < 0 ? "text-red-600" : "text-slate-800"
+            }`}
+          >
+            {formatINR(account.balancePaise)}
+          </span>
+          {amb && summary && (
+            <span
+              title={ambWindowNote(amb)}
+              className={`mt-0.5 max-w-56 text-right text-xs ${
+                summary.short ? "text-rose-600" : "text-slate-400"
+              }`}
+            >
+              {summary.text}
+            </span>
+          )}
+        </div>
       </Link>
     </li>
   );
 }
 
-function AccountGroupTile({ title, group, showOwed }: { title: string; group: AccountGroup; showOwed?: boolean }) {
+function AccountGroupTile({
+  title,
+  group,
+  showOwed,
+  ambByAccount,
+}: {
+  title: string;
+  group: AccountGroup;
+  showOwed?: boolean;
+  ambByAccount: Map<string, AccountAverageBalance>;
+}) {
   const n = group.accounts.length;
   return (
     <section className="rounded-lg border border-slate-200 bg-white p-4">
@@ -79,7 +104,7 @@ function AccountGroupTile({ title, group, showOwed }: { title: string; group: Ac
       </p>
       <ul className="mt-3 space-y-2">
         {group.accounts.map((a) => (
-          <AccountRow key={a.id} account={a} />
+          <AccountRow key={a.id} account={a} amb={ambByAccount.get(a.id)} />
         ))}
       </ul>
     </section>
@@ -88,10 +113,14 @@ function AccountGroupTile({ title, group, showOwed }: { title: string; group: Ac
 
 export function AccountsPage() {
   const { data: accounts, isLoading } = useAccounts();
+  // AMB is a supplementary line under the balance — its own loading/error state
+  // must never block the accounts list, which only depends on useAccounts().
+  const { data: ambList } = useAccountAverageBalances();
 
   if (isLoading) return <p className="text-sm text-slate-400">Loading…</p>;
 
   const groups = splitAccounts(accounts);
+  const ambByAccount = new Map((ambList ?? []).map((a) => [a.accountId, a]));
 
   return (
     <div className="flex h-full flex-col">
@@ -128,10 +157,10 @@ export function AccountsPage() {
 
           <div className="grid gap-4 lg:grid-cols-2">
             {groups.savings.accounts.length > 0 && (
-              <AccountGroupTile title="Savings accounts" group={groups.savings} />
+              <AccountGroupTile title="Savings accounts" group={groups.savings} ambByAccount={ambByAccount} />
             )}
             {groups.loans.accounts.length > 0 && (
-              <AccountGroupTile title="Loans" group={groups.loans} showOwed />
+              <AccountGroupTile title="Loans" group={groups.loans} showOwed ambByAccount={ambByAccount} />
             )}
           </div>
         </>

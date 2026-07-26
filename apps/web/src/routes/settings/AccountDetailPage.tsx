@@ -36,6 +36,7 @@ import {
   openingBalanceFromInput,
   openingBalanceToInput,
 } from "./opening-balance.ts";
+import { requiredAmbFromInput, requiredAmbToInput } from "./required-amb.ts";
 
 const SUBTYPE_LABELS: Record<BankAccountSubtype, string> = {
   savings: "Savings",
@@ -461,6 +462,7 @@ function BankSection({ account }: { account: AccountWithBalance }) {
   const [ifsc, setIfsc] = useState("");
   const [branch, setBranch] = useState("");
   const [subtype, setSubtype] = useState<BankAccountSubtype | "">("");
+  const [requiredAmb, setRequiredAmb] = useState("");
   const [debitCard, setDebitCard] = useState("");
   const [reveal, setReveal] = useState(false);
 
@@ -471,24 +473,34 @@ function BankSection({ account }: { account: AccountWithBalance }) {
     setIfsc(data.ifsc);
     setBranch(data.branch);
     setSubtype(data.subtype ?? "");
+    setRequiredAmb(requiredAmbToInput(data.requiredAmbPaise));
     setDebitCard(data.debitCardLast4);
   }, [data]);
 
   const numberError = errorOf(AccountNumberSchema, number);
   const ifscError = errorOf(IfscSchema, ifsc);
   const debitCardError = debitCard !== "" && !/^\d{4}$/.test(debitCard) ? "must be 4 digits" : null;
+  const ambError = requiredAmbFromInput(requiredAmb) === null ? "enter an amount like 10000" : null;
   const dirty =
     number !== (data?.accountNumber ?? "") ||
     ifsc !== (data?.ifsc ?? "") ||
     branch !== (data?.branch ?? "") ||
     subtype !== (data?.subtype ?? "") ||
+    requiredAmb !== requiredAmbToInput(data?.requiredAmbPaise ?? 0) ||
     debitCard !== (data?.debitCardLast4 ?? "");
 
   function submit(e: FormEvent) {
     e.preventDefault();
-    if (numberError || ifscError || debitCardError) return;
+    if (numberError || ifscError || debitCardError || ambError) return;
     save.mutate(
-      { accountNumber: number, ifsc, branch, subtype: subtype || null, debitCardLast4: debitCard },
+      {
+        accountNumber: number,
+        ifsc,
+        branch,
+        subtype: subtype || null,
+        requiredAmbPaise: requiredAmbFromInput(requiredAmb) ?? 0,
+        debitCardLast4: debitCard,
+      },
       { onSuccess: () => toast("Bank details saved", "success") },
     );
   }
@@ -551,6 +563,22 @@ function BankSection({ account }: { account: AccountWithBalance }) {
             ))}
           </select>
         </Field>
+        <Field label="Required AMB" error={ambError}>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-slate-400">₹</span>
+            <input
+              value={requiredAmb}
+              onChange={(e) => setRequiredAmb(e.target.value)}
+              inputMode="decimal"
+              placeholder="10000"
+              aria-invalid={ambError !== null}
+              className={`${inputClass} tabular-nums ${ambError ? "border-red-400" : ""}`}
+            />
+          </div>
+        </Field>
+        <p className="text-xs text-slate-400">
+          Your bank's minimum average balance. Leave blank if this account has no requirement.
+        </p>
         <Field label="Debit card (last 4)" error={debitCardError}>
           <input
             value={debitCard}
@@ -572,7 +600,7 @@ function BankSection({ account }: { account: AccountWithBalance }) {
         <div className="pt-1">
           <SaveButton
             dirty={dirty}
-            disabled={numberError !== null || ifscError !== null || debitCardError !== null}
+            disabled={numberError !== null || ifscError !== null || debitCardError !== null || ambError !== null}
             pending={save.isPending}
           />
         </div>

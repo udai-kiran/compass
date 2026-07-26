@@ -15,6 +15,7 @@ function toDetails(d: DetailsRow): BankDetails {
     ifsc: d.ifsc,
     branch: d.branch,
     subtype: d.subtype,
+    requiredAmbPaise: d.requiredAmbPaise,
     debitCardLast4: d.debitCardLast4,
   };
 }
@@ -47,14 +48,23 @@ export async function upsertBankDetails(
   input: UpsertBankDetails,
 ): Promise<BankDetails> {
   await ownedBankAccount(db, userId, accountId);
-  const parsed = UpsertBankDetailsSchema.parse(input);
+  const { requiredAmbPaise, ...parsed } = UpsertBankDetailsSchema.parse(input);
 
+  // requiredAmbPaise has no schema default (see UpsertBankDetailsSchema): an
+  // omitted field must preserve whatever is already stored, not silently reset
+  // it to 0. So the insert path falls back to 0 (a brand-new row has nothing
+  // stored yet), but the conflict-update `set` only includes the key when the
+  // caller actually sent a value.
   const rows = await db
     .insert(bankDetails)
-    .values({ ...parsed, accountId, userId })
+    .values({ ...parsed, requiredAmbPaise: requiredAmbPaise ?? 0, accountId, userId })
     .onConflictDoUpdate({
       target: bankDetails.accountId,
-      set: { ...parsed, updatedAt: new Date() },
+      set: {
+        ...parsed,
+        ...(requiredAmbPaise !== undefined ? { requiredAmbPaise } : {}),
+        updatedAt: new Date(),
+      },
     })
     .returning();
 
