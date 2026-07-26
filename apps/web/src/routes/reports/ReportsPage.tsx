@@ -1,17 +1,19 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { formatINR, ReportSchema, type Report, type ReportPeriod } from "@compass/shared";
+import { formatINR, ReportSchema, todayInIST, type Report, type ReportPeriod } from "@compass/shared";
 import { apiGet } from "../../lib/api.ts";
-import { compareCategories, compareMerchants, previousPeriodKey } from "./report-comparison.ts";
+import { DateField } from "../../components/DateField.tsx";
+import { compareCategories, compareMerchants } from "./report-comparison.ts";
+import { previousSelection, reportQueryString, selectionError, type ReportSelection } from "./report-query.ts";
 
 function currentMonth() {
   return new Date().toISOString().slice(0, 7);
 }
 
-function useReport(period: ReportPeriod, key: string, enabled = true) {
+function useReport(queryString: string, enabled = true) {
   return useQuery({
-    queryKey: ["report", period, key],
-    queryFn: () => apiGet(`/api/reports?period=${period}&key=${key}`, ReportSchema),
+    queryKey: ["report", queryString],
+    queryFn: () => apiGet(`/api/reports?${queryString}`, ReportSchema),
     enabled,
   });
 }
@@ -20,20 +22,30 @@ export function ReportsPage() {
   const [period, setPeriod] = useState<ReportPeriod>("monthly");
   const [monthKey, setMonthKey] = useState(currentMonth());
   const [yearKey, setYearKey] = useState(currentMonth().slice(0, 4));
+  const [customFrom, setCustomFrom] = useState(`${todayInIST().slice(0, 7)}-01`);
+  const [customTo, setCustomTo] = useState(todayInIST());
   const [compare, setCompare] = useState(true);
-  const effectiveKey = period === "annual" ? yearKey : monthKey;
-  const keyIsValid =
-    period === "annual" ? /^\d{4}$/.test(effectiveKey) : /^\d{4}-\d{2}$/.test(effectiveKey);
-  const prevKey = keyIsValid ? previousPeriodKey(period, effectiveKey) : "";
 
-  const { data: report, isLoading, isError } = useReport(period, effectiveKey, keyIsValid);
+  const selection: ReportSelection =
+    period === "custom"
+      ? { period: "custom", from: customFrom, to: customTo }
+      : period === "annual"
+        ? { period: "annual", key: yearKey }
+        : { period: "monthly", key: monthKey };
+  const selectionProblem = selectionError(selection);
+  const selectionIsValid = selectionProblem === null;
+  const queryString = reportQueryString(selection);
+  const prevSelection = selectionIsValid ? previousSelection(selection) : null;
+  const prevQueryString = prevSelection ? reportQueryString(prevSelection) : "";
+
+  const { data: report, isLoading, isError } = useReport(queryString, selectionIsValid);
   const {
     data: prior,
     isLoading: isPriorLoading,
     isError: isPriorError,
-  } = useReport(period, prevKey, compare && keyIsValid);
+  } = useReport(prevQueryString, compare && !!prevSelection);
   const comparing = compare && !!prior;
-  const noun = period === "annual" ? "Year" : "Month";
+  const noun = period === "custom" ? "Range" : period === "annual" ? "Year" : "Month";
 
   return (
     <div className="mx-auto max-w-4xl space-y-6">
@@ -61,6 +73,7 @@ export function ReportsPage() {
           >
             <option value="monthly">Monthly</option>
             <option value="annual">Annual</option>
+            <option value="custom">Custom range</option>
           </select>
           {period === "monthly" ? (
             <input
@@ -69,7 +82,7 @@ export function ReportsPage() {
               onChange={(e) => setMonthKey(e.target.value)}
               className="input"
             />
-          ) : (
+          ) : period === "annual" ? (
             <input
               type="number"
               min={2000}
@@ -78,10 +91,25 @@ export function ReportsPage() {
               onChange={(e) => setYearKey(e.target.value)}
               className="input w-24"
             />
+          ) : (
+            <>
+              <DateField
+                value={customFrom}
+                onChange={setCustomFrom}
+                className="w-36"
+                aria-label="From date"
+              />
+              <DateField
+                value={customTo}
+                onChange={setCustomTo}
+                className="w-36"
+                aria-label="To date"
+              />
+            </>
           )}
-          {keyIsValid && (
+          {selectionIsValid && (
             <a
-              href={`/api/reports.csv?period=${period}&key=${effectiveKey}`}
+              href={`/api/reports.csv?${queryString}`}
               className="rounded-md border border-slate-300 px-3 py-1.5 text-slate-600 hover:bg-slate-50"
             >
               Export CSV
@@ -97,7 +125,7 @@ export function ReportsPage() {
       </header>
 
       {isLoading && <p className="text-sm text-slate-400">Loading…</p>}
-      {!keyIsValid && <p className="text-sm text-amber-600">Choose a valid reporting period.</p>}
+      {!selectionIsValid && <p className="text-sm text-amber-600">{selectionProblem}</p>}
       {isError && <p className="text-sm text-red-600">Could not load the report.</p>}
       {compare && isPriorLoading && report && (
         <p className="text-sm text-slate-400">Loading previous period…</p>
@@ -109,8 +137,16 @@ export function ReportsPage() {
         <>
           <div className="rounded-lg border border-slate-200 bg-white p-4">
             <p className="text-sm text-slate-500">
-              {noun} {report.periodKey} · {report.from} to {report.to}
-              {comparing && <span className="text-slate-400"> vs. {prior.periodKey}</span>}
+              {report.period === "custom"
+                ? `Custom range · ${report.from} to ${report.to}`
+                : `${noun} ${report.periodKey} · ${report.from} to ${report.to}`}
+              {comparing && (
+                <span className="text-slate-400">
+                  {" "}
+                  vs.{" "}
+                  {prior.period === "custom" ? `${prior.from} to ${prior.to}` : prior.periodKey}
+                </span>
+              )}
             </p>
             <div className="mt-3 grid grid-cols-2 gap-4 sm:grid-cols-4">
               <Kpi

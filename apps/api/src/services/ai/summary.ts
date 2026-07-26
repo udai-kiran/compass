@@ -28,7 +28,7 @@ export async function getMonthlySummary(
   }
 
   const [report, insights] = await Promise.all([
-    buildReport(db, userId, "monthly", period),
+    buildReport(db, userId, { period: "monthly", key: period }),
     getInsights(db, userId, period),
   ]);
 

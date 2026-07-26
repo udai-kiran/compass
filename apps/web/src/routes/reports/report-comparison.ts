@@ -1,6 +1,6 @@
-import type { Report, ReportPeriod } from "@compass/shared";
+import type { Report } from "@compass/shared";
 
-export function previousPeriodKey(period: ReportPeriod, key: string): string {
+export function previousPeriodKey(period: "monthly" | "annual", key: string): string {
   if (period === "annual") return String(Number(key) - 1);
   const [year, month] = key.split("-").map(Number) as [number, number];
   const previous = new Date(Date.UTC(year, month - 2, 1));

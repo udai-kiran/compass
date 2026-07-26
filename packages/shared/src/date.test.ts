@@ -1,6 +1,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { calculateAge, ddmmyyyyToISO, formatDisplayDate, isoToDDMMYYYY, monthKey, todayInIST, toISODate } from "./date.ts";
+import {
+  calculateAge,
+  ddmmyyyyToISO,
+  formatDisplayDate,
+  inclusiveDayCount,
+  isoToDDMMYYYY,
+  isRealIsoDate,
+  monthKey,
+  todayInIST,
+  toISODate,
+} from "./date.ts";
 
 test("toISODate formats as YYYY-MM-DD", () => {
   assert.equal(toISODate(new Date("2026-01-05T10:00:00.000Z")), "2026-01-05");
@@ -295,4 +305,46 @@ test("calculateAge handles edge case of birthday tomorrow", () => {
   const now = new Date("2026-07-24T06:00:00Z");
   const age = calculateAge("2000-07-25", now);
   assert.equal(age, 25); // Still 25, will turn 26 tomorrow
+});
+
+// isRealIsoDate tests
+test("isRealIsoDate accepts a real calendar date", () => {
+  assert.equal(isRealIsoDate("2026-07-15"), true);
+});
+
+test("isRealIsoDate rejects an impossible calendar date", () => {
+  assert.equal(isRealIsoDate("2026-02-30"), false);
+});
+
+test("isRealIsoDate rejects an out-of-range month", () => {
+  assert.equal(isRealIsoDate("2026-13-01"), false);
+});
+
+test("isRealIsoDate rejects a non-date string", () => {
+  assert.equal(isRealIsoDate("not-a-date"), false);
+});
+
+test("isRealIsoDate rejects a non-zero-padded date", () => {
+  assert.equal(isRealIsoDate("2026-7-5"), false);
+});
+
+test("isRealIsoDate accepts Feb 29 in a leap year", () => {
+  assert.equal(isRealIsoDate("2028-02-29"), true);
+});
+
+test("isRealIsoDate rejects Feb 29 in a non-leap year", () => {
+  assert.equal(isRealIsoDate("2026-02-29"), false);
+});
+
+// inclusiveDayCount tests
+test("inclusiveDayCount returns 1 for the same day", () => {
+  assert.equal(inclusiveDayCount("2026-07-15", "2026-07-15"), 1);
+});
+
+test("inclusiveDayCount returns 31 for a full March", () => {
+  assert.equal(inclusiveDayCount("2026-03-01", "2026-03-31"), 31);
+});
+
+test("inclusiveDayCount counts correctly across a leap February", () => {
+  assert.equal(inclusiveDayCount("2028-02-01", "2028-03-01"), 30);
 });
