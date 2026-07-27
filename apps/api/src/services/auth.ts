@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import type { User } from "@compass/shared";
 import type { Db } from "../db/index.ts";
 import { users } from "../db/schema.ts";
-import { HttpError } from "../lib/errors.ts";
+import { HttpError, pgError } from "../lib/errors.ts";
 import { findUserByEmail, findUserById, type UserRow } from "../repositories/users.ts";
 import { seedDefaultCategories } from "./categories.ts";
 
@@ -13,7 +13,7 @@ function toUser(row: UserRow): User {
 
 /** True when an error is a Postgres unique-violation (SQLSTATE 23505). */
 function isUniqueViolation(err: unknown): boolean {
-  return typeof err === "object" && err !== null && (err as { code?: string }).code === "23505";
+  return pgError(err)?.code === "23505";
 }
 
 /**

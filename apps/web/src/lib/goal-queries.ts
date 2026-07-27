@@ -6,11 +6,13 @@ import {
   ForecastSchema,
   GoalProgressSchema,
   GoalSchema,
+  HoldingEventSchema,
   NotificationPrefSchema,
   SipSchema,
   SubscriptionSuggestionSchema,
   type CreateGoal,
   type CreateSip,
+  type RecordSipInstallment,
   type ReorderGoals,
   type UpdateGoal,
   type UpdateSip,
@@ -88,6 +90,11 @@ export function useSipMutations() {
     void qc.invalidateQueries({ queryKey: ["sips"] });
     void qc.invalidateQueries({ queryKey: ["goal-progress"] });
     void qc.invalidateQueries({ queryKey: ["forecast"] });
+    // Recording an installment inserts a `buy` holding event — the same row
+    // addEvent creates in wealth-queries.ts, so it moves the same three views.
+    void qc.invalidateQueries({ queryKey: ["portfolio"] });
+    void qc.invalidateQueries({ queryKey: ["net-worth"] });
+    void qc.invalidateQueries({ queryKey: ["capital-gains"] });
   };
   const create = useMutation({
     mutationFn: (body: CreateSip) => apiPost("/api/sips", SipSchema, body),
@@ -102,7 +109,12 @@ export function useSipMutations() {
     mutationFn: (id: string) => send("DELETE", `/api/sips/${id}`, OkSchema),
     onSuccess: invalidate,
   });
-  return { create, update, remove };
+  const recordInstallment = useMutation({
+    mutationFn: ({ id, ...body }: RecordSipInstallment & { id: string }) =>
+      apiPost(`/api/sips/${id}/installments`, HoldingEventSchema, body),
+    onSuccess: invalidate,
+  });
+  return { create, update, remove, recordInstallment };
 }
 
 // ---------- cash flow & forecast ----------
