@@ -318,6 +318,35 @@ function assetColor(index: number): string {
   return SERIES[index] ?? `hsl(${(index * 137.508) % 360} 58% 45%)`;
 }
 
+/** Dot/segment colour for rows with no bar segment of their own. */
+const NEUTRAL_ASSET_COLOR = "#cbd5e1";
+
+/**
+ * Colour per asset, keyed `${kind}:${id}`, assigned over the positive-value
+ * assets in API order.
+ *
+ * The funding bar renders only positive assets, so colouring each list by its
+ * own array index let the two drift apart: `hasValue` keeps zero-value and
+ * negative *accounts* in the list while the bar skips them, and a single such
+ * account shifts every later dot one colour out of step with its segment. One
+ * shared map keeps the dot beside a row and that row's bar segment in
+ * agreement, and rows with no segment get a neutral colour rather than
+ * borrowing another asset's.
+ */
+function assetColorMap(
+  assets: ReadonlyArray<{ kind: string; id: string; valuePaise: number }>,
+): Map<string, string> {
+  const colors = new Map<string, string>();
+  let positiveIndex = 0;
+  for (const asset of assets) {
+    if (asset.valuePaise > 0) {
+      colors.set(`${asset.kind}:${asset.id}`, assetColor(positiveIndex));
+      positiveIndex += 1;
+    }
+  }
+  return colors;
+}
+
 function constituentPct(valuePaise: number, fundedPaise: number): number {
   if (valuePaise <= 0 || fundedPaise <= 0) return 0;
   return (valuePaise / fundedPaise) * 100;
@@ -327,6 +356,12 @@ function formatConstituentPct(pct: number): string {
   if (pct > 0 && pct < 0.1) return "<0.1%";
   return `${pct.toFixed(1)}%`;
 }
+
+const ALLOCATION_LABELS: Record<string, string> = {
+  equity: "Equity",
+  debt: "Debt",
+  other: "Other",
+};
 
 /** Goal progress split into the mapped assets that make up the funded corpus. */
 function GoalFundingMeter({ p }: { p: GoalProgress }) {
@@ -338,6 +373,7 @@ function GoalFundingMeter({ p }: { p: GoalProgress }) {
   );
   const barTotalPaise = Math.max(p.effectiveTargetPaise, positiveFundedPaise);
   const fundedAssetCount = positiveAssets.length;
+  const assetColors = assetColorMap(assets);
 
   return (
     <div
@@ -345,7 +381,7 @@ function GoalFundingMeter({ p }: { p: GoalProgress }) {
       role="img"
       aria-label={`${p.percent}% funded, split across ${fundedAssetCount} mapped asset${fundedAssetCount === 1 ? "" : "s"}`}
     >
-      {positiveAssets.map((asset, index) => {
+      {positiveAssets.map((asset) => {
         const share = constituentPct(asset.valuePaise, positiveFundedPaise);
         return (
           <span
@@ -355,7 +391,7 @@ function GoalFundingMeter({ p }: { p: GoalProgress }) {
             aria-label={`${asset.name}: ${formatINR(asset.valuePaise)}, ${formatConstituentPct(share)} of funded assets`}
             style={{
               width: `${barTotalPaise > 0 ? (asset.valuePaise / barTotalPaise) * 100 : 0}%`,
-              backgroundColor: assetColor(index),
+              backgroundColor: assetColors.get(`${asset.kind}:${asset.id}`) ?? NEUTRAL_ASSET_COLOR,
             }}
           >
             <span
@@ -484,6 +520,31 @@ function MappedAssets({ goalId, p }: { goalId: string; p: GoalProgress }) {
     (sum, asset) => sum + Math.max(0, asset.valuePaise),
     0,
   );
+  const assetColors = assetColorMap(assets);
+  // The API returns `assets` already grouped by allocation class (see
+  // sortAssetsByAllocation), so consecutive rows of the same class form a
+  // group. Building groups by run rather than by bucket lookup means that if
+  // the API ever stopped grouping, this degrades to repeated headers rather
+  // than to silently wrong subtotals.
+  type AssetGroup = {
+    allocationClass: string;
+    totalPaise: number;
+    assets: GoalProgress["assets"];
+  };
+  const groups: AssetGroup[] = [];
+  for (const asset of assets) {
+    const current = groups[groups.length - 1];
+    if (current && current.allocationClass === asset.allocationClass) {
+      current.assets.push(asset);
+      current.totalPaise += asset.valuePaise;
+    } else {
+      groups.push({
+        allocationClass: asset.allocationClass,
+        totalPaise: asset.valuePaise,
+        assets: [asset],
+      });
+    }
+  }
   // The Unassigned group is the assignable one with no goal — not the (also
   // goalId-null) Liabilities group, whose rows can't be mapped to a goal.
   const unassigned = (
@@ -523,33 +584,56 @@ function MappedAssets({ goalId, p }: { goalId: string; p: GoalProgress }) {
         </p>
       ) : (
         <ul className="divide-y divide-slate-100 text-sm">
-          {assets.map((a, index) => (
-            <li key={`${a.kind}:${a.id}`} className="flex items-center gap-3 px-3 py-1.5">
-              <span
-                className="h-2.5 w-2.5 shrink-0 rounded-sm"
-                style={{ backgroundColor: assetColor(index) }}
-                aria-hidden
-              />
-              <span className="truncate text-slate-700">{a.name}</span>
-              <span className="truncate text-xs text-slate-400">{a.subtitle}</span>
-              <span className="ml-auto tabular-nums text-slate-700">{formatINR(a.valuePaise)}</span>
-              <span
-                className="w-14 text-right text-xs font-medium tabular-nums text-slate-600"
-                title="Share of funded assets"
-              >
-                {formatConstituentPct(constituentPct(a.valuePaise, positiveFundedPaise))}
-              </span>
-              <span className="w-16 text-right text-xs text-slate-400">{formatPct(a.annualReturnBps)}</span>
-              <button
-                className="text-slate-400 hover:text-red-600"
-                title="Unmap"
-                disabled={map.isPending}
-                onClick={() => map.mutate({ kind: a.kind, id: a.id, goalId: null })}
-              >
-                ✕
-              </button>
-            </li>
-          ))}
+          {groups.map((group, groupIndex) => {
+            // The key carries the run index, not just the class: the grouping
+            // loop above tolerates non-contiguous classes by emitting a repeated
+            // header, and a class-only key would then collide and let React
+            // reconcile the wrong group. `goalId` scopes the heading id, since
+            // several goal cards render this list on the same page.
+            const headingId = `goal-${goalId}-alloc-${group.allocationClass}-${groupIndex}`;
+            return (
+              <li key={`${group.allocationClass}:${groupIndex}`}>
+                <p className="flex items-baseline gap-2 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-500">
+                  <span id={headingId}>{ALLOCATION_LABELS[group.allocationClass] ?? group.allocationClass}</span>
+                  <span className="ml-auto tabular-nums">{formatINR(group.totalPaise)}</span>
+                </p>
+                {/* Named by the label span alone, so the list announces as
+                    "Equity" rather than "Equity ₹1,23,456". A <p> with
+                    aria-labelledby is used rather than a heading element so the
+                    page's heading outline is not disturbed by a level chosen to
+                    suit this one card. */}
+                <ul aria-labelledby={headingId} className="divide-y divide-slate-100">
+                  {group.assets.map((a) => (
+                    <li key={`${a.kind}:${a.id}`} className="flex items-center gap-3 px-3 py-1.5">
+                      <span
+                        className="h-2.5 w-2.5 shrink-0 rounded-sm"
+                        style={{ backgroundColor: assetColors.get(`${a.kind}:${a.id}`) ?? NEUTRAL_ASSET_COLOR }}
+                        aria-hidden
+                      />
+                      <span className="truncate text-slate-700">{a.name}</span>
+                      <span className="truncate text-xs text-slate-400">{a.subtitle}</span>
+                      <span className="ml-auto tabular-nums text-slate-700">{formatINR(a.valuePaise)}</span>
+                      <span
+                        className="w-14 text-right text-xs font-medium tabular-nums text-slate-600"
+                        title="Share of funded assets"
+                      >
+                        {formatConstituentPct(constituentPct(a.valuePaise, positiveFundedPaise))}
+                      </span>
+                      <span className="w-16 text-right text-xs text-slate-400">{formatPct(a.annualReturnBps)}</span>
+                      <button
+                        className="text-slate-400 hover:text-red-600"
+                        title="Unmap"
+                        disabled={map.isPending}
+                        onClick={() => map.mutate({ kind: a.kind, id: a.id, goalId: null })}
+                      >
+                        ✕
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>

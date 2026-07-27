@@ -25,6 +25,7 @@ import {
   accountAllocationClass,
   allocationPercentages,
   holdingAllocationClass,
+  sortAssetsByAllocation,
 } from "./goal-allocation.ts";
 
 type GoalRow = typeof goals.$inferSelect;
@@ -265,7 +266,7 @@ export async function getGoalProgress(db: Db, userId: string, id: string): Promi
     : [];
   const rateByAccount = new Map(rateRows.map((r) => [r.accountId, r.bps]));
 
-  const assets: GoalAssetProgress[] = [
+  const assets: GoalAssetProgress[] = sortAssetsByAllocation([
     ...mappedAccounts.map(
       (a): GoalAssetProgress => ({
         kind: "account",
@@ -292,7 +293,7 @@ export async function getGoalProgress(db: Db, userId: string, id: string): Promi
         allocationClass: holdingAllocationClass(p.assetClass, p.gainsTaxClass),
       }),
     ),
-  ];
+  ]);
 
   const monthlyInflowPaise = await mappedContributionRate(
     db,

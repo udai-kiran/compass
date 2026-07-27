@@ -45,3 +45,40 @@ export function allocationPercentages(
   // Derive the final bucket so rounding always reconciles to exactly 100%.
   return { equityPct, debtPct, otherPct: Math.round((100 - equityPct - debtPct) * 10) / 10 };
 }
+
+/**
+ * Display order for the allocation buckets. Equity first, matching the order
+ * of the allocation pills already shown on the goal card (Equity, then Debt),
+ * with `other` last as the residual bucket.
+ */
+const ALLOCATION_ORDER: Record<GoalAllocationClass, number> = {
+  equity: 0,
+  debt: 1,
+  other: 2,
+};
+
+/**
+ * Groups a goal's mapped assets by allocation class, largest holding first
+ * within each group.
+ *
+ * Returns a new array rather than sorting in place: the caller also feeds this
+ * list to `allocationPercentages` and `projectGoal`, and while both are
+ * order-independent sums today, mutating a shared array to achieve a display
+ * concern is the kind of coupling that breaks quietly later.
+ *
+ * Ties on value fall back to name then id so the order is fully deterministic
+ * — two folios of the same fund holding identical amounts must not swap
+ * position between requests just because the underlying query order changed.
+ */
+export function sortAssetsByAllocation<
+  T extends { id: string; name: string; valuePaise: number; allocationClass: GoalAllocationClass },
+>(assets: readonly T[]): T[] {
+  return [...assets].sort((a, b) => {
+    const byClass = ALLOCATION_ORDER[a.allocationClass] - ALLOCATION_ORDER[b.allocationClass];
+    if (byClass !== 0) return byClass;
+    if (b.valuePaise !== a.valuePaise) return b.valuePaise - a.valuePaise;
+    const byName = a.name.localeCompare(b.name);
+    if (byName !== 0) return byName;
+    return a.id.localeCompare(b.id);
+  });
+}
