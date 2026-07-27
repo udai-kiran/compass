@@ -16,12 +16,14 @@ import {
   PayslipResultSchema,
   TransactionPageSchema,
   TransactionSchema,
+  TransferResultSchema,
   TransferSuggestionSchema,
   type BulkAction,
   type CreateAccount,
   type CreateCategory,
   type CreatePayslipInput,
   type CreateTransaction,
+  type CreateTransfer,
   type Transaction,
   type TransactionFilter,
   type TransactionPage,
@@ -242,7 +244,16 @@ export function useTransferMutations() {
     mutationFn: (id: string) => apiDelete(`/api/transfers/${id}`, OkSchema),
     onSuccess: invalidate,
   });
-  return { link, unlink };
+  const record = useMutation({
+    mutationFn: (body: CreateTransfer) =>
+      apiPost("/api/transfers/record", TransferResultSchema, body),
+    onSuccess: () => {
+      invalidate();
+      // a new transfer moves real money — account balances must refetch too
+      void qc.invalidateQueries({ queryKey: ["accounts"] });
+    },
+  });
+  return { link, unlink, record };
 }
 
 // ---------- attachments ----------

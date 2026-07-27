@@ -15,6 +15,7 @@ import {
   useCategories,
   useTransactionMutations,
   useTransactionsInfinite,
+  useTransferMutations,
 } from "../../lib/queries.ts";
 import { CategoryPicker } from "../../components/CategoryPicker.tsx";
 import { DateField } from "../../components/DateField.tsx";
@@ -561,18 +562,59 @@ function QuickAdd({ filter }: { filter: TransactionFilter }) {
   const { data: accounts } = useAccounts();
   const { data: categories } = useCategories();
   const { create } = useTransactionMutations(filter);
+  const { record } = useTransferMutations();
   const [merchant, setMerchant] = useState("");
   const [amount, setAmount] = useState("");
-  const [kind, setKind] = useState<"expense" | "income">("expense");
+  const [kind, setKind] = useState<"expense" | "income" | "transfer">("expense");
   const [accountId, setAccountId] = useState("");
+  const [toAccountId, setToAccountId] = useState("");
   const [categoryId, setCategoryId] = useState("");
   const [date, setDate] = useState(todayInIST());
   const active = accounts?.filter((a) => !a.archivedAt) ?? [];
-  const effAccount = accountId || active[0]?.id || "";
+  // Only ever use a source account that is still active — a stored selection can
+  // go stale if the account is archived while this form stays mounted, and the
+  // stale id would otherwise be submitted while the dropdown showed something
+  // else. Mirrors the membership check used for the destination below.
+  const effAccount = active.some((a) => a.id === accountId) ? accountId : (active[0]?.id ?? "");
+  // The destination list never contains the source account, and the effective
+  // destination is only ever taken from that list — so the value the dropdown
+  // shows is always exactly the value submit sends, even after the source
+  // changes or an account is archived out from under us.
+  const transferTargets = active.filter((a) => a.id !== effAccount);
+  const effToAccount = transferTargets.some((a) => a.id === toAccountId)
+    ? toAccountId
+    : (transferTargets[0]?.id ?? "");
+  const canTransfer = transferTargets.length > 0;
 
   function submit(e: FormEvent) {
     e.preventDefault();
     const rupees = parseFloat(amount);
+    if (kind === "transfer") {
+      if (Number.isNaN(rupees) || rupees <= 0) return;
+      if (!effAccount || !effToAccount || effToAccount === effAccount) {
+        toast("Choose two different accounts to transfer between", "error");
+        return;
+      }
+      record.mutate(
+        {
+          fromAccountId: effAccount,
+          toAccountId: effToAccount,
+          date,
+          amountPaise: Math.round(rupees * 100),
+          merchant,
+          notes: "",
+          tags: [],
+        },
+        {
+          onSuccess: () => {
+            setMerchant("");
+            setAmount("");
+            toast("Transfer recorded", "success");
+          },
+        },
+      );
+      return;
+    }
     if (!effAccount || Number.isNaN(rupees) || rupees <= 0) return;
     const paise = Math.round(rupees * 100) * (kind === "expense" ? -1 : 1);
     create.mutate(
@@ -603,17 +645,18 @@ function QuickAdd({ filter }: { filter: TransactionFilter }) {
       <select
         value={kind}
         onChange={(e) => {
-          setKind(e.target.value as "expense" | "income");
+          setKind(e.target.value as "expense" | "income" | "transfer");
           setCategoryId(""); // categories are kind-specific — drop a now-mismatched pick
         }}
         className="rounded-md border border-slate-300 px-2 py-1.5 text-sm"
       >
         <option value="expense">Expense</option>
         <option value="income">Income</option>
+        <option value="transfer">Transfer</option>
       </select>
       <input
-        placeholder={kind === "income" ? "Source" : "Merchant"}
-        aria-label={kind === "income" ? "Source" : "Merchant"}
+        placeholder={kind === "transfer" ? "Description" : kind === "income" ? "Source" : "Merchant"}
+        aria-label={kind === "transfer" ? "Description" : kind === "income" ? "Source" : "Merchant"}
         value={merchant}
         onChange={(e) => setMerchant(e.target.value)}
         className="w-44 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
@@ -634,6 +677,7 @@ function QuickAdd({ filter }: { filter: TransactionFilter }) {
       <select
         value={effAccount}
         onChange={(e) => setAccountId(e.target.value)}
+        aria-label={kind === "transfer" ? "From account" : undefined}
         className="rounded-md border border-slate-300 px-2 py-1.5 text-sm"
       >
         {active.map((a) => (
@@ -642,17 +686,33 @@ function QuickAdd({ filter }: { filter: TransactionFilter }) {
           </option>
         ))}
       </select>
-      <CategoryPicker
-        categories={categories ?? []}
-        value={categoryId || null}
-        onChange={(id) => setCategoryId(id ?? "")}
-        kind={kind}
-        placeholder="Category…"
-        className="w-40"
-      />
+      {kind === "transfer" && (
+        <select
+          value={effToAccount}
+          onChange={(e) => setToAccountId(e.target.value)}
+          aria-label="To account"
+          className="rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+        >
+          {transferTargets.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.name}
+            </option>
+          ))}
+        </select>
+      )}
+      {kind !== "transfer" && (
+        <CategoryPicker
+          categories={categories ?? []}
+          value={categoryId || null}
+          onChange={(id) => setCategoryId(id ?? "")}
+          kind={kind}
+          placeholder="Category…"
+          className="w-40"
+        />
+      )}
       <button
         type="submit"
-        disabled={create.isPending}
+        disabled={kind === "transfer" ? record.isPending || !canTransfer : create.isPending}
         className="rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
       >
         Add

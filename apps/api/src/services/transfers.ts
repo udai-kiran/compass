@@ -1,8 +1,22 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
-import type { TransferSuggestion } from "@compass/shared";
+import type { CreateTransfer, TransferResult, TransferSuggestion } from "@compass/shared";
 import type { Db, DbOrTx } from "../db/index.ts";
 import { transactions, transferLinks } from "../db/schema.ts";
 import { HttpError } from "../lib/errors.ts";
+import { createTransaction } from "./transactions.ts";
+
+type CreateTransferInput = CreateTransfer;
+
+/** Exact object shape passed to `createTransaction` for one leg of a transfer. */
+type TransferLeg = {
+  accountId: string;
+  date: string;
+  amountPaise: number;
+  merchant: string;
+  categoryId: null;
+  notes: string;
+  tags: string[];
+};
 
 export const TRANSFER_WINDOW_DAYS = 3;
 
@@ -123,4 +137,59 @@ export async function unlinkTransfer(db: Db, userId: string, id: string): Promis
     .where(and(eq(transferLinks.id, id), eq(transferLinks.userId, userId)))
     .returning({ id: transferLinks.id });
   if (rows.length === 0) throw new HttpError(404, "Transfer link not found");
+}
+
+/**
+ * Pure: split a transfer request into its two ledger legs. Signs are derived here
+ * rather than trusted from the caller, and the guards are duplicated from the Zod
+ * schema so a direct service call (payslips, imports) can't book a nonsense pair.
+ * Transfer legs are deliberately uncategorized — they are excluded from
+ * income/expense once linked.
+ */
+export function buildTransferLegs(input: CreateTransferInput): {
+  out: TransferLeg;
+  in: TransferLeg;
+} {
+  if (input.fromAccountId === input.toAccountId) {
+    throw new HttpError(400, "Transfer legs must be in different accounts");
+  }
+  if (!Number.isInteger(input.amountPaise) || input.amountPaise <= 0) {
+    throw new HttpError(400, "Transfer amount must be a positive whole number of paise");
+  }
+  const common = {
+    date: input.date,
+    merchant: input.merchant ?? "",
+    categoryId: null,
+    notes: input.notes ?? "",
+    tags: input.tags ?? [],
+  };
+  return {
+    out: { ...common, accountId: input.fromAccountId, amountPaise: -input.amountPaise },
+    in: { ...common, accountId: input.toAccountId, amountPaise: input.amountPaise },
+  };
+}
+
+/**
+ * Record a transfer as two linked ledger entries in one transaction: money leaves
+ * the source account and arrives in the destination, and the link keeps it out of
+ * income/expense. Account ownership is enforced by `createTransaction`; because
+ * both legs and the link share a DB transaction, a bad destination rolls the whole
+ * thing back rather than leaving a stray one-sided entry.
+ */
+export async function createTransfer(
+  db: Db,
+  userId: string,
+  input: CreateTransferInput,
+): Promise<TransferResult> {
+  const legs = buildTransferLegs(input);
+  return db.transaction(async (tx) => {
+    const outLeg = await createTransaction(tx, userId, legs.out);
+    const inLeg = await createTransaction(tx, userId, legs.in);
+    const link = await linkTransfer(tx, userId, outLeg.id, inLeg.id, false);
+    return {
+      transferLinkId: link.id,
+      outTransactionId: outLeg.id,
+      inTransactionId: inLeg.id,
+    };
+  });
 }
