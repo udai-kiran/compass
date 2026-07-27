@@ -289,8 +289,38 @@ export type EmiSummary = z.infer<typeof EmiSummarySchema>;
 // ---------- Holdings & portfolio ----------
 
 /** PPF/EPF are account types, not asset classes — see AccountTypeSchema. */
-export const AssetClassSchema = z.enum(["stock", "mutual_fund", "etf", "gold", "fd", "nps", "other"]);
+export const AssetClassSchema = z.enum([
+  "stock",
+  "mutual_fund",
+  "etf",
+  "gold",
+  "silver",
+  "fd",
+  "nps",
+  "real_estate",
+  "other",
+]);
 export type AssetClass = z.infer<typeof AssetClassSchema>;
+
+/**
+ * Classes held as a quantity that a per-unit price applies to — fund units,
+ * shares, grams of metal. A buy/sell in one of these with no quantity carries
+ * money but no position, so every valuation and NAV refresh would understate
+ * the holding; `services/holdings.ts` rejects it. Property and an FD have no
+ * such quantity (one flat is not "1 unit" of anything priced per unit), so
+ * their events legitimately leave `units` null.
+ */
+export const UNITISED_ASSET_CLASSES = [
+  "stock",
+  "mutual_fund",
+  "etf",
+  "gold",
+  "silver",
+] as const satisfies readonly AssetClass[];
+
+export function assetClassHasUnits(assetClass: AssetClass): boolean {
+  return (UNITISED_ASSET_CLASSES as readonly AssetClass[]).includes(assetClass);
+}
 
 // ---------- NPS ----------
 
@@ -436,20 +466,20 @@ export const HoldingEventSchema = z.object({
 });
 export type HoldingEvent = z.infer<typeof HoldingEventSchema>;
 
-export const CreateHoldingEventSchema = z
-  .object({
-    type: z.enum(["buy", "sell", "dividend"]),
-    date: z.iso.date(),
-    amountPaise: z.number().int().positive(),
-    units: z.number().positive().nullable().default(null),
-    note: z.string().default(""),
-  })
-  // A buy/sell with no units carries money but no position, so every valuation
-  // and NAV refresh would understate the holding. Only dividends may omit units.
-  .refine((e) => e.type === "dividend" || e.units !== null, {
-    error: "buy and sell events require units",
-    path: ["units"],
-  });
+/**
+ * `units` is nullable here on purpose. Whether a buy/sell *must* carry units
+ * depends on the holding's asset class (see `assetClassHasUnits`), which this
+ * body doesn't carry — so that rule lives in `services/holdings.ts` `addEvent`,
+ * where the holding has already been loaded. Validating it here would either
+ * reject a property purchase or let a fund buy through with no position.
+ */
+export const CreateHoldingEventSchema = z.object({
+  type: z.enum(["buy", "sell", "dividend"]),
+  date: z.iso.date(),
+  amountPaise: z.number().int().positive(),
+  units: z.number().positive().nullable().default(null),
+  note: z.string().default(""),
+});
 export type CreateHoldingEvent = z.input<typeof CreateHoldingEventSchema>;
 
 export const SetValuationSchema = z.object({

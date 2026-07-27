@@ -4,19 +4,44 @@ import { AccountTypeSchema, CreateAccountSchema, accountCanHaveGoal, isRetiremen
 import {
   AssetClassSchema,
   CreateHoldingEventSchema,
+  assetClassHasUnits,
   UpsertGoldDetailsSchema,
   UpsertNpsDetailsSchema,
   UpsertAccountNpsDetailsSchema,
   UpsertRetirementDetailsSchema,
 } from "./wealth.ts";
 
-test("a buy or sell holding event requires units; a dividend need not", () => {
+test("the event body accepts units or none — the asset class decides, not the schema", () => {
+  // Whether units are mandatory depends on the holding, which this body doesn't
+  // identify, so the rule lives in services/holdings.ts `eventNeedsUnits`. The
+  // schema's job is only to reject a nonsensical quantity.
   const base = { date: "2026-07-06", amountPaise: 100000 };
   assert.equal(CreateHoldingEventSchema.safeParse({ ...base, type: "buy", units: 10 }).success, true);
-  assert.equal(CreateHoldingEventSchema.safeParse({ ...base, type: "buy" }).success, false);
-  assert.equal(CreateHoldingEventSchema.safeParse({ ...base, type: "sell", units: null }).success, false);
-  // A dividend is cash, no units.
+  assert.equal(CreateHoldingEventSchema.safeParse({ ...base, type: "buy" }).success, true);
   assert.equal(CreateHoldingEventSchema.safeParse({ ...base, type: "dividend" }).success, true);
+  assert.equal(CreateHoldingEventSchema.safeParse({ ...base, type: "buy", units: 0 }).success, false);
+  assert.equal(CreateHoldingEventSchema.safeParse({ ...base, type: "buy", units: -1 }).success, false);
+});
+
+test("only classes with a per-unit price are unitised", () => {
+  // Property and an FD carry money but no quantity — requiring units there
+  // would make a flat purchase unrecordable.
+  assert.equal(assetClassHasUnits("mutual_fund"), true);
+  assert.equal(assetClassHasUnits("stock"), true);
+  assert.equal(assetClassHasUnits("etf"), true);
+  assert.equal(assetClassHasUnits("gold"), true);
+  assert.equal(assetClassHasUnits("silver"), true);
+  assert.equal(assetClassHasUnits("real_estate"), false);
+  assert.equal(assetClassHasUnits("fd"), false);
+  assert.equal(assetClassHasUnits("other"), false);
+  assert.equal(assetClassHasUnits("nps"), false);
+});
+
+test("real estate and silver are holdings, not accounts", () => {
+  assert.equal(AssetClassSchema.safeParse("real_estate").success, true);
+  assert.equal(AssetClassSchema.safeParse("silver").success, true);
+  assert.equal(AccountTypeSchema.safeParse("real_estate").success, false);
+  assert.equal(AccountTypeSchema.safeParse("silver").success, false);
 });
 
 test("long-lived schemes, including NPS, are account types", () => {

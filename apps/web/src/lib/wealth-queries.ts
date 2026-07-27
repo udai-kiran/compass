@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 import {
   CapitalGainsStatementSchema,
+  GoldDetailsSchema,
   HoldingEventSchema,
   HoldingSchema,
   MfImportPreviewSchema,
@@ -14,6 +15,7 @@ import {
   type CreateHoldingEvent,
   type SetValuation,
   type UpdateHolding,
+  type UpsertGoldDetails,
 } from "@compass/shared";
 import { apiGet, apiPost } from "./api.ts";
 
@@ -44,6 +46,27 @@ export function useCapitalGains(fy?: string) {
         `/api/holdings/capital-gains${fy ? `?fy=${fy}` : ""}`,
         CapitalGainsStatementSchema,
       ),
+  });
+}
+
+/**
+ * Gold-only detail section. Enabled by the caller for gold holdings alone —
+ * the endpoint 404s any other asset class by design (`ownedHoldingOfClass`).
+ */
+export function useGoldDetails(holdingId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ["gold-details", holdingId],
+    queryFn: () => apiGet(`/api/holdings/${holdingId}/gold`, GoldDetailsSchema.nullable()),
+    enabled,
+  });
+}
+
+export function useGoldDetailsMutation(holdingId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: UpsertGoldDetails) =>
+      send("PUT", `/api/holdings/${holdingId}/gold`, GoldDetailsSchema, body),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["gold-details", holdingId] }),
   });
 }
 

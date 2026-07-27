@@ -1,0 +1,1 @@
+ALTER TYPE "public"."asset_class" ADD VALUE 'real_estate' BEFORE 'other';

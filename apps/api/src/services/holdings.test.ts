@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   costBasis,
+  eventNeedsUnits,
   holdingArchiveConflictsWithSip,
   holdingGoalEditConflictsWithSip,
   nextSeq,
@@ -158,4 +159,33 @@ test("nextSeq: out-of-order input still takes the MAX, not the last or the count
 
 test("nextSeq: a single event with seq 5 (a gap) continues at 6", () => {
   assert.equal(nextSeq([{ seq: 5 }]), 6);
+});
+
+test("a fund or gold buy/sell must carry a quantity", () => {
+  // These are valued per unit — a buy with no units would leave money recorded
+  // against no position, so every valuation and NAV refresh would understate it.
+  assert.equal(eventNeedsUnits("mutual_fund", "buy"), true);
+  assert.equal(eventNeedsUnits("mutual_fund", "sell"), true);
+  assert.equal(eventNeedsUnits("stock", "buy"), true);
+  assert.equal(eventNeedsUnits("etf", "sell"), true);
+  assert.equal(eventNeedsUnits("gold", "buy"), true);
+  assert.equal(eventNeedsUnits("silver", "buy"), true);
+  assert.equal(eventNeedsUnits("silver", "sell"), true);
+});
+
+test("a property or FD buy/sell needs no quantity", () => {
+  // One flat is not "1 unit" of anything with a per-unit price; requiring units
+  // here is what made a real-estate purchase unrecordable.
+  assert.equal(eventNeedsUnits("real_estate", "buy"), false);
+  assert.equal(eventNeedsUnits("real_estate", "sell"), false);
+  assert.equal(eventNeedsUnits("fd", "buy"), false);
+  assert.equal(eventNeedsUnits("other", "buy"), false);
+});
+
+test("a dividend never needs units, whatever the asset class", () => {
+  assert.equal(eventNeedsUnits("mutual_fund", "dividend"), false);
+  assert.equal(eventNeedsUnits("stock", "dividend"), false);
+  assert.equal(eventNeedsUnits("gold", "dividend"), false);
+  assert.equal(eventNeedsUnits("silver", "dividend"), false);
+  assert.equal(eventNeedsUnits("real_estate", "dividend"), false);
 });

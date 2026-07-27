@@ -70,14 +70,24 @@ export const ACCOUNT_RETURN_BPS: Record<AccountType, number | typeof STORED> = {
 
 /**
  * Asset classes whose assumption belongs to the asset itself rather than to the
- * equity/debt bucket it groups into: gold and NPS are neither, and an FD's
- * assumption is about deposit rates, not bond-fund yields. Everything else
- * takes its rate from its allocation class.
+ * equity/debt bucket it groups into: the metals, property and NPS are none of
+ * them, and an FD's assumption is about deposit rates, not bond-fund yields.
+ * Everything else takes its rate from its allocation class.
+ *
+ * Property is deliberately the most conservative of these: long-run Indian
+ * residential appreciation is roughly nominal-GDP-like, and the figure here is
+ * gross — it can't know this property's rent, maintenance or society dues.
+ *
+ * Silver sits below gold despite comparable long-run INR appreciation: roughly
+ * half its demand is industrial, which makes it markedly more volatile, and a
+ * projection is better off understating a swing asset than overstating it.
  */
 const ASSET_SPECIFIC_RETURN_BPS: Partial<Record<AssetClass, number>> = {
   nps: 1000,
   gold: 800,
+  silver: 700,
   fd: 700,
+  real_estate: 700,
 };
 
 /**
@@ -124,7 +134,7 @@ function isSmallSavingsType(type: AccountType): type is keyof typeof SMALL_SAVIN
  * rate, which is the drift this function exists to prevent.
  *
  * Under the residual `other` tax class the instrument's own assumption applies
- * instead (gold 800, NPS 1000, FD 700) — including for an FD, which derives to
+ * instead (gold 800, NPS 1000, FD 700, silver 700, property 700) — including for an FD, which derives to
  * debt but carries a deposit-rate assumption rather than a bond-fund one. That
  * is not a grouping disagreement: the allocation bucket is a portfolio view,
  * while these rates are properties of the instrument.
@@ -140,7 +150,7 @@ export function holdingReturnBps(
   // instrument's own assumption — the same precedence the stock carve-out in
   // `holdingAllocationClass` applies. Only the residual "other" tax class
   // leaves the instrument as the best available evidence, so that is the one
-  // case where a gold/NPS/FD assumption may refine the allocation fallback.
+  // case where a gold/NPS/FD/property assumption may refine the allocation fallback.
   if (taxClass === "other") {
     return ASSET_SPECIFIC_RETURN_BPS[assetClass] ?? ALLOCATION_RETURN_BPS[allocation];
   }
