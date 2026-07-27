@@ -473,6 +473,13 @@ export const HoldingPositionSchema = HoldingSchema.extend({
   dividendsPaise: z.number().int(),
   lastValuationDate: z.iso.date().nullable(),
   events: z.array(HoldingEventSchema),
+  /**
+   * Money-weighted annualised return (XIRR), basis points. Null — deliberately
+   * not 0 — when it isn't computable: units are still held with no current
+   * valuation to value them at, or the cash-flow span is too short (<30 days)
+   * to annualise meaningfully. A 0 would falsely claim "no return".
+   */
+  xirrBps: z.number().int().nullable(),
 });
 export type HoldingPosition = z.infer<typeof HoldingPositionSchema>;
 
@@ -482,6 +489,13 @@ export const PortfolioSchema = z.object({
   /** sum of positions' day change (only those with a prior valuation) */
   totalDayChangePaise: z.number().int(),
   totalDividendsPaise: z.number().int(),
+  /**
+   * Money-weighted annualised return across all active positions' concatenated
+   * cash flows. Positions lacking a usable terminal value (units held with no
+   * current valuation) are excluded from the aggregate series entirely — they
+   * are not counted at cost, which would fabricate a fake ~0% contribution.
+   */
+  totalXirrBps: z.number().int().nullable(),
   positions: z.array(HoldingPositionSchema),
   allocation: z.array(
     z.object({

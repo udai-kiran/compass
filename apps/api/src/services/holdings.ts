@@ -16,6 +16,7 @@ import { HttpError } from "../lib/errors.ts";
 import { fetchNavByCode } from "./amfi.ts";
 import { assertOwnedGoal } from "./ownership.ts";
 import { defaultTaxClass } from "./tax-lots.ts";
+import { positionCashFlows, xirrBps, type CashFlow } from "./xirr.ts";
 
 type HoldingRow = typeof holdings.$inferSelect;
 
@@ -334,6 +335,10 @@ export async function getPortfolio(db: Db, userId: string): Promise<Portfolio> {
     : [[], []];
 
   const today = new Date().toISOString().slice(0, 10);
+  // Parallel to `positions`, indexed the same: each holding's cash-flow series
+  // for XIRR (null when not computable), plus whether it's archived — used
+  // below to build the active-only aggregate series.
+  const positionFlows: Array<{ archived: boolean; flows: CashFlow[] | null }> = [];
   const positions: HoldingPosition[] = rows.map((h) => {
     const evts = events.filter((e) => e.holdingId === h.id);
     // Only posted (date <= today) events and valuations shape the *current*
@@ -358,6 +363,16 @@ export async function getPortfolio(db: Db, userId: string): Promise<Portfolio> {
           ? Math.round((latest.valuePaise * (latest.nav - previous.nav)) / latest.nav)
           : latest.valuePaise - previous.valuePaise
         : null;
+    // XIRR over the posted events: terminal value is the latest *valuation*
+    // (never the display `value`, which falls back to cost basis when there's
+    // no valuation and would fabricate a fake ~0% return).
+    const units = unitsHeld(posted);
+    const flows = positionCashFlows(
+      posted,
+      latest ? { date: latest.date, valuePaise: latest.valuePaise } : null,
+      units,
+    );
+    positionFlows.push({ archived: h.archivedAt !== null, flows });
     return {
       ...toHolding(h),
       investedPaise: remainingCostPaise,
@@ -367,6 +382,7 @@ export async function getPortfolio(db: Db, userId: string): Promise<Portfolio> {
       realizedPaise,
       dividendsPaise: dividends,
       lastValuationDate: latest?.date ?? null,
+      xirrBps: flows === null ? null : xirrBps(flows),
       events: evts.slice(0, 20).map((e) => ({
         id: e.id,
         type: e.type,
@@ -412,11 +428,21 @@ export async function getPortfolio(db: Db, userId: string): Promise<Portfolio> {
     return { month, investedPaise: invested, valuePaise: value };
   });
 
+  // Aggregate XIRR: concatenate active (non-archived) positions' cash-flow
+  // series. A position whose series is null (units held with no usable
+  // terminal value) is excluded ENTIRELY — flows and all — rather than
+  // included at cost, which would understate the aggregate return by
+  // pretending an unvalued position contributed zero gain.
+  const aggregateFlows: CashFlow[] = positionFlows
+    .filter((pf) => !pf.archived && pf.flows !== null)
+    .flatMap((pf) => pf.flows!);
+
   return {
     totalInvestedPaise: active.reduce((s, p) => s + p.investedPaise, 0),
     totalValuePaise: active.reduce((s, p) => s + p.currentValuePaise, 0),
     totalDayChangePaise: active.reduce((s, p) => s + (p.dayChangePaise ?? 0), 0),
     totalDividendsPaise: active.reduce((s, p) => s + p.dividendsPaise, 0),
+    totalXirrBps: xirrBps(aggregateFlows),
     positions,
     allocation: [...allocationMap.entries()]
       .map(([assetClass, a]) => ({ assetClass: assetClass as Portfolio["allocation"][number]["assetClass"], ...a }))
