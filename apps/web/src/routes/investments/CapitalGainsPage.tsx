@@ -14,8 +14,10 @@ const ASSET_LABELS: Record<AssetClass, string> = {
   mutual_fund: "Mutual funds",
   etf: "ETFs",
   gold: "Gold",
+  silver: "Silver",
   fd: "Fixed deposit",
   nps: "NPS",
+  real_estate: "Real estate",
   other: "Other",
 };
 

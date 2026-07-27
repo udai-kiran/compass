@@ -1,5 +1,6 @@
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type {
+  AssetClass,
   CreateHolding,
   CreateHoldingEvent,
   Holding,
@@ -10,6 +11,7 @@ import type {
   SetValuation,
   UpdateHolding,
 } from "@compass/shared";
+import { assetClassHasUnits } from "@compass/shared";
 import type { Db, DbOrTx } from "../db/index.ts";
 import { holdingEvents, holdings, holdingValuations, sips } from "../db/schema.ts";
 import { HttpError } from "../lib/errors.ts";
@@ -34,6 +36,16 @@ function toHolding(h: HoldingRow): Holding {
     goalId: h.goalId,
     archived: h.archivedAt !== null,
   };
+}
+
+/**
+ * Whether an event must carry a quantity. Only a unitised class needs one, and
+ * only for a position-changing event — a dividend is cash in either case. This
+ * is the rule the shared `CreateHoldingEventSchema` deliberately can't enforce:
+ * the request body has no asset class, only the loaded holding does.
+ */
+export function eventNeedsUnits(assetClass: AssetClass, type: HoldingEvent["type"]): boolean {
+  return type !== "dividend" && assetClassHasUnits(assetClass);
 }
 
 /** Net units held: buys add, sells subtract, dividends are cash (no units). */
@@ -246,7 +258,10 @@ export async function addEvent(
   holdingId: string,
   input: CreateHoldingEvent,
 ): Promise<HoldingEvent> {
-  await ownedHolding(db, userId, holdingId);
+  const holding = await ownedHolding(db, userId, holdingId);
+  if (eventNeedsUnits(holding.assetClass, input.type) && (input.units ?? null) === null) {
+    throw new HttpError(400, "buy and sell events require units");
+  }
   // Manual events carry a real intra-day seq too (appended within their date), so
   // the FIFO engine can place them among imported lots — and the user can reorder.
   const nextSeq = await nextSeqForDate(db, holdingId, input.date);

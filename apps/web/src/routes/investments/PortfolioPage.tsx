@@ -1,10 +1,12 @@
 import { useState, type FormEvent } from "react";
 import { Link } from "react-router";
 import {
+  assetClassHasUnits,
   formatINR,
   type AssetClass,
   type CreateHoldingEvent,
   type GainsTaxClass,
+  type GoldForm,
   type HoldingPosition,
 } from "@compass/shared";
 import { Donut, LineChart, SERIES, StatTile } from "../../lib/viz.tsx";
@@ -12,6 +14,8 @@ import { toast } from "../../lib/toast.tsx";
 import { useGoals } from "../../lib/goal-queries.ts";
 import {
   useAssetGoalMutation,
+  useGoldDetails,
+  useGoldDetailsMutation,
   usePortfolio,
   useHoldingMutations,
   useRefreshNav,
@@ -26,8 +30,10 @@ const ASSET_LABELS: Record<AssetClass, string> = {
   mutual_fund: "Mutual funds",
   etf: "ETFs",
   gold: "Gold",
+  silver: "Silver",
   fd: "Fixed deposit",
   nps: "NPS",
+  real_estate: "Real estate",
   other: "Other",
 };
 const ASSET_CLASSES = Object.keys(ASSET_LABELS) as AssetClass[];
@@ -287,7 +293,8 @@ function HoldingRow({
       {open && (
         <div className="space-y-4 border-t border-slate-100 bg-slate-50 p-4">
           <ValuationForm onSubmit={(body) => setValuation.mutate({ id: h.id, ...body })} />
-          <EventForm onSubmit={(body) => addEvent.mutate({ id: h.id, ...body })} />
+          <EventForm assetClass={h.assetClass} onSubmit={(body) => addEvent.mutate({ id: h.id, ...body })} />
+          {h.assetClass === "gold" && <GoldDetailsForm holdingId={h.id} />}
           <TaxTreatmentForm
             taxClass={h.gainsTaxClass}
             grandfatherNavPaise={h.grandfatherNavPaise}
@@ -383,19 +390,99 @@ function ValuationForm({ onSubmit }: { onSubmit: (b: { date: string; valuePaise:
   );
 }
 
-function EventForm({ onSubmit }: { onSubmit: (b: CreateHoldingEvent) => void }) {
+/**
+ * Karat applies to metal you actually hold, and only an SGB matures — the
+ * server enforces both (UpsertGoldDetailsSchema), so the form hides the field
+ * that doesn't apply rather than submitting a value that would be rejected.
+ */
+function GoldDetailsForm({ holdingId }: { holdingId: string }) {
+  const { data } = useGoldDetails(holdingId, true);
+  const save = useGoldDetailsMutation(holdingId);
+  const [form, setForm] = useState<GoldForm | null>(null);
+  const [karat, setKarat] = useState<"" | "22" | "24">("");
+  const [maturity, setMaturity] = useState("");
+
+  // `data` arrives after first paint; adopt it once, then let the user drive.
+  const effForm = form ?? data?.form ?? "physical";
+  const effKarat = form === null && data ? (data.purityKarat === null ? "" : (String(data.purityKarat) as "22" | "24")) : karat;
+  const effMaturity = form === null && data ? (data.maturityDate ?? "") : maturity;
+  const metal = effForm === "physical" || effForm === "digital";
+
+  function set(next: GoldForm) {
+    setForm(next);
+    setKarat(next === "physical" || next === "digital" ? effKarat : "");
+    setMaturity(next === "sgb" ? effMaturity : "");
+  }
+
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        save.mutate(
+          {
+            form: effForm,
+            purityKarat: metal && effKarat !== "" ? (Number(effKarat) as 22 | 24) : null,
+            maturityDate: effForm === "sgb" && effMaturity !== "" ? effMaturity : null,
+          },
+          { onSuccess: () => toast("Gold details saved", "success") },
+        );
+      }}
+      className="flex flex-wrap items-end gap-2 text-sm"
+    >
+      <span className="text-xs font-medium text-slate-600">Gold details:</span>
+      <select value={effForm} onChange={(e) => set(e.target.value as GoldForm)} className="input" aria-label="Gold form">
+        <option value="physical">Physical</option>
+        <option value="digital">Digital</option>
+        <option value="etf">Gold ETF</option>
+        <option value="sgb">SGB</option>
+      </select>
+      {metal && (
+        <select value={effKarat} onChange={(e) => setKarat(e.target.value as "" | "22" | "24")} className="input" aria-label="Purity">
+          <option value="">Purity —</option>
+          <option value="22">22K</option>
+          <option value="24">24K</option>
+        </select>
+      )}
+      {effForm === "sgb" && (
+        <DateField value={effMaturity} onChange={(iso) => setMaturity(iso)} className="w-36" aria-label="Maturity date" />
+      )}
+      <button type="submit" disabled={save.isPending} className="rounded-md bg-brand-600 px-3 py-1.5 text-white disabled:opacity-40">
+        Save
+      </button>
+    </form>
+  );
+}
+
+/** Grams for the metals, units for anything else priced per unit. */
+const UNITS_LABEL: Partial<Record<AssetClass, string>> = { gold: "grams", silver: "grams" };
+
+function EventForm({
+  assetClass,
+  onSubmit,
+}: {
+  assetClass: AssetClass;
+  onSubmit: (b: CreateHoldingEvent) => void;
+}) {
   const [type, setType] = useState<"buy" | "sell" | "dividend">("buy");
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [amount, setAmount] = useState("");
+  const [units, setUnits] = useState("");
   const [note, setNote] = useState("");
+  // Mirrors the server rule in services/holdings.ts: a quantity is only asked
+  // for where it means something, and never for a dividend (which is cash).
+  const needsUnits = type !== "dividend" && assetClassHasUnits(assetClass);
+  const unitsLabel = UNITS_LABEL[assetClass] ?? "units";
+  const parsedUnits = parseFloat(units);
+  const unitsOk = !needsUnits || (Number.isFinite(parsedUnits) && parsedUnits > 0);
   return (
     <form
       onSubmit={(e) => {
         e.preventDefault();
         const a = Math.round((parseFloat(amount) || 0) * 100);
-        if (a <= 0) return;
-        onSubmit({ type, date, amountPaise: a, units: null, note });
+        if (a <= 0 || !unitsOk) return;
+        onSubmit({ type, date, amountPaise: a, units: needsUnits ? parsedUnits : null, note });
         setAmount("");
+        setUnits("");
         setNote("");
         toast("Event added", "success");
       }}
@@ -409,8 +496,18 @@ function EventForm({ onSubmit }: { onSubmit: (b: CreateHoldingEvent) => void }) 
       </select>
       <DateField value={date} onChange={(iso) => setDate(iso)} className="w-36" aria-label="Event date" />
       <input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="₹ amount" className="input w-28" />
+      {needsUnits && (
+        <input
+          inputMode="decimal"
+          value={units}
+          onChange={(e) => setUnits(e.target.value)}
+          placeholder={unitsLabel}
+          aria-label={unitsLabel}
+          className="input w-24"
+        />
+      )}
       <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="note" className="input w-36" />
-      <button type="submit" className="rounded-md bg-brand-600 px-3 py-1.5 text-white">Add</button>
+      <button type="submit" disabled={!unitsOk} className="rounded-md bg-brand-600 px-3 py-1.5 text-white disabled:opacity-40">Add</button>
     </form>
   );
 }

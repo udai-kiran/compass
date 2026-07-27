@@ -1115,8 +1115,10 @@ export const assetClass = pgEnum("asset_class", [
   "mutual_fund",
   "etf",
   "gold",
+  "silver",
   "fd",
   "nps",
+  "real_estate",
   "other",
 ]);
 
