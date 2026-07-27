@@ -28,6 +28,13 @@ export function holdingAllocationClass(
   if ((assetClass === "mutual_fund" || assetClass === "etf") && taxClass === "other") {
     return "debt";
   }
+  // A listed share with no explicit debt treatment is equity. This runs after
+  // the debt checks on purpose: a gains tax class is chosen deliberately, while
+  // asset_class may be sloppy, so an explicit debt class wins — and treating a
+  // mis-coded debt instrument conservatively is the safer of the two errors.
+  // Without this, a stock whose tax class is "other" lands in the residual
+  // bucket and (now that return follows grouping) would project at 0%.
+  if (assetClass === "stock") return "equity";
   return "other";
 }
 

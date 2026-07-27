@@ -21,6 +21,8 @@ test("fund classification uses explicit tax treatment", () => {
   assert.equal(holdingAllocationClass("etf", "other"), "debt");
   assert.equal(holdingAllocationClass("gold", "other"), "other");
   assert.equal(holdingAllocationClass("nps", "other"), "other");
+  assert.equal(holdingAllocationClass("stock", "other"), "equity");
+  assert.equal(holdingAllocationClass("stock", "specified_fund"), "debt");
 });
 
 test("allocation percentages include other and reconcile to 100", () => {

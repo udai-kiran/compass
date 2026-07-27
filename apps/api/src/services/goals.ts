@@ -13,7 +13,7 @@ import { alertLedger, goals, holdingEvents, retirementDetails, transactions } fr
 import { HttpError } from "../lib/errors.ts";
 import { listAccounts } from "./accounts.ts";
 import { getPortfolio } from "./holdings.ts";
-import { accountReturnBps, assetClassReturnBps } from "./goal-returns.ts";
+import { accountReturnBps, holdingReturnBps } from "./goal-returns.ts";
 import { projectGoal } from "./goal-projection.ts";
 import { buildGoalPlan } from "./goal-plan.ts";
 import { createNotification } from "./notifications.ts";
@@ -289,7 +289,7 @@ export async function getGoalProgress(db: Db, userId: string, id: string): Promi
         name: p.name,
         subtitle: p.folioNumber ? `Folio ${p.folioNumber}` : p.assetClass,
         valuePaise: p.currentValuePaise,
-        annualReturnBps: assetClassReturnBps(p.assetClass, projectionSettings.equityReturnBps),
+        annualReturnBps: holdingReturnBps(p.assetClass, p.gainsTaxClass, projectionSettings.equityReturnBps),
         allocationClass: holdingAllocationClass(p.assetClass, p.gainsTaxClass),
       }),
     ),
