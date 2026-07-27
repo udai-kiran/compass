@@ -6,8 +6,12 @@ import {
   assertLinkRowsMatched,
   classifySipTarget,
   committedSplit,
+  dueInstallmentDate,
   firstOccurrenceOnOrAfter,
+  installmentDateError,
   isArchived,
+  isUniqueViolation,
+  lastOccurrenceOnOrBefore,
   monthlyEquivalentPaise,
   nextSipDate,
   resolveSipDateRange,
@@ -366,4 +370,243 @@ test("isArchived: a null archivedAt is not archived", () => {
 test("isArchived: any non-null archivedAt (Date or ISO string) is archived", () => {
   assert.equal(isArchived(new Date("2026-01-01")), true);
   assert.equal(isArchived("2026-01-01T00:00:00.000Z"), true);
+});
+
+// ---------- installmentDateError (recordSipInstallment: date must fall within the SIP's life) ----------
+
+test("installmentDateError: a date before startDate is rejected", () => {
+  assert.equal(
+    installmentDateError({ startDate: "2026-01-01", endDate: null }, "2025-12-31"),
+    "Installment date is before the SIP started",
+  );
+});
+
+test("installmentDateError: a date after endDate is rejected", () => {
+  assert.equal(
+    installmentDateError({ startDate: "2026-01-01", endDate: "2026-06-30" }, "2026-07-01"),
+    "Installment date is after the SIP ended",
+  );
+});
+
+test("installmentDateError: a date inside the range is valid", () => {
+  assert.equal(installmentDateError({ startDate: "2026-01-01", endDate: "2026-12-31" }, "2026-06-15"), null);
+});
+
+test("installmentDateError: a null endDate (open-ended) is valid for any date on/after start", () => {
+  assert.equal(installmentDateError({ startDate: "2026-01-01", endDate: null }, "2030-01-01"), null);
+});
+
+test("installmentDateError: exactly on startDate is valid", () => {
+  assert.equal(installmentDateError({ startDate: "2026-01-01", endDate: null }, "2026-01-01"), null);
+});
+
+test("installmentDateError: exactly on endDate is valid", () => {
+  assert.equal(installmentDateError({ startDate: "2026-01-01", endDate: "2026-06-30" }, "2026-06-30"), null);
+});
+
+// ---------- lastOccurrenceOnOrBefore (mirror of firstOccurrenceOnOrAfter) ----------
+
+test("lastOccurrenceOnOrBefore: monthly, today after dayOfMonth resolves to this month", () => {
+  assert.equal(
+    lastOccurrenceOnOrBefore({ dayOfMonth: 5, startDate: "2026-01-01", endDate: null }, "2026-07-23"),
+    "2026-07-05",
+  );
+});
+
+test("lastOccurrenceOnOrBefore: monthly, today before dayOfMonth resolves to last month", () => {
+  assert.equal(
+    lastOccurrenceOnOrBefore({ dayOfMonth: 28, startDate: "2026-01-01", endDate: null }, "2026-07-23"),
+    "2026-06-28",
+  );
+});
+
+test("lastOccurrenceOnOrBefore: today exactly on dayOfMonth resolves to today", () => {
+  assert.equal(
+    lastOccurrenceOnOrBefore({ dayOfMonth: 23, startDate: "2026-01-01", endDate: null }, "2026-07-23"),
+    "2026-07-23",
+  );
+});
+
+test("lastOccurrenceOnOrBefore: a quarterly SIP is anchored to its startDate month, not 3 months back from today", () => {
+  // Anchored months from March: Mar, Jun, Sep, Dec. On Jul 23, Jun 5 is the
+  // last anchored occurrence — not Apr 5 (naive 3-months-back) nor Apr 23.
+  const sip = { dayOfMonth: 5, startDate: "2026-03-15", endDate: null, frequency: "quarterly" as const };
+  assert.equal(lastOccurrenceOnOrBefore(sip, "2026-07-23"), "2026-06-05");
+});
+
+test("lastOccurrenceOnOrBefore: null when the result would precede startDate", () => {
+  assert.equal(
+    lastOccurrenceOnOrBefore({ dayOfMonth: 5, startDate: "2026-09-15", endDate: null }, "2026-07-23"),
+    null,
+  );
+});
+
+test("lastOccurrenceOnOrBefore: clamps to endDate when today is far past it", () => {
+  const sip = { dayOfMonth: 5, startDate: "2026-01-01", endDate: "2026-07-01" };
+  assert.equal(lastOccurrenceOnOrBefore(sip, "2030-01-01"), "2026-06-05");
+});
+
+test("lastOccurrenceOnOrBefore: a yearly SIP is anchored to its startDate month", () => {
+  // startDate="2024-03-15" anchors the yearly cycle to March. dayOfMonth=5,
+  // today="2026-07-23".
+  //   ref = today = "2026-07-23" (no endDate to clamp against).
+  //   d (ref's day-of-month) = 23; dayOfMonth = 5; 23 < 5 is false, so
+  //   candidateIdx stays at monthIndex("2026-07-23") = 2026*12 + 6.
+  //   step = 12 (yearly); anchorIdx = monthIndex("2024-03-15") = 2024*12 + 2.
+  //   diff = (2026*12+6) - (2024*12+2) = 24 + 4 = 28.
+  //   offset = ((28 % 12) + 12) % 12 = (4 + 12) % 12 = 4.
+  //   candidateIdx -= 4 -> 2026*12 + 2 -> month index for 2026-03.
+  //   date = dateFromMonthIndex(that, 5) = "2026-03-05", which is >= startDate.
+  const sip = { dayOfMonth: 5, startDate: "2024-03-15", endDate: null, frequency: "yearly" as const };
+  assert.equal(lastOccurrenceOnOrBefore(sip, "2026-07-23"), "2026-03-05");
+});
+
+test("lastOccurrenceOnOrBefore: quarterly, reference month precedes anchor month, pins the `+ step` negative-modulo guard", () => {
+  // This is the case the `+ step` guard exists for: candidateIdx - anchorIdx is
+  // negative, so JS's `%` (which keeps the dividend's sign) alone would give a
+  // negative offset; without `+ step` the subsequent subtraction would move
+  // candidateIdx the wrong way — forward instead of backward.
+  //   startDate="2026-09-01" anchors to September. dayOfMonth=5, today="2026-07-23".
+  //   IMPORTANT: startDate's day-of-month (1) must be earlier than dayOfMonth
+  //   (5) for this test to actually distinguish correct from buggy — see the
+  //   buggy-path arithmetic below. Do not "tidy" this back to a startDate day
+  //   later than dayOfMonth (e.g. the 15th): both the correct and buggy paths
+  //   then land before startDate and the assertion can no longer tell them apart.
+  //   ref = today = "2026-07-23"; d = 23, dayOfMonth = 5, 23 < 5 is false, so
+  //   candidateIdx = monthIndex("2026-07-23") = 2026*12 + 6.
+  //   step = 3 (quarterly); anchorIdx = monthIndex("2026-09-01") = 2026*12 + 8.
+  //   diff = 6 - 8 = -2. Plain `-2 % 3` in JS is -2 (sign of dividend).
+  //   Correct path: the `+ step` guard turns this into (-2 + 3) % 3 = 1, so
+  //   candidateIdx -= 1 -> 2026*12 + 5 -> dateFromMonthIndex(.., 5) = "2026-06-05",
+  //   which is before startDate "2026-09-01" — the function returns null.
+  //   Buggy path (guard removed): offset stays -2, so `candidateIdx -= (-2)`
+  //   moves candidateIdx *forward* by 2 instead of back -> 2026*12 + 8 ->
+  //   dateFromMonthIndex(.., 5) = "2026-09-05" — which is NOT before startDate
+  //   "2026-09-01" (it's 4 days after it), so the buggy path would return
+  //   "2026-09-05" instead of null. That's what makes this assertion able to
+  //   catch the missing guard.
+  const sip = { dayOfMonth: 5, startDate: "2026-09-01", endDate: null, frequency: "quarterly" as const };
+  assert.equal(lastOccurrenceOnOrBefore(sip, "2026-07-23"), null);
+});
+
+test("lastOccurrenceOnOrBefore: yearly, reference month precedes anchor month, pins the `+ step` negative-modulo guard", () => {
+  // Same rationale as the quarterly case above, but with step=12: the negative
+  // diff still needs the `+ step` guard to land on a valid (non-negative) offset.
+  //   startDate="2026-09-01" anchors to September. dayOfMonth=5, today="2026-07-23".
+  //   IMPORTANT: startDate's day-of-month (1) must be earlier than dayOfMonth
+  //   (5) for this test to actually distinguish correct from buggy — see the
+  //   buggy-path arithmetic below. Do not "tidy" this back to a startDate day
+  //   later than dayOfMonth (e.g. the 15th): both the correct and buggy paths
+  //   then land before startDate and the assertion can no longer tell them apart.
+  //   ref = today = "2026-07-23"; d = 23, dayOfMonth = 5, 23 < 5 is false, so
+  //   candidateIdx = monthIndex("2026-07-23") = 2026*12 + 6.
+  //   step = 12 (yearly); anchorIdx = monthIndex("2026-09-01") = 2026*12 + 8.
+  //   diff = 6 - 8 = -2. Plain `-2 % 12` in JS is -2 (sign of dividend).
+  //   Correct path: `((-2 % 12) + 12) % 12` = (-2 + 12) % 12 = 10, so
+  //   candidateIdx -= 10 -> 2026*12 - 4 = 2025*12 + 8 -> dateFromMonthIndex(.., 5)
+  //   = "2025-09-05", which is before startDate "2026-09-01" — the function
+  //   returns null.
+  //   Buggy path (guard removed): offset stays -2, so `candidateIdx -= (-2)`
+  //   moves candidateIdx *forward* by 2 instead of back -> 2026*12 + 8 ->
+  //   dateFromMonthIndex(.., 5) = "2026-09-05" — which is NOT before startDate
+  //   "2026-09-01" (it's 4 days after it), so the buggy path would return
+  //   "2026-09-05" instead of null. That's what makes this assertion able to
+  //   catch the missing guard.
+  const sip = { dayOfMonth: 5, startDate: "2026-09-01", endDate: null, frequency: "yearly" as const };
+  assert.equal(lastOccurrenceOnOrBefore(sip, "2026-07-23"), null);
+});
+
+// ---------- isUniqueViolation (Drizzle wraps driver errors — see lib/errors.ts pgError) ----------
+
+test("isUniqueViolation: a wrapped 23505 with the matching constraint name is true", () => {
+  const wrapped = Object.assign(new Error("query failed"), {
+    cause: { code: "23505", constraint: "holding_events_sip_date_idx" },
+  });
+  assert.equal(isUniqueViolation(wrapped, "holding_events_sip_date_idx"), true);
+});
+
+test("isUniqueViolation: a wrapped 23505 with a different constraint name is false", () => {
+  const wrapped = Object.assign(new Error("query failed"), {
+    cause: { code: "23505", constraint: "some_other_idx" },
+  });
+  assert.equal(isUniqueViolation(wrapped, "holding_events_sip_date_idx"), false);
+});
+
+test("isUniqueViolation: a wrapped 23503 (FK, not unique) with the matching name is false", () => {
+  const wrapped = Object.assign(new Error("query failed"), {
+    cause: { code: "23503", constraint: "holding_events_sip_date_idx" },
+  });
+  assert.equal(isUniqueViolation(wrapped, "holding_events_sip_date_idx"), false);
+});
+
+test("isUniqueViolation: a non-Postgres error is false", () => {
+  assert.equal(isUniqueViolation(new Error("boom"), "holding_events_sip_date_idx"), false);
+});
+
+// ---------- dueInstallmentDate ----------
+
+test("dueInstallmentDate: null for a paused SIP", () => {
+  const sip = {
+    dayOfMonth: 5,
+    startDate: "2026-01-01",
+    endDate: null,
+    status: "paused" as const,
+    targetKind: "mf_folio" as const,
+  };
+  assert.equal(dueInstallmentDate(sip, null, "2026-07-23"), null);
+});
+
+test("dueInstallmentDate: null for an account-target SIP", () => {
+  const sip = {
+    dayOfMonth: 5,
+    startDate: "2026-01-01",
+    endDate: null,
+    status: "active" as const,
+    targetKind: "account" as const,
+  };
+  assert.equal(dueInstallmentDate(sip, null, "2026-07-23"), null);
+});
+
+test("dueInstallmentDate: the due date when lastInstallmentDate is null", () => {
+  const sip = {
+    dayOfMonth: 5,
+    startDate: "2026-01-01",
+    endDate: null,
+    status: "active" as const,
+    targetKind: "mf_folio" as const,
+  };
+  assert.equal(dueInstallmentDate(sip, null, "2026-07-23"), "2026-07-05");
+});
+
+test("dueInstallmentDate: null when lastInstallmentDate equals the due date", () => {
+  const sip = {
+    dayOfMonth: 5,
+    startDate: "2026-01-01",
+    endDate: null,
+    status: "active" as const,
+    targetKind: "mf_folio" as const,
+  };
+  assert.equal(dueInstallmentDate(sip, "2026-07-05", "2026-07-23"), null);
+});
+
+test("dueInstallmentDate: the due date when lastInstallmentDate is older than it", () => {
+  const sip = {
+    dayOfMonth: 5,
+    startDate: "2026-01-01",
+    endDate: null,
+    status: "active" as const,
+    targetKind: "mf_folio" as const,
+  };
+  assert.equal(dueInstallmentDate(sip, "2026-06-05", "2026-07-23"), "2026-07-05");
+});
+
+test("dueInstallmentDate: null when lastInstallmentDate is somehow newer than the due date", () => {
+  const sip = {
+    dayOfMonth: 5,
+    startDate: "2026-01-01",
+    endDate: null,
+    status: "active" as const,
+    targetKind: "mf_folio" as const,
+  };
+  assert.equal(dueInstallmentDate(sip, "2026-07-06", "2026-07-23"), null);
 });

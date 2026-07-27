@@ -10,7 +10,7 @@ import type {
   SetValuation,
   UpdateHolding,
 } from "@compass/shared";
-import type { Db } from "../db/index.ts";
+import type { Db, DbOrTx } from "../db/index.ts";
 import { holdingEvents, holdings, holdingValuations, sips } from "../db/schema.ts";
 import { HttpError } from "../lib/errors.ts";
 import { fetchNavByCode } from "./amfi.ts";
@@ -215,6 +215,30 @@ export async function setValuation(
     });
 }
 
+/**
+ * The next intra-day seq given the events already booked that day — one past
+ * the highest, treating a null seq as "unsequenced" (-1) so the first event
+ * of a day lands at 0. Pure so it's unit-testable without a DB; the query
+ * that feeds it lives in `nextSeqForDate`.
+ */
+export function nextSeq(sameDay: Array<{ seq: number | null }>): number {
+  return sameDay.reduce((max, e) => Math.max(max, e.seq ?? -1), -1) + 1;
+}
+
+/**
+ * Next intra-day seq for a (holding, date) — one past whatever's already
+ * booked that day (imported or manual), so a newly appended event sits after
+ * the existing FIFO order rather than colliding with it. Shared by `addEvent`
+ * and `services/sips.ts`'s `recordSipInstallment`, which also appends a
+ * same-day manual event.
+ */
+export async function nextSeqForDate(db: DbOrTx, holdingId: string, date: string): Promise<number> {
+  const sameDay = await db.query.holdingEvents.findMany({
+    where: and(eq(holdingEvents.holdingId, holdingId), eq(holdingEvents.date, date)),
+  });
+  return nextSeq(sameDay);
+}
+
 export async function addEvent(
   db: Db,
   userId: string,
@@ -224,10 +248,7 @@ export async function addEvent(
   await ownedHolding(db, userId, holdingId);
   // Manual events carry a real intra-day seq too (appended within their date), so
   // the FIFO engine can place them among imported lots — and the user can reorder.
-  const sameDay = await db.query.holdingEvents.findMany({
-    where: and(eq(holdingEvents.holdingId, holdingId), eq(holdingEvents.date, input.date)),
-  });
-  const nextSeq = sameDay.reduce((max, e) => Math.max(max, e.seq ?? -1), -1) + 1;
+  const nextSeq = await nextSeqForDate(db, holdingId, input.date);
   const rows = await db
     .insert(holdingEvents)
     .values({ ...input, holdingId, seq: nextSeq, source: "manual" })

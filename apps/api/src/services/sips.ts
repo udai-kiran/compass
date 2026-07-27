@@ -1,16 +1,26 @@
-import { and, eq, isNull } from "drizzle-orm";
-import type { CreateSip, Sip, UpdateSip } from "@compass/shared";
-import { CreateSipSchema, UpdateSipSchema, accountCanHaveGoal, isBankAccount, sipDateRangeValid } from "@compass/shared";
+import { and, asc, eq, isNull, max } from "drizzle-orm";
+import type { CreateSip, HoldingEvent, RecordSipInstallment, Sip, UpdateSip } from "@compass/shared";
+import {
+  CreateSipSchema,
+  RecordSipInstallmentSchema,
+  UpdateSipSchema,
+  accountCanHaveGoal,
+  isBankAccount,
+  sipDateRangeValid,
+  todayInIST,
+  unitsForInstallment,
+} from "@compass/shared";
 import type { AccountType, AssetClass, GainsTaxClass, SipFrequency, SipTargetKind } from "@compass/shared";
 import type { Db, DbOrTx } from "../db/index.ts";
-import { accounts, holdings, sips } from "../db/schema.ts";
-import { HttpError } from "../lib/errors.ts";
+import { accounts, holdingEvents, holdings, sips } from "../db/schema.ts";
+import { HttpError, pgError } from "../lib/errors.ts";
 import { accountAllocationClass, holdingAllocationClass, type GoalAllocationClass } from "./goal-allocation.ts";
+import { nextSeqForDate } from "./holdings.ts";
 import { assertOwnedGoal } from "./ownership.ts";
 
 type SipRow = typeof sips.$inferSelect;
 
-function toSip(s: SipRow): Sip {
+function toSip(s: SipRow, lastInstallmentDate: string | null, today: string = todayInIST()): Sip {
   return {
     id: s.id,
     goalId: s.goalId,
@@ -24,7 +34,30 @@ function toSip(s: SipRow): Sip {
     status: s.status,
     startDate: s.startDate,
     endDate: s.endDate,
+    lastInstallmentDate,
+    dueInstallmentDate: dueInstallmentDate(s, lastInstallmentDate, today),
   };
+}
+
+/**
+ * True when an error is a Postgres unique violation (SQLSTATE 23505) raised
+ * by one specific constraint. Matching the constraint name as well as the
+ * code matters: a bare 23505 check would relabel any future unique index on
+ * holding_events as "this installment is already recorded". Goes through
+ * `pgError` because Drizzle wraps the driver error — see its doc comment.
+ */
+export function isUniqueViolation(err: unknown, constraint: string): boolean {
+  const pg = pgError(err);
+  return pg !== null && pg.code === "23505" && pg.constraint === constraint;
+}
+
+/** MAX(holding_events.date) over a SIP's recorded installments, or null if it has none. */
+async function lastInstallmentDateFor(db: DbOrTx, sipId: string): Promise<string | null> {
+  const rows = await db
+    .select({ lastInstallmentDate: max(holdingEvents.date) })
+    .from(holdingEvents)
+    .where(eq(holdingEvents.sipId, sipId));
+  return rows[0]?.lastInstallmentDate ?? null;
 }
 
 async function ownedSip(db: Db, userId: string, id: string): Promise<SipRow> {
@@ -242,11 +275,14 @@ async function assertAndLinkTarget(
 }
 
 export async function listSipsForGoal(db: Db, userId: string, goalId: string): Promise<Sip[]> {
-  const rows = await db.query.sips.findMany({
-    where: and(eq(sips.userId, userId), eq(sips.goalId, goalId)),
-    orderBy: (s, { asc }) => [asc(s.createdAt)],
-  });
-  return rows.map(toSip);
+  const rows = await db
+    .select({ sip: sips, lastInstallmentDate: max(holdingEvents.date) })
+    .from(sips)
+    .leftJoin(holdingEvents, eq(holdingEvents.sipId, sips.id))
+    .where(and(eq(sips.userId, userId), eq(sips.goalId, goalId)))
+    .groupBy(sips.id)
+    .orderBy(asc(sips.createdAt));
+  return rows.map((r) => toSip(r.sip, r.lastInstallmentDate));
 }
 
 export async function createSip(db: Db, userId: string, input: CreateSip): Promise<Sip> {
@@ -262,7 +298,8 @@ export async function createSip(db: Db, userId: string, input: CreateSip): Promi
     await assertBankSource(tx, userId, parsed.sourceAccountId);
     await assertAndLinkTarget(tx, userId, parsed.goalId, parsed, parsed.sourceAccountId);
     const rows = await tx.insert(sips).values({ ...parsed, userId }).returning();
-    return toSip(rows[0]!);
+    // A brand-new SIP has no installments recorded against it yet.
+    return toSip(rows[0]!, null);
   });
 }
 
@@ -311,7 +348,10 @@ export async function updateSip(db: Db, userId: string, id: string, input: Updat
       .where(and(eq(sips.id, id), eq(sips.userId, userId)))
       .returning();
     if (rows.length === 0) throw new HttpError(404, "SIP not found");
-    return toSip(rows[0]!);
+    // The update itself never touches installments — carry forward whatever
+    // was already recorded rather than hardcoding null.
+    const lastInstallmentDate = await lastInstallmentDateFor(tx, id);
+    return toSip(rows[0]!, lastInstallmentDate);
   });
 }
 
@@ -321,6 +361,134 @@ export async function deleteSip(db: Db, userId: string, id: string): Promise<voi
     .where(and(eq(sips.id, id), eq(sips.userId, userId)))
     .returning({ id: sips.id });
   if (rows.length === 0) throw new HttpError(404, "SIP not found");
+}
+
+// ---------- Recording an actual installment ----------
+
+/**
+ * Whether an installment date falls within the SIP's life — before its start,
+ * or after an endDate if one is set. ISO dates (`YYYY-MM-DD`) compare
+ * correctly as plain strings, so no Date parsing is needed. Pure so it's
+ * unit-testable without a DB.
+ */
+export function installmentDateError(sip: { startDate: string; endDate: string | null }, date: string): string | null {
+  if (date < sip.startDate) return "Installment date is before the SIP started";
+  if (sip.endDate !== null && date > sip.endDate) return "Installment date is after the SIP ended";
+  return null;
+}
+
+/**
+ * Books an actual buy against a SIP's target folio when an installment goes
+ * through — the amount/units/NAV the platform actually allotted, not the
+ * SIP's own plan. Deliberately does not create a ledger `transactions` row;
+ * the SIP's bank-side debit and this fund-side buy are tracked independently.
+ */
+export async function recordSipInstallment(
+  db: Db,
+  userId: string,
+  sipId: string,
+  input: RecordSipInstallment,
+): Promise<HoldingEvent> {
+  const parsed = RecordSipInstallmentSchema.parse(input);
+
+  // Everything from the SIP read through the insert runs inside one
+  // transaction with the holding and SIP rows locked FOR UPDATE, in that
+  // order: the holding is locked before the sips row to match
+  // createSip/updateSip's parent-first convention (they lock the referenced
+  // account/holding before touching the sips row) — locking sips first here
+  // would invert that order and risk a deadlock against a concurrent
+  // updateSip on the same SIP. Since we don't know which holding to lock
+  // until we've read the SIP, we take an unlocked probe read first, lock the
+  // holding, then re-read the SIP under its own lock and confirm its target
+  // didn't move in between (a concurrent updateSip could have repointed it).
+  // Computing `seq` inside the same locks also stops two concurrent same-day
+  // recordings from both computing the same intra-day sequence.
+  return db.transaction(async (tx) => {
+    // Unlocked probe: we only need it to learn which holding to lock. The
+    // authoritative read is the locked one below. Reading it unlocked first is
+    // what lets us take the two locks in the same order the rest of this file
+    // does — createSip/updateSip both lock the referenced account/holding
+    // before touching the sips row, so locking sips first here would invert
+    // the order and let a recorder and a concurrent updateSip deadlock.
+    const probeRows = await tx
+      .select({ targetKind: sips.targetKind, targetHoldingId: sips.targetHoldingId })
+      .from(sips)
+      .where(and(eq(sips.id, sipId), eq(sips.userId, userId)));
+    const probe = probeRows[0];
+    if (!probe) throw new HttpError(404, "SIP not found");
+
+    // An account-target SIP (PPF/SSY) has no folio to allot units into — only an
+    // mf_folio SIP can book a fund transaction.
+    if (probe.targetKind !== "mf_folio") {
+      throw new HttpError(400, "Only an MF-folio SIP can record a fund transaction");
+    }
+
+    const holdingRows = await tx
+      .select({ archivedAt: holdings.archivedAt })
+      .from(holdings)
+      .where(and(eq(holdings.id, probe.targetHoldingId!), eq(holdings.userId, userId)))
+      .for("update");
+    const holding = holdingRows[0];
+    if (!holding) throw new HttpError(404, "Holding not found");
+    if (isArchived(holding.archivedAt)) throw new HttpError(400, "Target holding is archived");
+
+    // Now the SIP itself, locked — and re-checked, because the probe above was
+    // unlocked: a concurrent updateSip could have repointed the SIP at another
+    // folio in between, which would otherwise book the buy against the holding
+    // we just locked rather than the SIP's real current target.
+    const sipRows = await tx
+      .select()
+      .from(sips)
+      .where(and(eq(sips.id, sipId), eq(sips.userId, userId)))
+      .for("update");
+    const sip = sipRows[0];
+    if (!sip) throw new HttpError(404, "SIP not found");
+    if (sip.targetKind !== "mf_folio" || sip.targetHoldingId !== probe.targetHoldingId) {
+      throw new HttpError(409, "The SIP's target folio just changed — refresh and retry");
+    }
+
+    const dateError = installmentDateError(sip, parsed.date);
+    if (dateError) throw new HttpError(400, dateError);
+
+    const amountPaise = parsed.amountPaise ?? sip.amountPaise;
+    const units = parsed.units ?? unitsForInstallment(amountPaise, parsed.nav!);
+
+    const seq = await nextSeqForDate(tx, sip.targetHoldingId!, parsed.date);
+
+    try {
+      const rows = await tx
+        .insert(holdingEvents)
+        .values({
+          holdingId: sip.targetHoldingId!,
+          type: "buy",
+          date: parsed.date,
+          amountPaise,
+          units,
+          note: parsed.note,
+          seq,
+          // Not "import": mf-import.ts's reconcileEvents only ever re-sequences
+          // *imported* events on a CAS re-import, so marking this event "manual"
+          // keeps a recorded SIP installment safe from being resequenced or
+          // dropped by a later statement import (see the test "an import never
+          // rewrites a user's manual same-day order").
+          source: "manual",
+          sipId,
+        })
+        .returning();
+      const e = rows[0]!;
+      return { id: e.id, type: e.type, date: e.date, amountPaise: e.amountPaise, units: e.units, note: e.note };
+    } catch (err) {
+      if (isUniqueViolation(err, "holding_events_sip_date_idx")) {
+        throw new HttpError(409, "This SIP installment is already recorded for that date");
+      }
+      // 23503 = FK violation: the SIP or its holding was deleted between our
+      // locked read and the insert (a delete that was already in flight).
+      if (pgError(err)?.code === "23503") {
+        throw new HttpError(409, "The SIP or its folio was just removed — refresh and retry");
+      }
+      throw err;
+    }
+  });
 }
 
 // ---------- Committed monthly (goal-plan gap) ----------
@@ -457,6 +625,61 @@ export function firstOccurrenceOnOrAfter(
     if (offset !== 0) candidateIdx += step - offset;
   }
   return dateFromMonthIndex(candidateIdx, day);
+}
+
+/**
+ * The mirror image of `firstOccurrenceOnOrAfter`: the most recent date with
+ * the given day-of-month on or before `ref` (inclusive), on the SIP's cadence,
+ * anchored the same way to `startDate`'s month. Used to answer "what
+ * installment is due by now" rather than "what's coming up next". The
+ * reference date is clamped to `endDate` when `today` is past it — once a SIP
+ * has ended, its last occurrence is bounded by when it stopped, not by
+ * whatever `today` happens to be (otherwise a long-ended SIP would keep
+ * reporting today's own day-of-month as "due" forever).
+ */
+export function lastOccurrenceOnOrBefore(
+  sip: { dayOfMonth: number; startDate: string; endDate: string | null; frequency?: SipFrequency },
+  today: string,
+): string | null {
+  const ref = sip.endDate !== null && today > sip.endDate ? sip.endDate : today;
+  const step = FREQUENCY_STEP_MONTHS[sip.frequency ?? "monthly"];
+  const [, , d] = ref.split("-").map(Number) as [number, number, number];
+  let candidateIdx = monthIndex(ref);
+  if (d < sip.dayOfMonth) candidateIdx -= 1; // this month's occurrence hasn't happened yet
+  if (step > 1) {
+    const anchorIdx = monthIndex(sip.startDate);
+    const offset = (((candidateIdx - anchorIdx) % step) + step) % step;
+    candidateIdx -= offset;
+  }
+  const date = dateFromMonthIndex(candidateIdx, sip.dayOfMonth);
+  if (date < sip.startDate) return null; // the SIP hadn't started yet
+  return date;
+}
+
+/**
+ * The installment a user still owes a record for: the most recent due
+ * occurrence, unless one has already been recorded on or after it. Null
+ * when nothing is outstanding. Paused SIPs never prompt — but the user can
+ * still backfill one by hand.
+ */
+export function dueInstallmentDate(
+  sip: {
+    dayOfMonth: number;
+    startDate: string;
+    endDate: string | null;
+    status: "active" | "paused";
+    frequency?: SipFrequency;
+    targetKind: "mf_folio" | "account";
+  },
+  lastInstallmentDate: string | null,
+  today: string,
+): string | null {
+  if (sip.status !== "active") return null;
+  if (sip.targetKind !== "mf_folio") return null;
+  const due = lastOccurrenceOnOrBefore(sip, today);
+  if (due === null) return null;
+  if (lastInstallmentDate !== null && lastInstallmentDate >= due) return null;
+  return due;
 }
 
 /**

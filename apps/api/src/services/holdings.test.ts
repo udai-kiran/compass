@@ -4,6 +4,7 @@ import {
   costBasis,
   holdingArchiveConflictsWithSip,
   holdingGoalEditConflictsWithSip,
+  nextSeq,
   sipTargetHoldingArchiveBlockedMessage,
   sipTargetHoldingBlockedMessage,
   unitsHeld,
@@ -131,4 +132,30 @@ test("sipTargetHoldingArchiveBlockedMessage: names the SIP count", () => {
     sipTargetHoldingArchiveBlockedMessage(2),
     "Holding is the target of 2 SIP(s) — delete or repoint them before archiving",
   );
+});
+
+// ---------- nextSeq ----------
+
+test("nextSeq: no events that day starts at 0", () => {
+  assert.equal(nextSeq([]), 0);
+});
+
+test("nextSeq: events with seq 0 and 1 continue at 2", () => {
+  assert.equal(nextSeq([{ seq: 0 }, { seq: 1 }]), 2);
+});
+
+test("nextSeq: a single event with seq null is treated as unsequenced (-1), so the next is 0", () => {
+  assert.equal(nextSeq([{ seq: null }]), 0);
+});
+
+test("nextSeq: a mix of null and 2 takes the max, landing at 3", () => {
+  assert.equal(nextSeq([{ seq: null }, { seq: 2 }]), 3);
+});
+
+test("nextSeq: out-of-order input still takes the MAX, not the last or the count", () => {
+  assert.equal(nextSeq([{ seq: 2 }, { seq: 0 }, { seq: 1 }]), 3);
+});
+
+test("nextSeq: a single event with seq 5 (a gap) continues at 6", () => {
+  assert.equal(nextSeq([{ seq: 5 }]), 6);
 });

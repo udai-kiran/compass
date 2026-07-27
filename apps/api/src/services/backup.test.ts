@@ -29,6 +29,10 @@ test("the full backup covers every table in the schema", () => {
   assert.deepEqual(stale, [], `ALL_TABLES lists tables not in the schema: ${stale.join(", ")}`);
 });
 
+test("sips precedes holding_events in ALL_TABLES (holding_events.sip_id FKs sips)", () => {
+  assert.ok(ALL_TABLES.indexOf("sips") < ALL_TABLES.indexOf("holding_events"));
+});
+
 test("the per-user export reconstructs every table (no coverage gaps)", () => {
   // Anything ALL_TABLES lists but neither USER_TABLES nor LINKED_TABLES scopes is
   // silently dropped from a user's export — exportGaps() names those. `users` is

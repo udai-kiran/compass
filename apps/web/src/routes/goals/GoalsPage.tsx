@@ -1,9 +1,11 @@
 import { useState, type FormEvent } from "react";
 import {
   accountCanHaveGoal,
+  formatDisplayDate,
   formatINR,
   isBankAccount,
   rupeesToPaise,
+  todayInIST,
   type Goal,
   type GoalProgress,
   type GoalType,
@@ -568,6 +570,7 @@ function SipsSection({ goalId }: { goalId: string }) {
   const { data: portfolio } = usePortfolio();
   const { update, remove } = useSipMutations();
   const [showForm, setShowForm] = useState(false);
+  const [recordingId, setRecordingId] = useState<string | null>(null);
 
   const accountName = (id: string) => accountList?.find((a) => a.id === id)?.name ?? "Account";
   const targetLabel = (sip: Sip) => {
@@ -604,42 +607,166 @@ function SipsSection({ goalId }: { goalId: string }) {
         </p>
       ) : (
         <ul className="divide-y divide-slate-100 text-sm">
-          {sips.map((sip) => (
-            <li key={sip.id} className="flex flex-wrap items-center gap-2 px-3 py-1.5">
-              <span className="truncate text-slate-700">{accountName(sip.sourceAccountId)}</span>
-              <span className="text-slate-400">→</span>
-              <span className="truncate text-slate-700">{targetLabel(sip)}</span>
-              <span className="ml-auto tabular-nums text-slate-700">
-                {formatINR(sip.amountPaise)}/{SIP_FREQUENCY_LABEL[sip.frequency]}
-              </span>
-              <span className="text-xs text-slate-400">day {sip.dayOfMonth}</span>
-              {sip.status === "paused" && (
-                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500">paused</span>
-              )}
-              <button
-                className="text-xs text-slate-500 underline"
-                disabled={update.isPending}
-                onClick={() =>
-                  update.mutate({ id: sip.id, status: sip.status === "active" ? "paused" : "active" })
-                }
-              >
-                {sip.status === "active" ? "Pause" : "Resume"}
-              </button>
-              <button
-                className="text-slate-400 hover:text-red-600"
-                title="Delete"
-                disabled={remove.isPending}
-                onClick={() => {
-                  if (confirm("Delete this SIP?")) remove.mutate(sip.id);
-                }}
-              >
-                ✕
-              </button>
-            </li>
-          ))}
+          {sips.map((sip) => {
+            const isFolioTarget = sip.targetKind === "mf_folio";
+            return (
+              <li key={sip.id} className="px-3 py-1.5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="truncate text-slate-700">{accountName(sip.sourceAccountId)}</span>
+                  <span className="text-slate-400">→</span>
+                  <span className="truncate text-slate-700">{targetLabel(sip)}</span>
+                  <span className="ml-auto tabular-nums text-slate-700">
+                    {formatINR(sip.amountPaise)}/{SIP_FREQUENCY_LABEL[sip.frequency]}
+                  </span>
+                  <span className="text-xs text-slate-400">day {sip.dayOfMonth}</span>
+                  {sip.status === "paused" && (
+                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500">paused</span>
+                  )}
+                  {isFolioTarget && sip.dueInstallmentDate !== null && (
+                    <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] text-amber-700">
+                      due {formatDisplayDate(sip.dueInstallmentDate)}
+                    </span>
+                  )}
+                  {isFolioTarget && sip.dueInstallmentDate === null && sip.lastInstallmentDate !== null && (
+                    <span className="text-[11px] text-slate-400">last {formatDisplayDate(sip.lastInstallmentDate)}</span>
+                  )}
+                  {isFolioTarget && (
+                    <button
+                      className="text-xs text-slate-500 underline"
+                      onClick={() => setRecordingId((v) => (v === sip.id ? null : sip.id))}
+                    >
+                      {recordingId === sip.id ? "Close" : "Record"}
+                    </button>
+                  )}
+                  <button
+                    className="text-xs text-slate-500 underline"
+                    disabled={update.isPending}
+                    onClick={() =>
+                      update.mutate({ id: sip.id, status: sip.status === "active" ? "paused" : "active" })
+                    }
+                  >
+                    {sip.status === "active" ? "Pause" : "Resume"}
+                  </button>
+                  <button
+                    className="text-slate-400 hover:text-red-600"
+                    title="Delete"
+                    disabled={remove.isPending}
+                    onClick={() => {
+                      if (confirm("Delete this SIP?")) remove.mutate(sip.id);
+                    }}
+                  >
+                    ✕
+                  </button>
+                </div>
+                {isFolioTarget && recordingId === sip.id && (
+                  <RecordInstallmentForm sip={sip} onDone={() => setRecordingId(null)} />
+                )}
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>
+  );
+}
+
+/** Inline form (toggled by a SIP row's "Record" button) for booking one actual installment as an MF buy. */
+function RecordInstallmentForm({ sip, onDone }: { sip: Sip; onDone: () => void }) {
+  const { recordInstallment } = useSipMutations();
+  const [date, setDate] = useState(sip.dueInstallmentDate ?? sip.lastInstallmentDate ?? todayInIST());
+  const [amountR, setAmountR] = useState(String(sip.amountPaise / 100));
+  const [valueKind, setValueKind] = useState<"nav" | "units">("nav");
+  const [valueInput, setValueInput] = useState("");
+  const [note, setNote] = useState("");
+
+  const canSubmit = date !== "" && amountR !== "" && valueInput !== "";
+
+  function submit(e: FormEvent) {
+    e.preventDefault();
+    if (!canSubmit) return;
+    const value = parseFloat(valueInput);
+    recordInstallment.mutate(
+      {
+        id: sip.id,
+        date,
+        amountPaise: rupeesToPaise(parseFloat(amountR)),
+        nav: valueKind === "nav" ? value : null,
+        units: valueKind === "units" ? value : null,
+        note,
+      },
+      {
+        onSuccess: () => {
+          toast("Installment recorded", "success");
+          onDone();
+        },
+      },
+    );
+  }
+
+  return (
+    <form onSubmit={submit} className="mt-2 flex flex-wrap items-end gap-2 rounded-md bg-slate-50 p-2 text-xs">
+      <label className="block">
+        <span className="text-slate-600">Date</span>
+        <DateField value={date} onChange={setDate} className="mt-1 w-28" aria-label="Installment date" />
+      </label>
+      <label className="block">
+        <span className="text-slate-600">Amount (₹)</span>
+        <input
+          value={amountR}
+          onChange={(e) => setAmountR(e.target.value)}
+          inputMode="decimal"
+          required
+          className="mt-1 w-24 rounded-md border border-slate-300 px-2 py-1.5 text-right"
+        />
+      </label>
+      <label className="block">
+        <span className="text-slate-600">Basis</span>
+        <select
+          value={valueKind}
+          onChange={(e) => setValueKind(e.target.value as "nav" | "units")}
+          className="mt-1 w-20 rounded-md border border-slate-300 px-2 py-1.5"
+        >
+          <option value="nav">NAV</option>
+          <option value="units">Units</option>
+        </select>
+      </label>
+      <label className="block">
+        <span className="text-slate-600">{valueKind === "nav" ? "NAV (₹)" : "Units"}</span>
+        <input
+          value={valueInput}
+          onChange={(e) => setValueInput(e.target.value)}
+          inputMode="decimal"
+          required
+          className="mt-1 w-24 rounded-md border border-slate-300 px-2 py-1.5 text-right"
+        />
+      </label>
+      <label className="block min-w-[8rem] flex-1">
+        <span className="text-slate-600">Note (optional)</span>
+        <input
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5"
+        />
+      </label>
+      <div className="flex items-center gap-3">
+        <button
+          type="submit"
+          disabled={recordInstallment.isPending || !canSubmit}
+          className="rounded-md bg-brand-600 px-3 py-1.5 text-white disabled:opacity-40"
+        >
+          {recordInstallment.isPending ? "Recording…" : "Record"}
+        </button>
+        <button type="button" className="text-slate-500 underline" onClick={onDone}>
+          Cancel
+        </button>
+      </div>
+      {recordInstallment.isError && (
+        <p className="w-full text-xs text-red-600">{recordInstallment.error.message}</p>
+      )}
+      <p className="w-full text-[11px] text-slate-400">
+        Records the fund purchase only — the bank debit comes in from your statement or email import.
+      </p>
+    </form>
   );
 }
 

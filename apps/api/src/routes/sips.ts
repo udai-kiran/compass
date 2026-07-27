@@ -1,8 +1,8 @@
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
-import { CreateSipSchema, SipSchema, UpdateSipSchema } from "@compass/shared";
-import { createSip, deleteSip, listSipsForGoal, updateSip } from "../services/sips.ts";
+import { CreateSipSchema, HoldingEventSchema, RecordSipInstallmentSchema, SipSchema, UpdateSipSchema } from "@compass/shared";
+import { createSip, deleteSip, listSipsForGoal, recordSipInstallment, updateSip } from "../services/sips.ts";
 import { invalidateUserCache } from "../services/cache.ts";
 
 const IdParams = z.object({ id: z.uuid() });
@@ -44,6 +44,16 @@ export async function sipRoutes(app: FastifyInstance) {
       await deleteSip(app.db, req.session!.userId, req.params.id);
       await invalidateUserCache(app.redis, req.session!.userId);
       return { ok: true };
+    },
+  );
+
+  r.post(
+    "/api/sips/:id/installments",
+    { schema: { params: IdParams, body: RecordSipInstallmentSchema, response: { 201: HoldingEventSchema } } },
+    async (req, reply) => {
+      const event = await recordSipInstallment(app.db, req.session!.userId, req.params.id, req.body);
+      await invalidateUserCache(app.redis, req.session!.userId);
+      return reply.code(201).send(event);
     },
   );
 }

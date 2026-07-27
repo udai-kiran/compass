@@ -1279,9 +1279,18 @@ export const holdingEvents = pgTable(
     seq: integer("seq"),
     /** import vs manual; default import (the dominant source). Manual adds set it. */
     source: holdingEventSource("source").notNull().default("import"),
+    /**
+     * The SIP installment this buy booked, when it was recorded from a SIP
+     * rather than hand-entered or imported. `set null` on delete, not cascade:
+     * deleting the SIP *plan* must not erase units the user really bought.
+     */
+    sipId: uuid("sip_id").references(() => sips.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("holding_events_holding_idx").on(t.holdingId, t.date)],
+  (t) => [
+    index("holding_events_holding_idx").on(t.holdingId, t.date),
+    uniqueIndex("holding_events_sip_date_idx").on(t.sipId, t.date).where(sql`sip_id is not null`),
+  ],
 );
 
 export const sipTargetKind = pgEnum("sip_target_kind", ["mf_folio", "account"]);

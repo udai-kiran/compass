@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { todayInIST } from "../date.ts";
 
 /**
  * A goal-funding SIP: a recurring monthly transfer from a bank/savings account
@@ -35,6 +36,14 @@ export const SipSchema = z.object({
   status: SipStatusSchema,
   startDate: z.iso.date(),
   endDate: z.iso.date().nullable(),
+  /** Date of the most recently recorded installment for this SIP; null if none. */
+  lastInstallmentDate: z.iso.date().nullable(),
+  /**
+   * The installment that has come due but has no recorded fund transaction
+   * yet; null when nothing is outstanding. Computed server-side because the
+   * cadence rules live in the API service — the UI must not re-derive them.
+   */
+  dueInstallmentDate: z.iso.date().nullable(),
 });
 export type Sip = z.infer<typeof SipSchema>;
 
@@ -91,7 +100,7 @@ export const CreateSipSchema = z
     amountPaise: z.number().int().positive(),
     dayOfMonth: z.number().int().min(1).max(28),
     frequency: SipFrequencySchema.default("monthly"),
-    startDate: z.iso.date().default(() => new Date().toISOString().slice(0, 10)),
+    startDate: z.iso.date().default(() => defaultSipDate()),
     endDate: z.iso.date().nullable().default(null),
   })
   .check((ctx) => {
@@ -145,3 +154,64 @@ export const UpdateSipSchema = z
     }
   });
 export type UpdateSip = z.infer<typeof UpdateSipSchema>;
+
+/**
+ * The calendar date a SIP date field defaults to: today in **IST**, not UTC.
+ *
+ * A plain `new Date().toISOString().slice(0, 10)` is the UTC day, which for the
+ * first 5½ hours of every IST day is still *yesterday* — an API client that
+ * omitted the field would silently book an installment (or start a SIP) one day
+ * early. `now` is injectable purely so this is testable at a fixed instant:
+ * a test comparing against a live `todayInIST()` can only catch the UTC bug
+ * during that 00:00–05:29 IST window and would otherwise pass either way.
+ */
+export function defaultSipDate(now: Date = new Date()): string {
+  return todayInIST(now);
+}
+
+/**
+ * Units bought by an installment. MF platforms allot units to 3–4 decimals;
+ * this rounds to 4. `nav` is rupees per unit (matching holding_valuations.nav
+ * and the AMFI feed), while the amount is paise — hence the /100.
+ */
+export function unitsForInstallment(amountPaise: number, nav: number): number {
+  if (!(nav > 0)) throw new Error("nav must be positive");
+  return Math.round((amountPaise / 100 / nav) * 10000) / 10000;
+}
+
+/**
+ * Recording an actual buy against a SIP's target folio when an installment
+ * goes through. Exactly one of `units` / `nav` is provided: hand the platform's
+ * allotted units straight through, or hand the NAV and let `unitsForInstallment`
+ * derive units from the (possibly overridden) amount. `amountPaise: null`
+ * means "use the SIP's own amount" (the common case — a debit that matched
+ * the plan), not "zero".
+ */
+export const RecordSipInstallmentSchema = z
+  .object({
+    /** Defaults to today in IST, not UTC — see defaultSipDate. */
+    date: z.iso.date().default(() => defaultSipDate()),
+    amountPaise: z.number().int().positive().nullable().default(null),
+    units: z.number().positive().nullable().default(null),
+    nav: z.number().positive().nullable().default(null),
+    note: z.string().default(""),
+  })
+  .check((ctx) => {
+    const { units, nav } = ctx.value;
+    if (units === null && nav === null) {
+      ctx.issues.push({
+        code: "custom",
+        message: "provide either units or nav",
+        input: ctx.value,
+        path: ["units"],
+      });
+    } else if (units !== null && nav !== null) {
+      ctx.issues.push({
+        code: "custom",
+        message: "provide units or nav, not both",
+        input: ctx.value,
+        path: ["units"],
+      });
+    }
+  });
+export type RecordSipInstallment = z.input<typeof RecordSipInstallmentSchema>;

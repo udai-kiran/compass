@@ -21,7 +21,9 @@ import type { Storage } from "../lib/storage.ts";
  * belongs) because it FKs both: goal_id and, for an mf_folio target,
  * target_holding_id. Unlike accounts.goal_id/categories.parent_id it has no
  * deferred-column entry below — its one forward-ish reference is just avoided
- * by ordering instead.
+ * by ordering instead. It must also come *before* `holding_events`:
+ * holding_events.sip_id references sips (the SIP installment a buy booked),
+ * so sips has to exist first or that FK would target a not-yet-inserted row.
  */
 export const ALL_TABLES = [
   "users", "accounts", "categories", "resources", "transactions", "transaction_splits", "transfer_links",
@@ -33,7 +35,7 @@ export const ALL_TABLES = [
   "card_details", "card_issuer_settings", "card_statements", "bank_details", "retirement_details", "account_nps_details", "overdraft_details",
   "insurance_policies", "insurance_health_cards",
   "reward_entries", "emi_details", "holdings", "nps_details", "gold_details",
-  "holding_valuations", "holding_events", "sips", "net_worth_snapshots",
+  "holding_valuations", "sips", "holding_events", "net_worth_snapshots",
   "mailbox_accounts", "mailbox_credentials", "email_ingestions", "extracted_transactions",
   "statement_reconciliations", "ai_events",
 ] as const;
