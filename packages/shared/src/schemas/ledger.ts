@@ -496,6 +496,35 @@ export const TransferLinkSchema = z.object({
   auto: z.boolean(),
 });
 
+/**
+ * Record a brand-new transfer: one leg is written in each account and the two are
+ * linked, so the money is excluded from income and expense. `amountPaise` is the
+ * positive magnitude moved — the out/in signs are derived server-side so a caller
+ * can never book two same-signed legs.
+ */
+export const CreateTransferSchema = z
+  .object({
+    fromAccountId: z.uuid(),
+    toAccountId: z.uuid(),
+    date: z.iso.date(),
+    amountPaise: z.number().int().positive(),
+    merchant: z.string().default(""),
+    notes: z.string().default(""),
+    tags: z.array(z.string()).default([]),
+  })
+  .refine((v) => v.fromAccountId !== v.toAccountId, {
+    message: "A transfer needs two different accounts",
+    path: ["toAccountId"],
+  });
+export type CreateTransfer = z.input<typeof CreateTransferSchema>;
+
+export const TransferResultSchema = z.object({
+  transferLinkId: z.uuid(),
+  outTransactionId: z.uuid(),
+  inTransactionId: z.uuid(),
+});
+export type TransferResult = z.infer<typeof TransferResultSchema>;
+
 // ---------- Payslips ----------
 //
 // A payslip records gross salary and the deductions withheld at source (the

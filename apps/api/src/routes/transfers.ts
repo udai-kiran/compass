@@ -1,8 +1,13 @@
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
-import { CreateTransferLinkSchema, TransferSuggestionSchema } from "@compass/shared";
-import { linkTransfer, suggestTransfers, unlinkTransfer } from "../services/transfers.ts";
+import {
+  CreateTransferLinkSchema,
+  CreateTransferSchema,
+  TransferResultSchema,
+  TransferSuggestionSchema,
+} from "@compass/shared";
+import { createTransfer, linkTransfer, suggestTransfers, unlinkTransfer } from "../services/transfers.ts";
 
 export async function transferRoutes(app: FastifyInstance) {
   const r = app.withTypeProvider<ZodTypeProvider>();
@@ -27,6 +32,15 @@ export async function transferRoutes(app: FastifyInstance) {
             req.body.inTransactionId,
           ),
         ),
+  );
+
+  // Distinct from POST /api/transfers, which links two transactions that already
+  // exist — this books both legs from scratch.
+  r.post(
+    "/api/transfers/record",
+    { schema: { body: CreateTransferSchema, response: { 201: TransferResultSchema } } },
+    async (req, reply) =>
+      reply.code(201).send(await createTransfer(app.db, req.session!.userId, req.body)),
   );
 
   r.delete(
