@@ -17,6 +17,7 @@ import {
   useRefreshNav,
 } from "../../lib/wealth-queries.ts";
 import { DateField } from "../../components/DateField.tsx";
+import { formatXirrBps, portfolioXirrHint, xirrAriaLabel, xirrHint, xirrTone } from "../../lib/xirr-format.ts";
 
 // NPS remains labelled here so legacy positions render, but new NPS containers
 // are accounts and are created in Settings.
@@ -31,6 +32,13 @@ const ASSET_LABELS: Record<AssetClass, string> = {
 };
 const ASSET_CLASSES = Object.keys(ASSET_LABELS) as AssetClass[];
 const CREATABLE_ASSET_CLASSES = ASSET_CLASSES.filter((assetClass) => assetClass !== "nps");
+
+const XIRR_TONE_CLASS: Record<ReturnType<typeof xirrTone>, string> = {
+  positive: "text-emerald-600",
+  negative: "text-red-600",
+  flat: "text-slate-600",
+  unknown: "text-slate-400",
+};
 
 export function PortfolioPage() {
   const { data: p, isLoading } = usePortfolio();
@@ -97,7 +105,7 @@ export function PortfolioPage() {
         </div>
       </header>
 
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
         <StatTile
           label="Portfolio value"
           value={formatINR(p.totalValuePaise)}
@@ -116,6 +124,27 @@ export function PortfolioPage() {
           sub={<span className={unrealized >= 0 ? "text-emerald-600" : "text-red-600"}>{unrealized >= 0 ? "▲ gain" : "▼ loss"}</span>}
         />
         <StatTile label="Dividends" value={formatINR(p.totalDividendsPaise)} />
+        <StatTile
+          label="Return (XIRR)"
+          value={formatXirrBps(p.totalXirrBps)}
+          sub={
+            <span
+              className={XIRR_TONE_CLASS[xirrTone(p.totalXirrBps)]}
+              title={portfolioXirrHint(p.totalXirrBps)}
+            >
+              {/* The terse visible text is hidden from the a11y tree and replaced
+                  by the fuller sr-only sentence below, so a screen reader gets
+                  the explanation rather than "dash" plus a fragment. An
+                  aria-label on a non-interactive span is not reliably exposed. */}
+              <span aria-hidden="true">
+                {p.totalXirrBps !== null ? "per year, money-weighted" : "not available yet"}
+              </span>
+              <span className="sr-only">
+                {xirrAriaLabel(p.totalXirrBps, portfolioXirrHint(p.totalXirrBps))}
+              </span>
+            </span>
+          }
+        />
       </div>
 
       {(allocationSlices.length > 0 || p.growth.length > 0) && (
@@ -203,6 +232,7 @@ function HoldingRow({
   const { update, remove, setValuation, addEvent, removeEvent, moveEvent } = useHoldingMutations();
   const [open, setOpen] = useState(false);
   const unrealized = h.currentValuePaise - h.investedPaise;
+  const xirrHintText = xirrHint(h.xirrBps);
   const goalName = goals.find((g) => g.id === h.goalId)?.name ?? null;
 
   return (
@@ -242,6 +272,10 @@ function HoldingRow({
             <p className={`text-xs ${unrealized >= 0 ? "text-emerald-600" : "text-red-600"}`}>
               {unrealized >= 0 ? "+" : ""}
               {formatINR(unrealized)} total
+            </p>
+            <p className={`text-xs ${XIRR_TONE_CLASS[xirrTone(h.xirrBps)]}`} title={xirrHintText}>
+              <span aria-hidden="true">{formatXirrBps(h.xirrBps)} XIRR</span>
+              <span className="sr-only">{xirrAriaLabel(h.xirrBps, xirrHintText)}</span>
             </p>
           </div>
           <button onClick={() => setOpen((v) => !v)} className="rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-500">
