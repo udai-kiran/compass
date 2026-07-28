@@ -25,7 +25,15 @@ export function holdingAllocationClass(
     return "debt";
   }
   // A non-equity MF/ETF is debt-like for this high-level allocation view.
-  if ((assetClass === "mutual_fund" || assetClass === "etf") && taxClass === "other") {
+  // "exempt" counts alongside "other" here for the same reason it does in
+  // `holdingReturnBps`: it is a claim about taxability, not about equity/debt
+  // character. Omitting it drops an exempt debt fund into the residual bucket,
+  // where it both reports as "other" and — since return follows grouping —
+  // projects at 0%.
+  if (
+    (assetClass === "mutual_fund" || assetClass === "etf") &&
+    (taxClass === "other" || taxClass === "exempt")
+  ) {
     return "debt";
   }
   // A listed share with no explicit debt treatment is equity. This runs after

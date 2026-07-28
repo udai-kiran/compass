@@ -151,7 +151,11 @@ export function holdingReturnBps(
   // `holdingAllocationClass` applies. Only the residual "other" tax class
   // leaves the instrument as the best available evidence, so that is the one
   // case where a gold/NPS/FD/property assumption may refine the allocation fallback.
-  if (taxClass === "other") {
+  //
+  // "exempt" joins it because it says nothing about equity/debt character — it
+  // is a claim about taxability alone. Excluding it would project an exempt SGB
+  // at the residual 0%, quietly zeroing a real asset's growth in every goal.
+  if (taxClass === "other" || taxClass === "exempt") {
     return ASSET_SPECIFIC_RETURN_BPS[assetClass] ?? ALLOCATION_RETURN_BPS[allocation];
   }
   return ALLOCATION_RETURN_BPS[allocation];

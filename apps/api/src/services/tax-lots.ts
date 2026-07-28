@@ -58,6 +58,22 @@ export const SECTION_50AA_START = "2023-04-01";
  *                              *transfer/redemption* is on/after the 2024 reform
  *                              ({@link HOLDING_PERIOD_REFORM}); sold before that,
  *                              ordinary non-equity rules apply.
+ * - `exempt`                   the disposal is outside capital gains altogether —
+ *                              an SGB redeemed at maturity with the RBI, a
+ *                              tax-free bond. Not a holding period, so no
+ *                              short/long line is ever tested; see
+ *                              {@link longTermMonths}, which excludes it by type.
+ *
+ * `exempt` is a claim about the *instrument and the manner of disposal*, so it
+ * is never guessed — an SGB sold on the exchange is an ordinary taxable sale,
+ * and only the user knows which happened.
+ *
+ * KNOWN LIMITATION: the class lives on the *holding*, so it applies to every
+ * disposal of that holding. An SGB partly sold on the exchange and partly
+ * redeemed at maturity cannot be represented — marking it exempt would also
+ * exempt the taxable exchange sale and understate liability. Until the class is
+ * per-event, model such a position as two holdings. The other classes are
+ * properties of the instrument alone, so only `exempt` has this mismatch.
  */
 export type GainsTaxClass =
   | "equity"
@@ -65,7 +81,11 @@ export type GainsTaxClass =
   | "other"
   | "specified_fund"
   | "market_linked_debenture"
-  | "unlisted_bond";
+  | "unlisted_bond"
+  | "exempt";
+
+/** How a matched slice is characterised for tax. See GainTermSchema in @compass/shared. */
+export type GainTerm = "short" | "long" | "exempt";
 
 export interface TaxLotConfig {
   taxClass: GainsTaxClass;
@@ -87,9 +107,15 @@ function nonEquityMonths(saleDate: string): number {
  * `saleDate` — is long-term. "More than N months", so a sale exactly N months
  * after purchase is still short-term. null ⇒ the lot is deemed short-term
  * regardless of period (a §50AA specified-fund lot acquired on/after 1-Apr-2023).
+ *
+ * `exempt` is excluded from the parameter type deliberately. Its natural return
+ * here would be null, which this function already uses to mean "deemed *short*
+ * term" — the exact opposite of exempt, and a silent way to tax a tax-free
+ * redemption at the higher rate. Callers must branch on the class first; the
+ * type makes forgetting a compile error rather than a wrong tax figure.
  */
 export function longTermMonths(
-  taxClass: GainsTaxClass,
+  taxClass: Exclude<GainsTaxClass, "exempt">,
   buyDate: string,
   saleDate: string,
 ): number | null {
@@ -155,7 +181,7 @@ export interface RealizedSlice {
   actualCostPaise: number;
   /** proceeds − effective cost. */
   gainPaise: number;
-  term: "short" | "long";
+  term: GainTerm;
   heldDays: number;
   /** True when grandfathering changed the cost from its actual value. */
   grandfathered: boolean;
@@ -165,6 +191,9 @@ export interface RealizedGains {
   slices: RealizedSlice[];
   shortTermGainPaise: number;
   longTermGainPaise: number;
+  /** Realized on exempt disposals; deliberately outside `totalGainPaise`. */
+  exemptGainPaise: number;
+  /** Taxable total: short + long only. */
   totalGainPaise: number;
   totalProceedsPaise: number;
   totalCostPaise: number;
@@ -279,8 +308,16 @@ export function realizeGains(events: LotEvent[], config: TaxLotConfig): Realized
       }
 
       const heldDays = daysBetween(lot.date, e.date);
-      const ltMonths = longTermMonths(config.taxClass, lot.date, e.date);
-      const term = ltMonths !== null && isLongTerm(lot.date, e.date, ltMonths) ? "long" : "short";
+      // Exempt short-circuits before any holding-period test: there is no line
+      // to be on the right side of. Narrowing here is also what lets the
+      // `longTermMonths` call below typecheck.
+      let term: GainTerm;
+      if (config.taxClass === "exempt") {
+        term = "exempt";
+      } else {
+        const ltMonths = longTermMonths(config.taxClass, lot.date, e.date);
+        term = ltMonths !== null && isLongTerm(lot.date, e.date, ltMonths) ? "long" : "short";
+      }
       slices.push({
         sellDate: e.date,
         buyDate: lot.date,
@@ -304,10 +341,12 @@ export function realizeGains(events: LotEvent[], config: TaxLotConfig): Realized
 
   let shortTermGainPaise = 0;
   let longTermGainPaise = 0;
+  let exemptGainPaise = 0;
   let totalProceedsPaise = 0;
   let totalCostPaise = 0;
   for (const s of slices) {
-    if (s.term === "short") shortTermGainPaise += s.gainPaise;
+    if (s.term === "exempt") exemptGainPaise += s.gainPaise;
+    else if (s.term === "short") shortTermGainPaise += s.gainPaise;
     else longTermGainPaise += s.gainPaise;
     totalProceedsPaise += s.proceedsPaise;
     totalCostPaise += s.costPaise;
@@ -317,6 +356,9 @@ export function realizeGains(events: LotEvent[], config: TaxLotConfig): Realized
     slices,
     shortTermGainPaise,
     longTermGainPaise,
+    exemptGainPaise,
+    // Taxable only. Folding the exempt gain in here is what would make the
+    // statement overstate liability, so it stays a separate line throughout.
     totalGainPaise: shortTermGainPaise + longTermGainPaise,
     totalProceedsPaise,
     totalCostPaise,

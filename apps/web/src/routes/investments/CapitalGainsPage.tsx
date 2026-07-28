@@ -5,6 +5,7 @@ import {
   type AssetClass,
   type CapitalGainsSlice,
   type CapitalGainsStatement,
+  type GainTerm,
 } from "@compass/shared";
 import { StatTile } from "../../lib/viz.tsx";
 import { useCapitalGains } from "../../lib/wealth-queries.ts";
@@ -20,6 +21,19 @@ const ASSET_LABELS: Record<AssetClass, string> = {
   real_estate: "Real estate",
   other: "Other",
 };
+
+/** Exempt is a third state, not a duration — see GainTermSchema in @compass/shared. */
+const TERM_LABEL: Record<GainTerm, string> = {
+  long: "Long-term",
+  short: "Short-term",
+  exempt: "Exempt",
+};
+const TERM_BADGE: Record<GainTerm, string> = {
+  long: "bg-emerald-50 text-emerald-700",
+  short: "bg-slate-100 text-slate-600",
+  exempt: "bg-sky-50 text-sky-700",
+};
+const TERM_TAG: Record<GainTerm, string> = { long: "LTCG", short: "STCG", exempt: "Exempt" };
 
 const rupees = (paise: number) => (paise / 100).toFixed(2);
 
@@ -48,7 +62,7 @@ function downloadCsv(stmt: CapitalGainsStatement) {
       rupees(s.proceedsPaise),
       rupees(s.costPaise),
       rupees(s.gainPaise),
-      s.term === "long" ? "Long-term" : "Short-term",
+      TERM_LABEL[s.term],
       String(s.heldDays),
       s.grandfathered ? "Yes" : "No",
     ]),
@@ -129,7 +143,11 @@ export function CapitalGainsPage() {
 
       {stmt && stmt.holdings.length > 0 && (
         <>
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          <div
+            className={`grid grid-cols-2 gap-4 ${
+              stmt.exemptGainPaise !== 0 ? "lg:grid-cols-5" : "lg:grid-cols-4"
+            }`}
+          >
             <StatTile
               label="Short-term gains"
               value={formatINR(stmt.shortTermGainPaise)}
@@ -140,8 +158,15 @@ export function CapitalGainsPage() {
               value={formatINR(stmt.longTermGainPaise)}
               sub={<span className={gainClass(stmt.longTermGainPaise)}>LTCG</span>}
             />
+            {stmt.exemptGainPaise !== 0 && (
+              <StatTile
+                label="Exempt gains"
+                value={formatINR(stmt.exemptGainPaise)}
+                sub={<span className="text-sky-700">not taxable</span>}
+              />
+            )}
             <StatTile
-              label="Total realized"
+              label="Taxable realized"
               value={formatINR(stmt.totalGainPaise)}
               sub={
                 <span className={gainClass(stmt.totalGainPaise)}>
@@ -173,6 +198,12 @@ export function CapitalGainsPage() {
                         {formatINR(h.longTermGainPaise)}
                       </span>
                     </span>
+                    {h.exemptGainPaise !== 0 && (
+                      <span className="ml-3 text-slate-500">
+                        Exempt{" "}
+                        <span className="text-sky-700">{formatINR(h.exemptGainPaise)}</span>
+                      </span>
+                    )}
                   </div>
                 </div>
                 <div className="overflow-x-auto">
@@ -230,12 +261,14 @@ function SliceRow({
       </td>
       <td className="px-4 py-2">
         <span
-          className={`rounded px-1.5 py-0.5 text-xs ${
-            s.term === "long" ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"
-          }`}
-          title={`Held ${s.heldDays} days`}
+          className={`rounded px-1.5 py-0.5 text-xs ${TERM_BADGE[s.term]}`}
+          title={
+            s.term === "exempt"
+              ? `Held ${s.heldDays} days · outside capital gains, no holding-period test applies`
+              : `Held ${s.heldDays} days`
+          }
         >
-          {s.term === "long" ? "LTCG" : "STCG"}
+          {TERM_TAG[s.term]}
         </span>
       </td>
     </tr>

@@ -32,6 +32,37 @@ function currentFy(): string {
  * When `fy` is omitted the latest FY that has any realized slice is used, or the
  * current FY if the user has never sold anything.
  */
+/**
+ * Bucket a set of slices into the three gain totals plus proceeds/cost.
+ *
+ * Split out of the statement builder so the tax-exclusion invariant is unit
+ * testable without a database: an exempt gain must never reach a taxable
+ * total. The `realizeGains` tests cover the same rule one layer down, but a
+ * regression *here* — e.g. collapsing the branch back to "short else long" —
+ * would leave every one of those passing while the statement over-reported.
+ */
+export function sumSlices(slices: Array<Pick<CapitalGainsSlice, "term" | "gainPaise" | "proceedsPaise" | "costPaise">>): {
+  shortTermGainPaise: number;
+  longTermGainPaise: number;
+  exemptGainPaise: number;
+  proceedsPaise: number;
+  costPaise: number;
+} {
+  let shortTermGainPaise = 0;
+  let longTermGainPaise = 0;
+  let exemptGainPaise = 0;
+  let proceedsPaise = 0;
+  let costPaise = 0;
+  for (const s of slices) {
+    if (s.term === "exempt") exemptGainPaise += s.gainPaise;
+    else if (s.term === "short") shortTermGainPaise += s.gainPaise;
+    else longTermGainPaise += s.gainPaise;
+    proceedsPaise += s.proceedsPaise;
+    costPaise += s.costPaise;
+  }
+  return { shortTermGainPaise, longTermGainPaise, exemptGainPaise, proceedsPaise, costPaise };
+}
+
 export async function getCapitalGains(
   db: Db,
   userId: string,
@@ -107,24 +138,11 @@ export async function getCapitalGains(
       const slices = byHolding
         .get(h.id)!
         .sort((a, b) => (a.sellDate < b.sellDate ? -1 : a.sellDate > b.sellDate ? 1 : 0));
-      let shortTermGainPaise = 0;
-      let longTermGainPaise = 0;
-      let proceedsPaise = 0;
-      let costPaise = 0;
-      for (const s of slices) {
-        if (s.term === "short") shortTermGainPaise += s.gainPaise;
-        else longTermGainPaise += s.gainPaise;
-        proceedsPaise += s.proceedsPaise;
-        costPaise += s.costPaise;
-      }
       return {
         holdingId: h.id,
         holdingName: h.name,
         assetClass: h.assetClass,
-        shortTermGainPaise,
-        longTermGainPaise,
-        proceedsPaise,
-        costPaise,
+        ...sumSlices(slices),
         slices,
       };
     });
@@ -136,6 +154,8 @@ export async function getCapitalGains(
     availableFys,
     shortTermGainPaise,
     longTermGainPaise,
+    exemptGainPaise: holdingRollups.reduce((s, h) => s + h.exemptGainPaise, 0),
+    // Taxable only — exempt gains are reported beside this, never inside it.
     totalGainPaise: shortTermGainPaise + longTermGainPaise,
     totalProceedsPaise: holdingRollups.reduce((s, h) => s + h.proceedsPaise, 0),
     totalCostPaise: holdingRollups.reduce((s, h) => s + h.costPaise, 0),

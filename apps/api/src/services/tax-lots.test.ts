@@ -300,3 +300,69 @@ test("defaultTaxClass guesses equity for equity-ish classes, else other", () => 
   assert.equal(defaultTaxClass("fd"), "other");
   assert.equal(defaultTaxClass("other"), "other");
 });
+
+// ---------- exempt treatment ----------
+
+const exempt = { taxClass: "exempt" as const, grandfatherNavPaise: null };
+
+test("an exempt disposal is realized but never taxable", () => {
+  // An SGB redeemed at maturity: 8 years held, a real ₹5L gain, zero tax.
+  const g = realizeGains(
+    [buy("2017-08-05", 100, 1_000_000), sell("2025-08-05", 100, 1_500_000)],
+    exempt,
+  );
+  assert.equal(g.exemptGainPaise, 500_000);
+  assert.equal(g.shortTermGainPaise, 0);
+  assert.equal(g.longTermGainPaise, 0);
+  // The taxable total must exclude it — this is the whole point of the class.
+  assert.equal(g.totalGainPaise, 0);
+});
+
+test("an exempt disposal still reports proceeds, cost and the slice", () => {
+  // Hiding the disposal entirely would be a worse reporting bug than showing
+  // zero tax: the money did move and belongs in the statement.
+  const g = realizeGains(
+    [buy("2017-08-05", 100, 1_000_000), sell("2025-08-05", 100, 1_500_000)],
+    exempt,
+  );
+  assert.equal(g.totalProceedsPaise, 1_500_000);
+  assert.equal(g.totalCostPaise, 1_000_000);
+  assert.equal(g.slices.length, 1);
+  assert.equal(g.slices[0]!.term, "exempt");
+  assert.equal(g.slices[0]!.gainPaise, 500_000);
+});
+
+test("exempt overrides the holding period, long or short", () => {
+  // Held 8 years (would be long) and held 3 months (would be short) — both are
+  // exempt. A period-based fallback here would tax a tax-free redemption.
+  const long = realizeGains(
+    [buy("2017-08-05", 10, 100_000), sell("2025-08-05", 10, 150_000)],
+    exempt,
+  );
+  const short = realizeGains(
+    [buy("2025-01-05", 10, 100_000), sell("2025-04-05", 10, 150_000)],
+    exempt,
+  );
+  assert.equal(long.slices[0]!.term, "exempt");
+  assert.equal(short.slices[0]!.term, "exempt");
+  assert.equal(long.shortTermGainPaise + short.shortTermGainPaise, 0);
+  assert.equal(long.longTermGainPaise + short.longTermGainPaise, 0);
+});
+
+test("an exempt loss is not smuggled into a taxable set-off", () => {
+  // Exempt cuts both ways: a loss on an exempt asset can't offset taxable gain.
+  const g = realizeGains(
+    [buy("2020-01-01", 100, 1_500_000), sell("2025-01-01", 100, 1_000_000)],
+    exempt,
+  );
+  assert.equal(g.exemptGainPaise, -500_000);
+  assert.equal(g.totalGainPaise, 0);
+});
+
+test("exempt is never guessed from an asset class", () => {
+  // Only the user knows an SGB was redeemed at maturity rather than sold on the
+  // exchange, so no asset class may default to it.
+  for (const c of ["gold", "silver", "stock", "mutual_fund", "etf", "fd", "real_estate", "other"]) {
+    assert.notEqual(defaultTaxClass(c), "exempt");
+  }
+});

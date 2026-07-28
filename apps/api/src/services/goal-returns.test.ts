@@ -91,3 +91,20 @@ test("the equity rate defaults to the built-in assumption when not configured", 
   assert.equal(accountReturnBps("investment", null), DEFAULT_EQUITY_RETURN_BPS);
   assert.equal(holdingReturnBps("stock", "equity"), DEFAULT_EQUITY_RETURN_BPS);
 });
+
+test("an exempt holding keeps its instrument assumption, not the residual 0%", () => {
+  // An SGB marked exempt is still gold: taxability says nothing about growth.
+  // Without "exempt" joining the "other" gate this returns 0 and silently
+  // zeroes a real asset in every goal projection that maps it.
+  assert.equal(holdingReturnBps("gold", "exempt", 950), 800);
+  assert.equal(holdingReturnBps("silver", "exempt", 950), 700);
+  assert.equal(holdingReturnBps("real_estate", "exempt", 950), 700);
+  assert.equal(holdingReturnBps("fd", "exempt", 950), 700);
+  // An exempt debt fund must keep the debt rate, not fall to the residual 0%.
+  assert.equal(holdingReturnBps("mutual_fund", "exempt", 950), 700);
+  assert.equal(holdingReturnBps("etf", "exempt", 950), 700);
+});
+
+test("an exempt stock still projects at the configured equity rate", () => {
+  assert.equal(holdingReturnBps("stock", "exempt", 950), 950);
+});
