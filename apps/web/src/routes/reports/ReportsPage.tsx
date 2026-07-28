@@ -168,6 +168,34 @@ export function ReportsPage() {
                 unit="%"
               />
             </div>
+
+            <div className="mt-4 border-t border-slate-100 pt-3">
+              <p className="text-xs font-medium text-slate-500">Spend by necessity</p>
+              <div className="mt-2 grid grid-cols-3 gap-4">
+                <Kpi
+                  label="Essential"
+                  cur={report.necessity.essentialPaise}
+                  prev={comparing ? prior.necessity.essentialPaise : null}
+                />
+                <Kpi
+                  label="Non-essential"
+                  cur={report.necessity.nonEssentialPaise}
+                  prev={comparing ? prior.necessity.nonEssentialPaise : null}
+                  badUp
+                />
+                <Kpi
+                  label="Unclassified"
+                  cur={report.necessity.unclassifiedPaise}
+                  prev={comparing ? prior.necessity.unclassifiedPaise : null}
+                />
+              </div>
+              {report.necessity.unclassifiedPaise > 0 && (
+                <p className="mt-2 text-xs text-amber-700">
+                  Some spend has no necessity set — assign one to each expense category in Settings →
+                  Categories to make the essential figure complete.
+                </p>
+              )}
+            </div>
           </div>
 
           <Section title="By category">

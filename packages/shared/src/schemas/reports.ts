@@ -13,6 +13,28 @@ export const ReportSchema = z.object({
   expensePaise: z.number().int(),
   netPaise: z.number().int(),
   savingsRatePct: z.number(),
+  /**
+   * Spend split by category necessity. The three buckets always sum to the total
+   * of the `categories` breakdown below: both derive from the same
+   * `spentByCategory` aggregation, so they share its handling of splits,
+   * transfers, opening rows and soft deletes.
+   *
+   * That total equals `expensePaise` for ordinary data but is NOT guaranteed to.
+   * `setSplits` only requires a transaction's splits to sum to its amount, not to
+   * share its sign, so a mixed-sign split (-120 and +20 on a -100 transaction)
+   * contributes 120 here while `expensePaise` counts 100. The discrepancy is
+   * pre-existing and shared with the category breakdown and with budgets; it is
+   * deliberately inherited rather than corrected here, so those three views stay
+   * consistent with one another.
+   *
+   * `unclassifiedPaise` covers uncategorized spend and spend in categories whose
+   * necessity has not been set.
+   */
+  necessity: z.object({
+    essentialPaise: z.number().int(),
+    nonEssentialPaise: z.number().int(),
+    unclassifiedPaise: z.number().int(),
+  }),
   categories: z.array(
     z.object({ categoryId: z.uuid().nullable(), name: z.string(), spentPaise: z.number().int() }),
   ),

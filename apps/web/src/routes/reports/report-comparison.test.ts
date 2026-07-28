@@ -12,6 +12,7 @@ const report = (overrides: Partial<Report> = {}): Report => ({
   expensePaise: 0,
   netPaise: 0,
   savingsRatePct: 0,
+  necessity: { essentialPaise: 0, nonEssentialPaise: 0, unclassifiedPaise: 0 },
   categories: [],
   topMerchants: [],
   ...overrides,

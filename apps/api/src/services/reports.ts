@@ -1,5 +1,5 @@
 import { eq, sql } from "drizzle-orm";
-import type { Report, ReportQuery } from "@compass/shared";
+import type { CategoryKind, ExpenseNecessity, Report, ReportQuery } from "@compass/shared";
 import {
   formatINR,
   inclusiveDayCount,
@@ -51,6 +51,35 @@ export function resolveReportRange(q: ReportQuery): { from: string; to: string; 
 }
 
 /**
+ * Split a `spentByCategory` result into essential / non-essential / unclassified.
+ *
+ * Derived from that same map rather than from its own SQL query, so the three
+ * buckets reconcile exactly with the report's category breakdown and inherit its
+ * handling of splits, transfers, opening rows and soft deletes. Anything whose
+ * necessity is not knowable — uncategorized spend, an unset category, a category
+ * that no longer exists, or spend booked against an income category — lands in
+ * `unclassifiedPaise` rather than being assumed either way.
+ */
+export function splitByNecessity(
+  byCategory: Map<string | null, number>,
+  categoryRows: Array<{ id: string; kind: CategoryKind; necessity: ExpenseNecessity | null }>,
+): { essentialPaise: number; nonEssentialPaise: number; unclassifiedPaise: number } {
+  const necessityOf = new Map(
+    categoryRows.map((c) => [c.id, c.kind === "income" ? null : c.necessity]),
+  );
+  let essentialPaise = 0;
+  let nonEssentialPaise = 0;
+  let unclassifiedPaise = 0;
+  for (const [categoryId, spentPaise] of byCategory) {
+    const necessity = categoryId === null ? null : (necessityOf.get(categoryId) ?? null);
+    if (necessity === "essential") essentialPaise += spentPaise;
+    else if (necessity === "non_essential") nonEssentialPaise += spentPaise;
+    else unclassifiedPaise += spentPaise;
+  }
+  return { essentialPaise, nonEssentialPaise, unclassifiedPaise };
+}
+
+/**
  * Period report: income/expense/net + savings rate, category breakdown, and top
  * merchants. Reuses the same aggregation helpers as the dashboard so totals
  * reconcile exactly.
@@ -89,6 +118,7 @@ export async function buildReport(db: Db, userId: string, query: ReportQuery): P
     expensePaise,
     netPaise: incomePaise - expensePaise,
     savingsRatePct: savingRatePct(incomePaise, expensePaise),
+    necessity: splitByNecessity(byCat, catRows),
     categories: categoriesOut,
     topMerchants: (merchants.rows as Array<{ merchant: string; spent: string; n: number }>).map((r) => ({
       merchant: r.merchant,
@@ -109,6 +139,9 @@ export function reportToCsv(report: Report): string {
   rows.push(["Expense", formatINR(report.expensePaise)]);
   rows.push(["Net", formatINR(report.netPaise)]);
   rows.push(["Savings rate", `${report.savingsRatePct}%`]);
+  rows.push(["Essential spend", formatINR(report.necessity.essentialPaise)]);
+  rows.push(["Non-essential spend", formatINR(report.necessity.nonEssentialPaise)]);
+  rows.push(["Unclassified spend", formatINR(report.necessity.unclassifiedPaise)]);
   rows.push([]);
   rows.push(["Category", "Spent (INR)"]);
   for (const c of report.categories) rows.push([c.name, formatINR(c.spentPaise)]);
