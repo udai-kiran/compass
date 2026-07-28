@@ -17,6 +17,8 @@ function toCategory(row: CategoryRow): Category {
     id: row.id,
     name: row.name,
     kind: row.kind,
+    // Never surface a value the kind can't hold, even if a row went stale.
+    necessity: row.kind === "income" ? null : row.necessity,
     parentId: row.parentId,
     icon: row.icon,
     color: row.color,
@@ -54,7 +56,12 @@ export async function createCategory(
 ): Promise<Category> {
   const rows = await db
     .insert(categories)
-    .values({ ...input, userId })
+    .values({
+      ...input,
+      // An income category has no need/want character; refuse to store one.
+      necessity: input.kind === "income" ? null : input.necessity,
+      userId,
+    })
     .returning();
   return toCategory(rows[0]!);
 }
@@ -98,6 +105,16 @@ export async function updateCategory(
         });
       if (!parent) throw new HttpError(404, "Parent category not found");
       cursor = parent.parentId;
+    }
+  }
+  if (input.necessity !== undefined && input.necessity !== null) {
+    const existing = await db.query.categories.findFirst({
+      where: and(eq(categories.id, id), eq(categories.userId, userId)),
+      columns: { kind: true },
+    });
+    if (!existing) throw new HttpError(404, "Category not found");
+    if (existing.kind === "income") {
+      throw new HttpError(400, "Only expense categories can be marked essential or non-essential");
     }
   }
   const { archived, ...fields } = input;

@@ -1,0 +1,1 @@
+ALTER TABLE "categories" ADD CONSTRAINT "categories_necessity_expense_only" CHECK ("categories"."necessity" is null or "categories"."kind" = 'expense');

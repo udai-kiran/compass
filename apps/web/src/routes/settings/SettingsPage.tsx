@@ -445,11 +445,17 @@ function CategoriesPanel() {
   const childrenOf = (id: string) =>
     ofKind.filter((c) => c.parentId === id && (showArchived || !c.archivedAt));
 
+  // Only expense categories carry a necessity, so the prompt is meaningless on
+  // the income tab. Archived ones are excluded — nagging about a category the
+  // user has retired would never reach zero.
+  const untagged =
+    kind === "expense" ? ofKind.filter((c) => !c.archivedAt && c.necessity === null).length : 0;
+
   function submit(e: FormEvent) {
     e.preventDefault();
     if (!name) return;
     create.mutate(
-      { name, kind, parentId: parentId || null, icon: "", color: "" },
+      { name, kind, necessity: null, parentId: parentId || null, icon: "", color: "" },
       { onSuccess: () => { setName(""); toast("Category created", "success"); } },
     );
   }
@@ -474,6 +480,14 @@ function CategoriesPanel() {
         </select>
         <button type="submit" className="rounded-md bg-brand-600 px-3 py-1.5 text-sm text-white">Add category</button>
       </form>
+
+      {untagged > 0 && (
+        <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          {untagged} expense {untagged === 1 ? "category has" : "categories have"} no necessity set.
+          Spend in {untagged === 1 ? "it" : "them"} is reported as “unclassified” rather than being
+          assumed to be either essential or non-essential.
+        </p>
+      )}
 
       {roots.length === 0 && (
         <p className="mt-6 rounded-lg border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-400">
@@ -519,6 +533,22 @@ function CategoryRow({
       <span>{c.icon}</span>
       <InlineName value={c.name} onSave={(name) => onUpdate({ id: c.id, name })} />
       <span className="ml-auto" />
+      {c.kind === "expense" && (
+        <select
+          value={c.necessity ?? ""}
+          onChange={(e) => onUpdate({ id: c.id, necessity: e.target.value || null })}
+          title="Is spending in this category a need or a want?"
+          className={`rounded border px-1 py-0.5 text-xs ${
+            c.necessity === null
+              ? "border-amber-300 bg-amber-50 text-amber-700"
+              : "border-slate-200 text-slate-500"
+          }`}
+        >
+          <option value="">Necessity: not set</option>
+          <option value="essential">Essential</option>
+          <option value="non_essential">Non-essential</option>
+        </select>
+      )}
       <select
         value=""
         onChange={(e) => {

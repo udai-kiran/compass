@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import {
   bigint,
   boolean,
+  check,
   date,
   doublePrecision,
   index,
@@ -219,6 +220,9 @@ export const accounts = pgTable(
 
 export const categoryKind = pgEnum("category_kind", ["income", "expense"]);
 
+/** See ExpenseNecessitySchema in packages/shared — null = not yet decided. */
+export const expenseNecessity = pgEnum("expense_necessity", ["essential", "non_essential"]);
+
 export const categories = pgTable(
   "categories",
   {
@@ -228,6 +232,15 @@ export const categories = pgTable(
       .references(() => users.id),
     name: text("name").notNull(),
     kind: categoryKind("kind").notNull(),
+    /**
+     * Need vs want, for essential-spend reporting. Nullable on purpose: null is
+     * "undecided", a state reports must show rather than guess. Always null for
+     * income categories: services/categories.ts enforces that on both read and
+     * write, and the `categories_necessity_expense_only` check constraint below
+     * makes a violating row unstorable even on the backup-restore path, which
+     * bypasses those services entirely.
+     */
+    necessity: expenseNecessity("necessity"),
     parentId: uuid("parent_id"),
     icon: text("icon").notNull().default(""),
     color: text("color").notNull().default(""),
@@ -239,6 +252,11 @@ export const categories = pgTable(
   (t) => [
     index("categories_user_idx").on(t.userId),
     uniqueIndex("categories_user_name_parent_idx").on(t.userId, t.name, t.parentId),
+    // Storage-level guarantee, not just a service-level one: backup restore
+    // copies archive columns straight into this table (services/restore-user.ts,
+    // db/restore.ts), bypassing the guards in services/categories.ts. Masking a
+    // bad value on read is not the same as making it unstorable.
+    check("categories_necessity_expense_only", sql`${t.necessity} is null or ${t.kind} = 'expense'`),
   ],
 );
 

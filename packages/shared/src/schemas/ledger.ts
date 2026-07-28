@@ -266,10 +266,28 @@ export type UpdateAccountInput = z.input<typeof UpdateAccountSchema>;
 export const CategoryKindSchema = z.enum(["income", "expense"]);
 export type CategoryKind = z.infer<typeof CategoryKindSchema>;
 
+/**
+ * Whether spending in this category is a need or a want. Set per *category*, not
+ * per transaction, so it applies retroactively to all existing history and flows
+ * through `transaction_splits` for free — each split inherits necessity from its
+ * own category, which a per-transaction flag could not represent.
+ *
+ * Null means the user has not decided yet. That is deliberately a third state,
+ * not a default to either side: reports surface it as its own "unclassified"
+ * bucket so an essential-spend figure is never quietly built on an assumption.
+ *
+ * Deliberately NOT named "discretionary": services/cashflow.ts already uses that
+ * word to mean "non-recurring", an unrelated meaning, and reusing it would put
+ * two different definitions of the same term in one codebase.
+ */
+export const ExpenseNecessitySchema = z.enum(["essential", "non_essential"]);
+export type ExpenseNecessity = z.infer<typeof ExpenseNecessitySchema>;
+
 export const CategorySchema = z.object({
   id: z.uuid(),
   name: z.string(),
   kind: CategoryKindSchema,
+  necessity: ExpenseNecessitySchema.nullable(),
   parentId: z.uuid().nullable(),
   icon: z.string(),
   color: z.string(),
@@ -290,6 +308,7 @@ export const CategoryTreeNodeSchema: z.ZodType<CategoryTreeNode> = CategorySchem
 export const CreateCategorySchema = z.object({
   name: z.string().min(1),
   kind: CategoryKindSchema,
+  necessity: ExpenseNecessitySchema.nullable().default(null),
   parentId: z.uuid().nullable().default(null),
   icon: z.string().default(""),
   color: z.string().default(""),
@@ -298,6 +317,7 @@ export type CreateCategory = z.infer<typeof CreateCategorySchema>;
 
 export const UpdateCategorySchema = z.object({
   name: z.string().min(1).optional(),
+  necessity: ExpenseNecessitySchema.nullable().optional(),
   parentId: z.uuid().nullable().optional(),
   icon: z.string().optional(),
   color: z.string().optional(),
