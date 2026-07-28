@@ -408,6 +408,7 @@ export const GainsTaxClassSchema = z.enum([
   "specified_fund",
   "market_linked_debenture",
   "unlisted_bond",
+  "exempt",
 ]);
 export type GainsTaxClass = z.infer<typeof GainsTaxClassSchema>;
 
@@ -546,7 +547,14 @@ export type Portfolio = z.infer<typeof PortfolioSchema>;
 
 // ---------- Capital gains (FIFO tax lots) ----------
 
-export const GainTermSchema = z.enum(["short", "long"]);
+/**
+ * `exempt` is a third state alongside the holding-period terms, not a duration:
+ * the disposal is outside the capital-gains net entirely (an SGB redeemed at
+ * maturity, a tax-free bond), so no short/long line was ever tested. It stays a
+ * visible slice — a disposal that vanished from the statement would be a worse
+ * reporting bug than one showing zero tax.
+ */
+export const GainTermSchema = z.enum(["short", "long", "exempt"]);
 export type GainTerm = z.infer<typeof GainTermSchema>;
 
 /** One FIFO buy↔sell match: the atomic row of a capital-gains statement. */
@@ -574,6 +582,8 @@ export const CapitalGainsHoldingSchema = z.object({
   assetClass: AssetClassSchema,
   shortTermGainPaise: z.number().int(),
   longTermGainPaise: z.number().int(),
+  /** Realized on exempt disposals; reported, never added to a taxable total. */
+  exemptGainPaise: z.number().int(),
   proceedsPaise: z.number().int(),
   costPaise: z.number().int(),
   slices: z.array(CapitalGainsSliceSchema),
@@ -587,6 +597,9 @@ export const CapitalGainsStatementSchema = z.object({
   availableFys: z.array(z.string()),
   shortTermGainPaise: z.number().int(),
   longTermGainPaise: z.number().int(),
+  /** Realized on exempt disposals; excluded from `totalGainPaise` by design. */
+  exemptGainPaise: z.number().int(),
+  /** Taxable total: short + long only. Exempt gains are never folded in here. */
   totalGainPaise: z.number().int(),
   totalProceedsPaise: z.number().int(),
   totalCostPaise: z.number().int(),

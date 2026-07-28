@@ -1134,6 +1134,7 @@ export const gainsTaxClass = pgEnum("gains_tax_class", [
   "specified_fund",
   "market_linked_debenture",
   "unlisted_bond",
+  "exempt",
 ]);
 
 export const holdings = pgTable(

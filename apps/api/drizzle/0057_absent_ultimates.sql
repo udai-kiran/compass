@@ -1,0 +1,1 @@
+ALTER TYPE "public"."gains_tax_class" ADD VALUE 'exempt';

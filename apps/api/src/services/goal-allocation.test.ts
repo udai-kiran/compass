@@ -102,3 +102,15 @@ test("sortAssetsByAllocation breaks a value tie by name, then by id", () => {
 test("sortAssetsByAllocation returns an empty array for empty input", () => {
   assert.deepEqual(sortAssetsByAllocation([]), []);
 });
+
+test("an exempt MF/ETF stays debt-like — taxability is not a risk class", () => {
+  // The bug this guards: "exempt" describes how a disposal is taxed, not what
+  // the fund holds. Dropping it here sends an exempt debt fund to the residual
+  // bucket, and because return follows grouping it then projects at 0%.
+  assert.equal(holdingAllocationClass("mutual_fund", "exempt"), "debt");
+  assert.equal(holdingAllocationClass("etf", "exempt"), "debt");
+  // Unchanged neighbours, so the widening didn't over-reach.
+  assert.equal(holdingAllocationClass("gold", "exempt"), "other");
+  assert.equal(holdingAllocationClass("stock", "exempt"), "equity");
+  assert.equal(holdingAllocationClass("fd", "exempt"), "debt");
+});

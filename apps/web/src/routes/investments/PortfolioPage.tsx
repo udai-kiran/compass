@@ -519,6 +519,9 @@ const TAX_CLASS_LABELS: Record<GainsTaxClass, string> = {
   specified_fund: "Specified mutual fund §50AA (post-Apr-2023 units short-term)",
   market_linked_debenture: "Market-linked debenture §50AA (always short-term)",
   unlisted_bond: "Unlisted bond/debenture §50AA (short-term if sold from Jul-2024)",
+  // Spells out that this applies to *every* disposal of the holding: the class
+  // is per-holding, so a partly-sold, partly-redeemed SGB needs two holdings.
+  exempt: "Exempt — all disposals (SGB held to maturity, tax-free bond)",
 };
 
 /**
