@@ -233,12 +233,15 @@ export const categories = pgTable(
     name: text("name").notNull(),
     kind: categoryKind("kind").notNull(),
     /**
-     * Need vs want, for essential-spend reporting. Nullable on purpose: null is
-     * "undecided", a state reports must show rather than guess. Always null for
-     * income categories: services/categories.ts enforces that on both read and
-     * write, and the `categories_necessity_expense_only` check constraint below
-     * makes a violating row unstorable even on the backup-restore path, which
-     * bypasses those services entirely.
+     * DEFAULT need-vs-want for transactions in this category. A transaction's own
+     * `necessity` column overrides it — see `effectiveNecessity` in
+     * packages/shared. Nullable on purpose: null is "undecided", a state reports
+     * must show rather than guess.
+     *
+     * Always null for income categories: services/categories.ts enforces that on
+     * both read and write, and the `categories_necessity_expense_only` check
+     * constraint below makes a violating row unstorable even on the
+     * backup-restore path, which bypasses those services entirely.
      */
     necessity: expenseNecessity("necessity"),
     parentId: uuid("parent_id"),
@@ -313,6 +316,15 @@ export const transactions = pgTable(
     amountPaise: bigint("amount_paise", { mode: "number" }).notNull(),
     merchant: text("merchant").notNull().default(""),
     categoryId: uuid("category_id").references(() => categories.id),
+    /**
+     * Need-vs-want for this specific spend, overriding the category's default.
+     * Null = inherit (see `effectiveNecessity` in packages/shared).
+     *
+     * No check constraint like `categories` has: a transaction carries no `kind`
+     * to contradict, and sign alone does not disqualify a row — a refund against
+     * an essential purchase is still essential spend being reversed.
+     */
+    necessity: expenseNecessity("necessity"),
     notes: text("notes").notNull().default(""),
     tags: text("tags")
       .array()

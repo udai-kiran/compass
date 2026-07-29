@@ -483,9 +483,9 @@ function CategoriesPanel() {
 
       {untagged > 0 && (
         <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-          {untagged} expense {untagged === 1 ? "category has" : "categories have"} no necessity set.
-          Spend in {untagged === 1 ? "it" : "them"} is reported as “unclassified” rather than being
-          assumed to be either essential or non-essential.
+          {untagged} expense {untagged === 1 ? "category has" : "categories have"} no default
+          necessity. Spend in {untagged === 1 ? "it" : "them"} is reported as
+          “unclassified” unless the transaction sets its own necessity.
         </p>
       )}
 
@@ -537,16 +537,16 @@ function CategoryRow({
         <select
           value={c.necessity ?? ""}
           onChange={(e) => onUpdate({ id: c.id, necessity: e.target.value || null })}
-          title="Is spending in this category a need or a want?"
+          title="Default for transactions in this category. Any transaction can override it."
           className={`rounded border px-1 py-0.5 text-xs ${
             c.necessity === null
               ? "border-amber-300 bg-amber-50 text-amber-700"
               : "border-slate-200 text-slate-500"
           }`}
         >
-          <option value="">Necessity: not set</option>
-          <option value="essential">Essential</option>
-          <option value="non_essential">Non-essential</option>
+          <option value="">Default: not set</option>
+          <option value="essential">Default: Essential</option>
+          <option value="non_essential">Default: Non-essential</option>
         </select>
       )}
       <select

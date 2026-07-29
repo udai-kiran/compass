@@ -191,8 +191,9 @@ export function ReportsPage() {
               </div>
               {report.necessity.unclassifiedPaise > 0 && (
                 <p className="mt-2 text-xs text-amber-700">
-                  Some spend has no necessity set — assign one to each expense category in Settings →
-                  Categories to make the essential figure complete.
+                  Some spend has no necessity set — set a default per category in Settings →
+                  Categories, or mark individual transactions, to make the essential figure
+                  complete.
                 </p>
               )}
             </div>

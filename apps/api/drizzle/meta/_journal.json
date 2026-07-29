@@ -421,6 +421,13 @@
       "when": 1785253291625,
       "tag": "0059_steady_wonder_man",
       "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1785301421273,
+      "tag": "0060_brave_ender_wiggin",
+      "breakpoints": true
     }
   ]
 }

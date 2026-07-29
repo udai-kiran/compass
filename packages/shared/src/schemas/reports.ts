@@ -14,10 +14,23 @@ export const ReportSchema = z.object({
   netPaise: z.number().int(),
   savingsRatePct: z.number(),
   /**
-   * Spend split by category necessity. The three buckets always sum to the total
-   * of the `categories` breakdown below: both derive from the same
-   * `spentByCategory` aggregation, so they share its handling of splits,
-   * transfers, opening rows and soft deletes.
+   * Spend split by necessity. A transaction's own flag, when set, applies to all
+   * of its spend. Otherwise each slice resolves against the category it is
+   * actually booked to — which for a split transaction is each split's own
+   * category, not the parent's (see `effectiveNecessity`).
+   *
+   * The three buckets sum to the same total as the `categories` breakdown below.
+   * That is a property of the queries, not a coincidence: `spendByNecessity`
+   * mirrors `spentByCategory`'s filters exactly — same transfer, opening-row,
+   * soft-delete and split-vs-non-split handling.
+   *
+   * That holds for a consistent snapshot, not under concurrency: the two
+   * aggregations are separate statements under READ COMMITTED, so a split added
+   * or removed part-way through a report can transiently make them disagree. The
+   * race is pre-existing and shared with `spentByCategory`, itself split across
+   * two statements, and with `buildReport` running its aggregators independently.
+   * It is inherited here deliberately rather than fixed in isolation, which would
+   * need snapshot isolation around the whole report.
    *
    * That total equals `expensePaise` for ordinary data but is NOT guaranteed to.
    * `setSplits` only requires a transaction's splits to sum to its amount, not to
@@ -27,8 +40,10 @@ export const ReportSchema = z.object({
    * deliberately inherited rather than corrected here, so those three views stay
    * consistent with one another.
    *
-   * `unclassifiedPaise` covers uncategorized spend and spend in categories whose
-   * necessity has not been set.
+   * `unclassifiedPaise` covers spend whose necessity resolves to null: no
+   * transaction-level override AND no usable category default — uncategorized
+   * spend, or a category whose default is unset. Spend carrying an explicit
+   * override is always classified, even when it has no category.
    */
   necessity: z.object({
     essentialPaise: z.number().int(),
