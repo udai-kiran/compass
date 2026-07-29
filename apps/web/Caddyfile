@@ -9,9 +9,31 @@
 		reverse_proxy api:3001
 	}
 
+	# Documentation site (Docusaurus static build, baked in at /srv/docs).
+	# Root stays /srv so the built /docs/... asset paths resolve directly.
+	redir /docs /docs/
+	handle /docs/* {
+		root * /srv
+		try_files {path} {path}/index.html
+		file_server
+	}
+
 	handle {
 		root * /srv
 		try_files {path} /index.html
 		file_server
+	}
+
+	# A missing docs page must answer 404, not 200 with the error page.
+	# Scoped to /docs/* so SPA routing (served by try_files above) is untouched.
+	handle_errors {
+		@docs404 path /docs/*
+		handle @docs404 {
+			root * /srv
+			rewrite * /docs/404.html
+			file_server {
+				status 404
+			}
+		}
 	}
 }

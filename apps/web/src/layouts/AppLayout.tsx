@@ -253,6 +253,17 @@ export function AppLayout() {
             </button>
           </div>
           <div className="flex items-center gap-3 sm:gap-4">
+            <a
+              href="/docs/"
+              target="_blank"
+              rel="noreferrer"
+              aria-label="Documentation"
+              title="Documentation"
+              className="flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm text-slate-500 transition hover:bg-slate-50 hover:text-slate-700"
+            >
+              <Icon name="book" className="h-5 w-5" />
+              <span className="hidden lg:inline">Docs</span>
+            </a>
             <div className="hidden sm:block">
               <ThemeSelect variant="header" />
             </div>

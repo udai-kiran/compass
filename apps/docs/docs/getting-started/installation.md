@@ -42,4 +42,6 @@ docker compose up -d --build
 
 The `migrate` service runs automatically on first start, applying database migrations and provisioning the owner account from `OWNER_EMAIL` and `OWNER_PASSWORD`. Once migrations are complete, the API starts. The web UI is served by Caddy on `WEB_PORT` — `.env.example` sets `8090`, so the app is at http://localhost:8090. The API itself stays internal on port 3001.
 
+> **This documentation is served without authentication.** Caddy serves it from the same port as the app at `/docs/` (e.g. http://localhost:8090/docs/), so anyone who can reach the deployment can read it even without logging in. It contains no credentials or user data — only operator documentation, including environment-variable names, the backup procedure, and what the AI/email pipeline sends to your model. If your deployment is internet-facing and you would rather not expose that, put `/docs/` behind your reverse proxy's auth or drop the `/docs/*` handler from `apps/web/Caddyfile`.
+
 > **Note:** For manual migrations outside Docker, run `npm install && npm run db:migrate`. Ensure the `compass` app role owns the tables—if you created the database as the `postgres` role, reset ownership or the app will hit "permission denied" errors.

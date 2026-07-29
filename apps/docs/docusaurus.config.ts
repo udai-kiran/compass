@@ -18,16 +18,15 @@ const config: Config = {
     faster: false,
   },
 
-  // Set the production url of your site here
-  url: 'https://udai-kiran.github.io',
-  // Set the /<baseUrl>/ pathname under which your site is served
-  // For GitHub pages deployment, it is often '/<projectName>/'
-  baseUrl: '/PennyPilot/',
+  // The docs are served by the app's own Caddy container (apps/web/Caddyfile)
+  // under /docs/ on the same origin as the SPA. `url` only affects absolute
+  // metadata (canonical, og:url); a self-hosted origin isn't known at build
+  // time, so operators can set DOCS_URL to get correct canonical links.
+  url: process.env.DOCS_URL ?? 'http://localhost',
+  baseUrl: '/docs/',
 
-  // GitHub pages deployment config.
-  // If you aren't using GitHub pages, you don't need these.
-  organizationName: 'udai-kiran', // Usually your GitHub org/user name.
-  projectName: 'PennyPilot', // Usually your repo name.
+  organizationName: 'udai-kiran',
+  projectName: 'PennyPilot',
 
   onBrokenLinks: 'throw',
 
@@ -44,6 +43,8 @@ const config: Config = {
       'classic',
       {
         docs: {
+          // baseUrl is already /docs/, so serve pages at its root (not /docs/docs/).
+          routeBasePath: '/',
           sidebarPath: './sidebars.ts',
           editUrl: 'https://github.com/udai-kiran/PennyPilot/tree/main/apps/docs/',
         },
@@ -62,6 +63,16 @@ const config: Config = {
     navbar: {
       title: 'Compass',
       items: [
+        {
+          // A raw-HTML item is emitted verbatim, with no baseUrl processing.
+          // Both `href: '/'` and `href: 'pathname:///'` get rewritten to
+          // '/docs/' here (baseUrl is '/docs/'), which loops back into the
+          // docs instead of returning to the app.
+          type: 'html',
+          position: 'left',
+          value:
+            '<a class="navbar__item navbar__link" href="/" target="_self">← Back to app</a>',
+        },
         {
           type: 'docSidebar',
           sidebarId: 'docsSidebar',
@@ -83,7 +94,7 @@ const config: Config = {
           items: [
             {
               label: 'Docs',
-              to: '/docs/',
+              to: '/',
             },
             {
               label: 'GitHub',
