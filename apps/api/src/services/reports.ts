@@ -1,6 +1,7 @@
 import { eq, sql } from "drizzle-orm";
-import type { CategoryKind, ExpenseNecessity, Report, ReportQuery } from "@compass/shared";
+import type { Report, ReportQuery } from "@compass/shared";
 import {
+  effectiveNecessity,
   formatINR,
   inclusiveDayCount,
   isRealIsoDate,
@@ -11,7 +12,13 @@ import {
 import type { Db } from "../db/index.ts";
 import { toCsv } from "../lib/csv.ts";
 import { categories } from "../db/schema.ts";
-import { incomeExpense, periodRange, spentByCategory } from "./periods.ts";
+import {
+  incomeExpense,
+  type NecessitySpendRow,
+  periodRange,
+  spendByNecessity,
+  spentByCategory,
+} from "./periods.ts";
 import { savingRatePct } from "./insights.ts";
 
 /**
@@ -51,30 +58,30 @@ export function resolveReportRange(q: ReportQuery): { from: string; to: string; 
 }
 
 /**
- * Split a `spentByCategory` result into essential / non-essential / unclassified.
+ * Bucket pre-aggregated spend rows into essential / non-essential / unclassified.
  *
- * Derived from that same map rather than from its own SQL query, so the three
- * buckets reconcile exactly with the report's category breakdown and inherit its
- * handling of splits, transfers, opening rows and soft deletes. Anything whose
- * necessity is not knowable — uncategorized spend, an unset category, a category
- * that no longer exists, or spend booked against an income category — lands in
- * `unclassifiedPaise` rather than being assumed either way.
+ * A row is unclassified when its necessity resolves to null: no transaction-level
+ * override AND no usable category default (uncategorized spend, a category whose
+ * default is unset, or an income category). It is never guessed either way, so
+ * the essential figure is only ever built from decisions the user actually made.
+ *
+ * An explicit override classifies the spend even when it has no category at all —
+ * the override is a statement about the spend itself and does not need a category
+ * to be meaningful.
  */
-export function splitByNecessity(
-  byCategory: Map<string | null, number>,
-  categoryRows: Array<{ id: string; kind: CategoryKind; necessity: ExpenseNecessity | null }>,
-): { essentialPaise: number; nonEssentialPaise: number; unclassifiedPaise: number } {
-  const necessityOf = new Map(
-    categoryRows.map((c) => [c.id, c.kind === "income" ? null : c.necessity]),
-  );
+export function splitByNecessity(rows: Iterable<NecessitySpendRow>): {
+  essentialPaise: number;
+  nonEssentialPaise: number;
+  unclassifiedPaise: number;
+} {
   let essentialPaise = 0;
   let nonEssentialPaise = 0;
   let unclassifiedPaise = 0;
-  for (const [categoryId, spentPaise] of byCategory) {
-    const necessity = categoryId === null ? null : (necessityOf.get(categoryId) ?? null);
-    if (necessity === "essential") essentialPaise += spentPaise;
-    else if (necessity === "non_essential") nonEssentialPaise += spentPaise;
-    else unclassifiedPaise += spentPaise;
+  for (const row of rows) {
+    const necessity = effectiveNecessity(row.txNecessity, row.catNecessity, row.catKind);
+    if (necessity === "essential") essentialPaise += row.spentPaise;
+    else if (necessity === "non_essential") nonEssentialPaise += row.spentPaise;
+    else unclassifiedPaise += row.spentPaise;
   }
   return { essentialPaise, nonEssentialPaise, unclassifiedPaise };
 }
@@ -86,7 +93,7 @@ export function splitByNecessity(
  */
 export async function buildReport(db: Db, userId: string, query: ReportQuery): Promise<Report> {
   const { from, to, periodKey } = resolveReportRange(query);
-  const [{ incomePaise, expensePaise }, byCat, catRows, merchants] = await Promise.all([
+  const [{ incomePaise, expensePaise }, byCat, catRows, merchants, necessityRows] = await Promise.all([
     incomeExpense(db, userId, from, to),
     spentByCategory(db, userId, from, to),
     db.query.categories.findMany({ where: eq(categories.userId, userId) }),
@@ -99,6 +106,7 @@ export async function buildReport(db: Db, userId: string, query: ReportQuery): P
         and not exists (select 1 from transfer_links tl where tl.out_transaction_id = t.id or tl.in_transaction_id = t.id)
       group by t.merchant order by spent desc limit 15
     `),
+    spendByNecessity(db, userId, from, to),
   ]);
   const catName = new Map(catRows.map((c) => [c.id, c.name]));
   const categoriesOut = [...byCat.entries()]
@@ -118,7 +126,7 @@ export async function buildReport(db: Db, userId: string, query: ReportQuery): P
     expensePaise,
     netPaise: incomePaise - expensePaise,
     savingsRatePct: savingRatePct(incomePaise, expensePaise),
-    necessity: splitByNecessity(byCat, catRows),
+    necessity: splitByNecessity(necessityRows),
     categories: categoriesOut,
     topMerchants: (merchants.rows as Array<{ merchant: string; spent: string; n: number }>).map((r) => ({
       merchant: r.merchant,

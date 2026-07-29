@@ -1,6 +1,13 @@
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { formatDisplayDate, formatINR, TransactionSchema, type TransactionFilter } from "@compass/shared";
+import {
+  effectiveNecessity,
+  formatDisplayDate,
+  formatINR,
+  TransactionSchema,
+  type ExpenseNecessity,
+  type TransactionFilter,
+} from "@compass/shared";
 import { apiGet } from "../../lib/api.ts";
 import { CategoryPicker } from "../../components/CategoryPicker.tsx";
 import { toast } from "../../lib/toast.tsx";
@@ -66,6 +73,22 @@ export function TransactionDrawer({
   const suggestion = suggestions?.find(
     (s) => s.outTransactionId === tx.id || s.inTransactionId === tx.id,
   );
+  const txCategory = tx.categoryId ? categories?.find((c) => c.id === tx.categoryId) : undefined;
+  const categoryDefault = txCategory
+    ? effectiveNecessity(null, txCategory.necessity ?? null, txCategory.kind ?? null)
+    : null;
+  const inheritLabel =
+    tx.splits.length > 0
+      ? "Inherit (each split uses its own category)"
+      : tx.categoryId === null
+        ? "Inherit (uncategorized — not set)"
+        : `Inherit from ${txCategory?.name ?? "…"} (${
+            categoryDefault === "essential"
+              ? "Essential"
+              : categoryDefault === "non_essential"
+                ? "Non-essential"
+                : "not set"
+          })`;
 
   return (
     <div className="fixed inset-0 z-40 flex justify-end bg-black/30" onClick={onClose}>
@@ -96,6 +119,33 @@ export function TransactionDrawer({
             className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
           />
         </label>
+
+        <section className="mt-5">
+          <h3 className="text-sm font-semibold text-slate-700">Necessity</h3>
+          <p className="mt-0.5 text-xs text-slate-500">
+            Is this particular spend a need or a want? Leave it on inherit to use the category’s
+            default.
+          </p>
+          <select
+            value={tx.necessity ?? ""}
+            onChange={(e) =>
+              update.mutate(
+                { id: tx.id, necessity: (e.target.value || null) as ExpenseNecessity | null },
+                {
+                  onSuccess: () => {
+                    toast("Saved", "success");
+                    void qc.invalidateQueries({ queryKey: ["transaction", id] });
+                  },
+                },
+              )
+            }
+            className="input mt-1 w-full"
+          >
+            <option value="">{inheritLabel}</option>
+            <option value="essential">Essential</option>
+            <option value="non_essential">Non-essential</option>
+          </select>
+        </section>
 
         <section className="mt-5">
           <h3 className="text-sm font-semibold text-slate-700">Asset or connection</h3>

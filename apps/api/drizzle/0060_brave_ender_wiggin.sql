@@ -1,0 +1,1 @@
+ALTER TABLE "transactions" ADD COLUMN "necessity" "expense_necessity";

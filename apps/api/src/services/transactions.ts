@@ -149,6 +149,7 @@ async function hydrate(db: DbOrTx, rows: TxRow[]): Promise<Transaction[]> {
     amountPaise: r.amountPaise,
     merchant: r.merchant,
     categoryId: r.categoryId,
+    necessity: r.necessity,
     notes: r.notes,
     tags: r.tags,
     source: r.source,

@@ -267,14 +267,17 @@ export const CategoryKindSchema = z.enum(["income", "expense"]);
 export type CategoryKind = z.infer<typeof CategoryKindSchema>;
 
 /**
- * Whether spending in this category is a need or a want. Set per *category*, not
- * per transaction, so it applies retroactively to all existing history and flows
- * through `transaction_splits` for free — each split inherits necessity from its
- * own category, which a per-transaction flag could not represent.
+ * Whether spending is a need or a want.
  *
- * Null means the user has not decided yet. That is deliberately a third state,
- * not a default to either side: reports surface it as its own "unclassified"
- * bucket so an essential-spend figure is never quietly built on an assumption.
+ * Authoritative on the *transaction*, because that is where the truth lives: the
+ * same category is essential one day and not the next (a food delivery when
+ * you're ill vs. a Friday takeaway). A category carries this too, but only as the
+ * default for transactions booked against it — see `effectiveNecessity`.
+ *
+ * Null means undecided at that level; it is never a silent default to either
+ * side. Spend whose necessity resolves to null lands in the report's
+ * "unclassified" bucket, so an essential-spend figure is never quietly built on
+ * an assumption.
  *
  * Deliberately NOT named "discretionary": services/cashflow.ts already uses that
  * word to mean "non-recurring", an unrelated meaning, and reusing it would put
@@ -283,10 +286,40 @@ export type CategoryKind = z.infer<typeof CategoryKindSchema>;
 export const ExpenseNecessitySchema = z.enum(["essential", "non_essential"]);
 export type ExpenseNecessity = z.infer<typeof ExpenseNecessitySchema>;
 
+/**
+ * Resolve the necessity that actually applies to a piece of spend.
+ *
+ * The transaction's own flag wins outright — it is the user's explicit statement
+ * about *this* spend. Consulting the category only when the transaction is silent
+ * is what lets one category hold both kinds of spend without the user having to
+ * tag every ordinary row.
+ *
+ * Only an expense category has an inheritable default. An income category cannot
+ * carry a necessity at all (a DB check constraint enforces that), and an unknown
+ * kind means the category could not be identified — neither is something to
+ * inherit from, so both fall through to null rather than trusting a value whose
+ * origin is unclear. A transaction-level override still stands in either case,
+ * because that flag describes the spend, not the category.
+ *
+ * Shared rather than duplicated in the API and the web app: two copies of a
+ * precedence rule drift, and a drifted copy would show the user a different
+ * figure from the one the report totals.
+ */
+export function effectiveNecessity(
+  txNecessity: ExpenseNecessity | null,
+  categoryNecessity: ExpenseNecessity | null,
+  categoryKind: CategoryKind | null,
+): ExpenseNecessity | null {
+  if (txNecessity !== null) return txNecessity;
+  if (categoryKind !== "expense") return null;
+  return categoryNecessity;
+}
+
 export const CategorySchema = z.object({
   id: z.uuid(),
   name: z.string(),
   kind: CategoryKindSchema,
+  /** Default necessity for transactions in this category; a transaction overrides it. */
   necessity: ExpenseNecessitySchema.nullable(),
   parentId: z.uuid().nullable(),
   icon: z.string(),
@@ -349,6 +382,11 @@ export const TransactionSchema = z.object({
   amountPaise: z.number().int(),
   merchant: z.string(),
   categoryId: z.uuid().nullable(),
+  /**
+   * Per-transaction necessity override. Null = inherit the category's default.
+   * Resolve with `effectiveNecessity`, never by reading this field alone.
+   */
+  necessity: ExpenseNecessitySchema.nullable(),
   notes: z.string(),
   tags: z.array(z.string()),
   source: TransactionSourceSchema,
@@ -378,6 +416,7 @@ export const CreateTransactionSchema = z.object({
     .refine((n) => n !== 0, "Amount cannot be zero"),
   merchant: z.string().default(""),
   categoryId: z.uuid().nullable().default(null),
+  necessity: ExpenseNecessitySchema.nullable().default(null),
   notes: z.string().default(""),
   tags: z.array(z.string()).default([]),
   resourceId: z.uuid().nullable().default(null),
@@ -395,6 +434,7 @@ export const UpdateTransactionSchema = z.object({
     .optional(),
   merchant: z.string().optional(),
   categoryId: z.uuid().nullable().optional(),
+  necessity: ExpenseNecessitySchema.nullable().optional(),
   notes: z.string().optional(),
   tags: z.array(z.string()).optional(),
   resourceId: z.uuid().nullable().optional(),

@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { Report, ReportQuery } from "@compass/shared";
 import { MAX_REPORT_RANGE_DAYS, formatINR } from "@compass/shared";
+import type { NecessitySpendRow } from "./periods.ts";
 import { reportToCsv, resolveReportRange, splitByNecessity } from "./reports.ts";
 
 /** ISO date shifted by `days` (may be negative), via UTC epoch arithmetic. */
@@ -79,77 +80,107 @@ test("resolveReportRange throws for a malformed monthly key", () => {
   assert.throws(() => resolveReportRange(q));
 });
 
-test("splitByNecessity sorts spend into essential, non-essential and unclassified by category", () => {
-  const byCategory = new Map<string | null, number>([
-    ["cat-essential", 1234500],
-    ["cat-non-essential", 987600],
-    ["cat-unset", 555500],
-  ]);
-  const categoryRows = [
-    { id: "cat-essential", kind: "expense" as const, necessity: "essential" as const },
-    { id: "cat-non-essential", kind: "expense" as const, necessity: "non_essential" as const },
-    { id: "cat-unset", kind: "expense" as const, necessity: null },
+test("splitByNecessity sorts rows into essential, non-essential and unclassified by resolved necessity", () => {
+  const rows: NecessitySpendRow[] = [
+    { txNecessity: "essential", catNecessity: null, catKind: "expense", spentPaise: 123451 },
+    { txNecessity: "non_essential", catNecessity: null, catKind: "expense", spentPaise: 98763 },
+    { txNecessity: null, catNecessity: null, catKind: "expense", spentPaise: 55551 },
   ];
-  assert.deepEqual(splitByNecessity(byCategory, categoryRows), {
-    essentialPaise: 1234500,
-    nonEssentialPaise: 987600,
-    unclassifiedPaise: 555500,
+  assert.deepEqual(splitByNecessity(rows), {
+    essentialPaise: 123451,
+    nonEssentialPaise: 98763,
+    unclassifiedPaise: 55551,
   });
+});
+
+test("a transaction override routes spend away from its category's default bucket", () => {
+  const rows: NecessitySpendRow[] = [
+    { txNecessity: "essential", catNecessity: "non_essential", catKind: "expense", spentPaise: 71317 },
+  ];
+  const result = splitByNecessity(rows);
+  assert.equal(result.essentialPaise, 71317);
+  assert.equal(result.nonEssentialPaise, 0);
 });
 
 test("uncategorized spend is unclassified, never assumed", () => {
-  const byCategory = new Map<string | null, number>([[null, 425000]]);
-  assert.deepEqual(splitByNecessity(byCategory, []), {
-    essentialPaise: 0,
-    nonEssentialPaise: 0,
-    unclassifiedPaise: 425000,
-  });
-});
-
-test("a category with no necessity set is unclassified", () => {
-  const byCategory = new Map<string | null, number>([["cat-unset", 310000]]);
-  const categoryRows = [{ id: "cat-unset", kind: "expense" as const, necessity: null }];
-  assert.deepEqual(splitByNecessity(byCategory, categoryRows), {
-    essentialPaise: 0,
-    nonEssentialPaise: 0,
-    unclassifiedPaise: 310000,
-  });
-});
-
-test("a category id absent from the list is unclassified", () => {
-  const byCategory = new Map<string | null, number>([["cat-unknown", 199900]]);
-  assert.deepEqual(splitByNecessity(byCategory, []), {
-    essentialPaise: 0,
-    nonEssentialPaise: 0,
-    unclassifiedPaise: 199900,
-  });
-});
-
-test("spend booked against an income category is unclassified", () => {
-  const byCategory = new Map<string | null, number>([["cat-income", 750000]]);
-  const categoryRows = [
-    { id: "cat-income", kind: "income" as const, necessity: "essential" as const },
+  const rows: NecessitySpendRow[] = [
+    { txNecessity: null, catNecessity: null, catKind: null, spentPaise: 42503 },
   ];
-  assert.deepEqual(splitByNecessity(byCategory, categoryRows), {
+  assert.deepEqual(splitByNecessity(rows), {
     essentialPaise: 0,
     nonEssentialPaise: 0,
-    unclassifiedPaise: 750000,
+    unclassifiedPaise: 42503,
   });
 });
 
-test("the three buckets always sum to the total spend", () => {
-  const byCategory = new Map<string | null, number>([
-    ["cat-essential", 1050000],
-    ["cat-non-essential", 620000],
-    [null, 380000],
-    ["cat-unknown", 145000],
-  ]);
-  const categoryRows = [
-    { id: "cat-essential", kind: "expense" as const, necessity: "essential" as const },
-    { id: "cat-non-essential", kind: "expense" as const, necessity: "non_essential" as const },
+test("a category with no necessity default set is unclassified", () => {
+  const rows: NecessitySpendRow[] = [
+    { txNecessity: null, catNecessity: null, catKind: "expense", spentPaise: 31009 },
   ];
-  const result = splitByNecessity(byCategory, categoryRows);
-  const total = [...byCategory.values()].reduce((sum, v) => sum + v, 0);
+  assert.deepEqual(splitByNecessity(rows), {
+    essentialPaise: 0,
+    nonEssentialPaise: 0,
+    unclassifiedPaise: 31009,
+  });
+});
+
+test("spend booked against an income category's default is unclassified", () => {
+  const rows: NecessitySpendRow[] = [
+    { txNecessity: null, catNecessity: "essential", catKind: "income", spentPaise: 75031 },
+  ];
+  assert.deepEqual(splitByNecessity(rows), {
+    essentialPaise: 0,
+    nonEssentialPaise: 0,
+    unclassifiedPaise: 75031,
+  });
+});
+
+test("a transaction override classifies spend that has no category at all", () => {
+  const rows: NecessitySpendRow[] = [
+    { txNecessity: "essential", catNecessity: null, catKind: null, spentPaise: 60107 },
+  ];
+  assert.deepEqual(splitByNecessity(rows), {
+    essentialPaise: 60107,
+    nonEssentialPaise: 0,
+    unclassifiedPaise: 0,
+  });
+});
+
+test("a transaction override applies across all of its split category rows", () => {
+  // One transaction split across two categories that disagree with each other and
+  // with the override; the override is transaction-level, so every part follows it.
+  const rows: NecessitySpendRow[] = [
+    { txNecessity: "essential", catNecessity: "non_essential", catKind: "expense", spentPaise: 40903 },
+    { txNecessity: "essential", catNecessity: null, catKind: "expense", spentPaise: 15101 },
+  ];
+  assert.deepEqual(splitByNecessity(rows), {
+    essentialPaise: 56004,
+    nonEssentialPaise: 0,
+    unclassifiedPaise: 0,
+  });
+});
+
+test("two rows resolving to the same necessity sum rather than overwrite", () => {
+  const rows: NecessitySpendRow[] = [
+    { txNecessity: "essential", catNecessity: null, catKind: "expense", spentPaise: 11117 },
+    { txNecessity: null, catNecessity: "essential", catKind: "expense", spentPaise: 22229 },
+  ];
+  assert.deepEqual(splitByNecessity(rows), {
+    essentialPaise: 33346,
+    nonEssentialPaise: 0,
+    unclassifiedPaise: 0,
+  });
+});
+
+test("the three buckets always sum to the total spend across all input rows", () => {
+  const rows: NecessitySpendRow[] = [
+    { txNecessity: "essential", catNecessity: null, catKind: "expense", spentPaise: 105007 },
+    { txNecessity: null, catNecessity: "non_essential", catKind: "expense", spentPaise: 62003 },
+    { txNecessity: null, catNecessity: null, catKind: null, spentPaise: 38009 },
+    { txNecessity: null, catNecessity: "essential", catKind: "income", spentPaise: 14501 },
+  ];
+  const result = splitByNecessity(rows);
+  const total = rows.reduce((sum, r) => sum + r.spentPaise, 0);
   assert.equal(result.essentialPaise + result.nonEssentialPaise + result.unclassifiedPaise, total);
 });
 

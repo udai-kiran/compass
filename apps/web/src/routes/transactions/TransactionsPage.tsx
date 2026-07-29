@@ -2,10 +2,12 @@ import { useMemo, useRef, useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
+  effectiveNecessity,
   formatDisplayDate,
   formatINR,
   todayInIST,
   type Category,
+  type ExpenseNecessity,
   type Transaction,
   type TransactionFilter,
 } from "@compass/shared";
@@ -358,11 +360,12 @@ function TxRow({
       amountPaise: number;
       merchant: string;
       accountId: string;
+      necessity: ExpenseNecessity | null;
     }>,
   ) => void;
 }) {
   const [editing, setEditing] = useState<
-    "category" | "date" | "amount" | "merchant" | "account" | null
+    "category" | "date" | "amount" | "merchant" | "account" | "necessity" | null
   >(null);
   const [editingDate, setEditingDate] = useState("");
   const lastCommittedDate = useRef<string | null>(null);
@@ -376,6 +379,14 @@ function TxRow({
   const involvesCard =
     thisAccount?.type === "credit_card" || counterpart?.type === "credit_card";
   const transferLabel = involvesCard ? "card payment" : "transfer";
+  const txCategory = tx.categoryId ? categories.find((c) => c.id === tx.categoryId) : undefined;
+  const isSplit = tx.splits.length > 0;
+  // A split transaction has no single category to inherit from — each part
+  // resolves against its own. Only an explicit override is meaningful at row level.
+  const resolvedNecessity = isSplit
+    ? tx.necessity
+    : effectiveNecessity(tx.necessity, txCategory?.necessity ?? null, txCategory?.kind ?? null);
+  const necessityIsExplicit = tx.necessity !== null;
   return (
     <div
       className="absolute left-0 flex w-full items-center gap-2 border-b border-slate-100 px-3 text-sm hover:bg-slate-50"
@@ -524,6 +535,52 @@ function TxRow({
           onClick={() => setEditing("category")}
         >
           {tx.splits.length > 0 ? "(split)" : catName(tx.categoryId)}
+        </button>
+      )}
+      {editing === "necessity" ? (
+        <select
+          autoFocus
+          value={tx.necessity ?? ""}
+          onChange={(e) => {
+            onUpdate({ necessity: (e.target.value || null) as ExpenseNecessity | null });
+            setEditing(null);
+          }}
+          onBlur={() => setEditing(null)}
+          className="hidden w-32 rounded border border-slate-300 px-1 py-0.5 text-xs md:block"
+        >
+          <option value="">Inherit</option>
+          <option value="essential">Essential</option>
+          <option value="non_essential">Non-essential</option>
+        </select>
+      ) : (
+        <button
+          className={`hidden w-8 shrink-0 rounded text-center text-xs md:block ${
+            resolvedNecessity === "essential"
+              ? necessityIsExplicit
+                ? "bg-emerald-100 font-semibold text-emerald-700"
+                : "text-emerald-600"
+              : resolvedNecessity === "non_essential"
+                ? necessityIsExplicit
+                  ? "bg-amber-100 font-semibold text-amber-700"
+                  : "text-amber-600"
+                : "text-slate-300 hover:text-slate-500"
+          }`}
+          onClick={() => setEditing("necessity")}
+          title={
+            necessityIsExplicit
+              ? `Set to ${tx.necessity === "essential" ? "Essential" : "Non-essential"} on this transaction. Click to change.`
+              : isSplit
+                ? "Each split uses its own category's default. Click to override the whole transaction."
+                : resolvedNecessity !== null
+                  ? `Inherited from ${catName(tx.categoryId)} (${
+                      resolvedNecessity === "essential" ? "Essential" : "Non-essential"
+                    }). Click to override for this transaction only.`
+                  : tx.categoryId === null
+                    ? "Uncategorized — no necessity set. Click to set one for this transaction."
+                    : `${catName(tx.categoryId)} has no default necessity. Click to set one for this transaction.`
+          }
+        >
+          {resolvedNecessity === "essential" ? "E" : resolvedNecessity === "non_essential" ? "N" : "–"}
         </button>
       )}
       {editing === "amount" ? (
