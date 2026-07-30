@@ -35,7 +35,13 @@ jobs:
           echo "version=$(git describe --tags --always --dirty 2>/dev/null || echo dev)" >> "$GITHUB_OUTPUT"
           echo "built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
 
+      # A named builder kept across jobs, so buildkit's own local cache
+      # persists. Each runner has its own DOCKER_CONFIG, so each gets its own
+      # builder and they never touch each other's state.
       - uses: docker/setup-buildx-action@v3
+        with:
+          name: pennypilot-persistent
+          cleanup: false
 
       # Only log in when we intend to push (not on pull_request).
       - if: github.event_name != 'pull_request'
@@ -70,5 +76,9 @@ jobs:
             APP_VERSION=${{ steps.ver.outputs.version }}
             GIT_SHA=${{ github.sha }}
             BUILD_TIME=${{ steps.ver.outputs.built_at }}
-          cache-from: type=gha,scope=${{ matrix.app }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.app }}
+          # No type=gha cache: on these persistent runners a cache *hit* still
+          # cost ~240s to pull a 108MB layer over the Actions cache API, while
+          # the persistent builder above reuses the same layers from local disk
+          # instantly. Raw bandwidth to GitHub measures ~8MB/s, so the cache
+          # service — not the network — was the bottleneck.
+          provenance: false
