@@ -251,11 +251,22 @@ export type StatementReconciliation = z.infer<typeof StatementReconciliationSche
 
 // ---------- EMIs ----------
 
+/**
+ * Account types an EMI's destination (the loan itself, modelled as an
+ * account) may point at. Excludes `credit_card` even though it's in the
+ * broader `LIABILITY_ACCOUNT_TYPES` predicate — a deliberate scope decision,
+ * not an oversight (see tasks/emi-loan-destination-account, "round 2" notes).
+ * Exported here, not duplicated, so the API and web import the same literal
+ * array.
+ */
+export const EMI_DESTINATION_TYPES = ["loan", "home_loan_od", "overdraft"] as const;
+
 export const UpsertEmiDetailsSchema = z.object({
   principalPaise: z.number().int().positive(),
   annualRateBps: z.number().int().min(0).max(10000),
   totalInstallments: z.number().int().min(1).max(600),
   startDate: z.iso.date(),
+  loanAccountId: z.uuid().nullable().default(null),
 });
 export type UpsertEmiDetails = z.input<typeof UpsertEmiDetailsSchema>;
 
@@ -267,12 +278,14 @@ export const CreateEmiSchema = z.object({
   annualRateBps: z.number().int().min(0).max(10000),
   totalInstallments: z.number().int().min(1).max(600),
   startDate: z.iso.date(),
+  loanAccountId: z.uuid().nullable().default(null),
 });
 export type CreateEmi = z.input<typeof CreateEmiSchema>;
 
 export const EmiSummarySchema = z.object({
   templateId: z.uuid(),
   accountId: z.uuid(),
+  loanAccountId: z.uuid().nullable(),
   merchant: z.string(),
   installmentPaise: z.number().int(),
   principalPaise: z.number().int(),

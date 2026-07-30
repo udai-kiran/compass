@@ -1,7 +1,12 @@
-import { and, asc, eq, gte, isNull, lt } from "drizzle-orm";
-import type { EmiInstallment, CreateEmi, EmiSummary, UpsertEmiDetails } from "@compass/shared";
-import { CreateEmiSchema, standardEmiPaise, UpsertEmiDetailsSchema } from "@compass/shared";
-import type { Db } from "../db/index.ts";
+import { and, asc, eq, gte, inArray, isNull, lt } from "drizzle-orm";
+import type { AccountType, EmiInstallment, CreateEmi, EmiSummary, UpsertEmiDetails } from "@compass/shared";
+import {
+  CreateEmiSchema,
+  EMI_DESTINATION_TYPES,
+  standardEmiPaise,
+  UpsertEmiDetailsSchema,
+} from "@compass/shared";
+import type { Db, DbOrTx } from "../db/index.ts";
 import { accounts, emiDetails, recurringTemplates, transactions } from "../db/schema.ts";
 import { HttpError } from "../lib/errors.ts";
 import { assertOwnedCategory } from "./ownership.ts";
@@ -63,6 +68,33 @@ function calendarMonthsBetween(from: string, to: string): number {
 }
 
 /**
+ * One reducing-balance amortization step: this period's interest/principal
+ * split for a single payment against a running balance. Shared by
+ * splitInstallments's row loop (which additionally handles skipped-period
+ * capitalization and the elapsed===0 same-month case — both needed only
+ * because a real/displayed payment history can have gaps) and
+ * materializeDue's own posting loop (which never has gaps and never
+ * charges zero periods — see recurring.ts's EMI branch — so it calls this
+ * directly, once per due date, with no wrapper logic). Keeping the core
+ * formula in one place is what stops the write and display paths from
+ * drifting apart.
+ */
+export function stepAmortization(
+  balancePaise: number,
+  annualRateBps: number,
+  amountPaise: number,
+): { principalPaise: number; interestPaise: number; balancePaise: number } {
+  const r = annualRateBps / 10000 / 12;
+  const paid = Math.abs(amountPaise);
+  const periodInterest = Math.round(balancePaise * r);
+  const interestPaise = Math.min(periodInterest, paid);
+  const shortfall = periodInterest - interestPaise;
+  const principalPaise = Math.max(0, Math.min(balancePaise, paid - interestPaise));
+  const newBalance = Math.max(0, balancePaise - principalPaise + shortfall);
+  return { principalPaise, interestPaise, balancePaise: newBalance };
+}
+
+/**
  * Splits each actual installment payment into principal and interest,
  * walked against a running balance the same reducing-balance way
  * amortize() projects the fixed schedule — but driven by the *actual*
@@ -117,12 +149,21 @@ export function splitInstallments(
       balance += Math.round(balance * r);
     }
     // This payment's own period (elapsed === 0 means "same month as the
-    // previous payment" — no new period, no new interest).
-    const periodInterest = elapsed === 0 ? 0 : Math.round(balance * r);
-    const interestPaise = Math.min(periodInterest, paid);
-    const shortfall = periodInterest - interestPaise; // unpaid interest, capitalizes
-    const principalPart = Math.max(0, Math.min(balance, paid - interestPaise));
-    balance = Math.max(0, balance - principalPart + shortfall);
+    // previous payment" — no new period, no new interest). An elapsed-0
+    // step is not "one period," so it's handled here rather than via
+    // stepAmortization, which is documented as exactly that.
+    let principalPart: number;
+    let interestPaise: number;
+    if (elapsed === 0) {
+      interestPaise = 0;
+      principalPart = Math.max(0, Math.min(balance, paid));
+      balance = Math.max(0, balance - principalPart);
+    } else {
+      const step = stepAmortization(balance, annualRateBps, p.amountPaise);
+      principalPart = step.principalPaise;
+      interestPaise = step.interestPaise;
+      balance = step.balancePaise;
+    }
     out.push({
       transactionId: p.transactionId,
       date: p.date,
@@ -137,6 +178,54 @@ export function splitInstallments(
 }
 
 /**
+ * Locks two account rows together in deterministic id order (never "lock
+ * whichever the caller mentions first") so a reversed source/destination
+ * pair from a concurrent request can't deadlock against this one. Returns
+ * both rows keyed by id; a missing id (not found or not owned) is simply
+ * absent from the map — callers decide what that means.
+ *
+ * Exported (not a route-facing API — no HTTP path calls this directly) so
+ * recurring.ts's materializeDue can reuse the same locking primitive for its
+ * EMI+destination-account branch; keeping one implementation is what makes
+ * the "template → accounts → emiDetails" lock order documented in
+ * tasks/emi-loan-destination-account actually hold everywhere it's needed.
+ */
+export async function lockAccountPair(
+  trx: DbOrTx,
+  userId: string,
+  idA: string,
+  idB: string,
+): Promise<Map<string, { type: AccountType; archivedAt: Date | null }>> {
+  const rows = await trx
+    .select({ id: accounts.id, type: accounts.type, archivedAt: accounts.archivedAt })
+    .from(accounts)
+    .where(and(eq(accounts.userId, userId), inArray(accounts.id, [idA, idB])))
+    .orderBy(asc(accounts.id))
+    .for("update");
+  return new Map(rows.map((r) => [r.id, { type: r.type, archivedAt: r.archivedAt }]));
+}
+
+/**
+ * Pure validator over already-locked rows (see lockAccountPair) — does no
+ * DB access itself, so it can't be called without the lock by accident.
+ */
+function assertLoanDestination(
+  locked: Map<string, { type: AccountType; archivedAt: Date | null }>,
+  loanAccountId: string,
+  sourceAccountId: string,
+): void {
+  if (loanAccountId === sourceAccountId) {
+    throw new HttpError(400, "Destination account must differ from the source account");
+  }
+  const acc = locked.get(loanAccountId);
+  if (!acc) throw new HttpError(404, "Destination account not found");
+  if (acc.archivedAt !== null) throw new HttpError(400, "Destination account is archived");
+  if (!(EMI_DESTINATION_TYPES as readonly string[]).includes(acc.type)) {
+    throw new HttpError(400, "Destination account must be a loan, home loan, or overdraft account");
+  }
+}
+
+/**
  * Create an EMI as a monthly recurring template (kind = "emi") plus its loan
  * schedule. The installment is derived from principal/rate/tenure and stored as
  * the template's (negative) amount; the recurring engine then materializes each
@@ -144,11 +233,6 @@ export function splitInstallments(
  */
 export async function createEmi(db: Db, userId: string, input: CreateEmi): Promise<EmiSummary> {
   const parsed = CreateEmiSchema.parse(input);
-  const acc = await db.query.accounts.findFirst({
-    where: and(eq(accounts.id, parsed.accountId), eq(accounts.userId, userId)),
-  });
-  if (!acc) throw new HttpError(404, "Account not found");
-  await assertOwnedCategory(db, userId, parsed.categoryId);
 
   const installment = standardEmiPaise(
     parsed.principalPaise,
@@ -158,6 +242,22 @@ export async function createEmi(db: Db, userId: string, input: CreateEmi): Promi
   const endDate = addMonths(parsed.startDate, parsed.totalInstallments - 1);
 
   const templateId = await db.transaction(async (trx) => {
+    // Lock order: accounts (via lockAccountPair, sorted) → emiDetails. No
+    // pre-existing template row here, so there's nothing to lock first.
+    // Passing the source id twice when there's no destination degrades to
+    // locking just the source — avoids a separate no-destination code path.
+    const locked = await lockAccountPair(
+      trx,
+      userId,
+      parsed.accountId,
+      parsed.loanAccountId ?? parsed.accountId,
+    );
+    if (!locked.has(parsed.accountId)) throw new HttpError(404, "Account not found");
+    await assertOwnedCategory(trx, userId, parsed.categoryId);
+    if (parsed.loanAccountId !== null) {
+      assertLoanDestination(locked, parsed.loanAccountId, parsed.accountId);
+    }
+
     const [tpl] = await trx
       .insert(recurringTemplates)
       .values({
@@ -181,6 +281,7 @@ export async function createEmi(db: Db, userId: string, input: CreateEmi): Promi
       annualRateBps: parsed.annualRateBps,
       totalInstallments: parsed.totalInstallments,
       startDate: parsed.startDate,
+      loanAccountId: parsed.loanAccountId,
     });
     return tpl!.id;
   });
@@ -198,22 +299,107 @@ export async function deleteEmi(db: Db, userId: string, templateId: string): Pro
   if (rows.length === 0) throw new HttpError(404, "EMI not found");
 }
 
+/**
+ * Full-replacement upsert of an EMI's schedule details. Has zero routes/
+ * callers today (see tasks/emi-loan-destination-account) — a future routed
+ * "edit EMI" feature must decide its own patch semantics then, not here.
+ *
+ * Lock order: template (SELECT ... FOR UPDATE, replacing the old plain
+ * findFirst) → accounts (via lockAccountPair, sorted) → emiDetails (also
+ * locked, so it's read-consistent with the template/account locks above it).
+ * Applies the destination-account attach/detach/repoint transition rules —
+ * see tasks/emi-loan-destination-account P4: null→non-null is only allowed
+ * when the EMI has no real installment history yet; non-null→null (detach)
+ * is always allowed; non-null→a different non-null (repoint) is always
+ * rejected, since there's no reconciliation logic for either account's
+ * balance to walk through.
+ */
 export async function upsertEmiDetails(
   db: Db,
   userId: string,
   templateId: string,
   input: UpsertEmiDetails,
 ): Promise<EmiSummary> {
-  const template = await db.query.recurringTemplates.findFirst({
-    where: and(eq(recurringTemplates.id, templateId), eq(recurringTemplates.userId, userId)),
-  });
-  if (!template) throw new HttpError(404, "Template not found");
-  if (template.kind !== "emi") throw new HttpError(400, "Template kind must be 'emi'");
   const parsed = UpsertEmiDetailsSchema.parse(input);
-  await db
-    .insert(emiDetails)
-    .values({ ...parsed, templateId, userId })
-    .onConflictDoUpdate({ target: emiDetails.templateId, set: { ...parsed, updatedAt: new Date() } });
+  await db.transaction(async (trx) => {
+    const templateRows = await trx
+      .select()
+      .from(recurringTemplates)
+      .where(and(eq(recurringTemplates.id, templateId), eq(recurringTemplates.userId, userId)))
+      .for("update");
+    const template = templateRows[0];
+    if (!template) throw new HttpError(404, "Template not found");
+    if (template.kind !== "emi") throw new HttpError(400, "Template kind must be 'emi'");
+
+    // Unlocked probe: is loanAccountId actually changing? Trusting this read
+    // without a row lock is safe only because the template row is already
+    // locked FOR UPDATE above, and loanAccountId is only ever written by
+    // this same function (also template-locked-first) — nothing else can
+    // change it mid-transaction. Same technique materializeDue already uses
+    // to decide which account to lock before locking it. Skipping
+    // lockAccountPair/assertLoanDestination for an unchanged value is what
+    // TASK.md P4/P7 require ("unchanged (including null -> null) -> no
+    // special handling"; "no-op, no validation triggered") — re-validating
+    // an unchanged destination would incorrectly 400 a resubmission whose
+    // destination has since become ineligible (archived/retyped).
+    const probe = await trx.query.emiDetails.findFirst({
+      where: eq(emiDetails.templateId, templateId),
+    });
+    const probedLoanAccountId = probe?.loanAccountId ?? null;
+    if (parsed.loanAccountId !== null && probedLoanAccountId !== parsed.loanAccountId) {
+      const locked = await lockAccountPair(trx, userId, template.accountId, parsed.loanAccountId);
+      assertLoanDestination(locked, parsed.loanAccountId, template.accountId);
+    }
+
+    // Locked re-read, unchanged from before this fix — stays the
+    // authoritative source for the actual transition-rule branch below
+    // (null->non-null history check / non-null->different-non-null
+    // rejection / non-null->null detach).
+    const detailRows = await trx
+      .select()
+      .from(emiDetails)
+      .where(eq(emiDetails.templateId, templateId))
+      .for("update");
+    const currentLoanAccountId = detailRows[0]?.loanAccountId ?? null;
+
+    if (currentLoanAccountId !== parsed.loanAccountId) {
+      if (currentLoanAccountId === null) {
+        // null -> non-null: allowed only when no real installment payment
+        // has been made yet — existence check only, presence/absence is
+        // all that matters here.
+        const history = await trx
+          .select({ id: transactions.id })
+          .from(transactions)
+          .where(
+            and(
+              eq(transactions.recurringTemplateId, templateId),
+              eq(transactions.accountId, template.accountId),
+              lt(transactions.amountPaise, 0),
+              isNull(transactions.deletedAt),
+            ),
+          )
+          .limit(1);
+        if (history.length > 0) {
+          throw new HttpError(
+            400,
+            "Can't attach a destination account to an EMI that already has installment history",
+          );
+        }
+      } else if (parsed.loanAccountId !== null) {
+        // non-null -> a different non-null: repointing isn't supported.
+        throw new HttpError(
+          400,
+          "Changing an EMI's destination account isn't supported — detach it first",
+        );
+      }
+      // non-null -> null (detach): always allowed, no reseed needed.
+    }
+
+    await trx
+      .insert(emiDetails)
+      .values({ ...parsed, templateId, userId })
+      .onConflictDoUpdate({ target: emiDetails.templateId, set: { ...parsed, updatedAt: new Date() } });
+  });
   const list = await listEmis(db, userId);
   return list.find((e) => e.templateId === templateId)!;
 }
@@ -239,6 +425,7 @@ export async function listEmis(db: Db, userId: string): Promise<EmiSummary[]> {
       return {
         templateId: t.id,
         accountId: t.accountId,
+        loanAccountId: d.loanAccountId,
         merchant: t.merchant,
         installmentPaise: installment,
         principalPaise: d.principalPaise,

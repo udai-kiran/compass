@@ -435,6 +435,13 @@
       "when": 1785350615728,
       "tag": "0061_magical_the_anarchist",
       "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1785433505883,
+      "tag": "0062_stale_garia",
+      "breakpoints": true
     }
   ]
 }
