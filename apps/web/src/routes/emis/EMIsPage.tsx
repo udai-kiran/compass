@@ -1,13 +1,21 @@
 import { useState, type FormEvent } from "react";
-import { formatINR, standardEmiPaise, type EmiSummary } from "@compass/shared";
+import { Link } from "react-router";
+import {
+  formatDisplayDate,
+  formatINR,
+  standardEmiPaise,
+  type AccountWithBalance,
+  type EmiSummary,
+} from "@compass/shared";
 import { Meter } from "../../lib/viz.tsx";
 import { toast } from "../../lib/toast.tsx";
 import { useAccounts, useCategories } from "../../lib/queries.ts";
-import { useEmiMutations, useEmis } from "../../lib/emi-queries.ts";
+import { useEmiInstallments, useEmiMutations, useEmis } from "../../lib/emi-queries.ts";
 import { DateField } from "../../components/DateField.tsx";
 
 export function EMIsPage() {
   const { data: emis, isLoading } = useEmis();
+  const { data: accounts } = useAccounts();
 
   return (
     <div className="mx-auto max-w-4xl">
@@ -28,15 +36,17 @@ export function EMIsPage() {
       )}
 
       <div className="mt-4 space-y-3">
-        {emis?.map((e) => <EmiRow key={e.templateId} emi={e} />)}
+        {emis?.map((e) => <EmiRow key={e.templateId} emi={e} accounts={accounts} />)}
       </div>
     </div>
   );
 }
 
-function EmiRow({ emi }: { emi: EmiSummary }) {
+function EmiRow({ emi, accounts }: { emi: EmiSummary; accounts: AccountWithBalance[] | undefined }) {
   const { remove, setPaused } = useEmiMutations();
+  const [historyOpen, setHistoryOpen] = useState(false);
   const pct = Math.round((emi.paidInstallments / emi.totalInstallments) * 100);
+  const account = accounts?.find((a) => a.id === emi.accountId);
 
   return (
     <section className="rounded-lg border border-slate-200 bg-white p-4">
@@ -54,6 +64,16 @@ function EmiRow({ emi }: { emi: EmiSummary }) {
             {formatINR(emi.installmentPaise)}/mo · {(emi.annualRateBps / 100).toFixed(2)}% p.a. ·{" "}
             {formatINR(emi.principalPaise)} principal
           </p>
+          {account ? (
+            <Link
+              to={`/accounts/${emi.accountId}`}
+              className="mt-0.5 inline-block text-xs text-slate-500 underline"
+            >
+              {account.name}
+            </Link>
+          ) : (
+            <p className="mt-0.5 text-xs text-slate-400">Account unavailable</p>
+          )}
         </div>
         <div className="flex shrink-0 gap-2">
           <button
@@ -90,7 +110,57 @@ function EmiRow({ emi }: { emi: EmiSummary }) {
         <Stat label="Total interest" value={formatINR(emi.totalInterestPaise)} />
         <Stat label="Payoff date" value={emi.payoffDate} />
       </div>
+
+      <details
+        className="mt-4"
+        open={historyOpen}
+        onToggle={(e) => setHistoryOpen(e.currentTarget.open)}
+      >
+        <summary className="cursor-pointer text-sm text-slate-500">Installment history</summary>
+        <div className="mt-2">
+          <InstallmentHistory templateId={emi.templateId} open={historyOpen} />
+        </div>
+      </details>
     </section>
+  );
+}
+
+function InstallmentHistory({ templateId, open }: { templateId: string; open: boolean }) {
+  const { data: installments, isPending, isError } = useEmiInstallments(templateId, open);
+
+  if (isPending) {
+    return <p className="text-xs text-slate-400">Loading…</p>;
+  }
+  if (isError) {
+    return <p className="text-xs text-slate-400">Couldn't load installment history.</p>;
+  }
+  if (installments.length === 0) {
+    return <p className="text-xs text-slate-400">No installments recorded yet.</p>;
+  }
+
+  return (
+    <table className="w-full text-xs">
+      <thead>
+        <tr className="text-left text-slate-500">
+          <th className="pb-1 font-medium">Date</th>
+          <th className="pb-1 font-medium">Amount</th>
+          <th className="pb-1 font-medium">Principal</th>
+          <th className="pb-1 font-medium">Interest</th>
+          <th className="pb-1 font-medium">Balance after</th>
+        </tr>
+      </thead>
+      <tbody>
+        {installments.map((row) => (
+          <tr key={row.transactionId} className="border-t border-slate-100">
+            <td className="py-1 text-slate-600">{formatDisplayDate(row.date)}</td>
+            <td className="py-1 text-slate-800">{formatINR(Math.abs(row.amountPaise))}</td>
+            <td className="py-1 text-slate-800">{formatINR(row.principalPaise)}</td>
+            <td className="py-1 text-slate-800">{formatINR(row.interestPaise)}</td>
+            <td className="py-1 text-slate-800">{formatINR(row.balancePaise)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
 

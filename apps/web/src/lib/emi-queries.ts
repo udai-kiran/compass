@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
-import { EmiSummarySchema, type CreateEmi } from "@compass/shared";
+import { EmiInstallmentSchema, EmiSummarySchema, type CreateEmi } from "@compass/shared";
 import { apiGet, apiPost } from "./api.ts";
 
 const OkSchema = z.object({ ok: z.boolean() });
@@ -19,6 +19,15 @@ export function useEmis() {
   return useQuery({
     queryKey: ["emis"],
     queryFn: () => apiGet("/api/emis", z.array(EmiSummarySchema)),
+  });
+}
+
+export function useEmiInstallments(templateId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ["emis", templateId, "installments"],
+    queryFn: () => apiGet(`/api/emis/${templateId}/installments`, z.array(EmiInstallmentSchema)),
+    enabled,
+    staleTime: 60_000,
   });
 }
 

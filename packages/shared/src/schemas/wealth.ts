@@ -272,6 +272,7 @@ export type CreateEmi = z.input<typeof CreateEmiSchema>;
 
 export const EmiSummarySchema = z.object({
   templateId: z.uuid(),
+  accountId: z.uuid(),
   merchant: z.string(),
   installmentPaise: z.number().int(),
   principalPaise: z.number().int(),
@@ -285,6 +286,16 @@ export const EmiSummarySchema = z.object({
   paused: z.boolean(),
 });
 export type EmiSummary = z.infer<typeof EmiSummarySchema>;
+
+export const EmiInstallmentSchema = z.object({
+  transactionId: z.uuid(),
+  date: z.iso.date(),
+  amountPaise: z.number().int(),
+  principalPaise: z.number().int(),
+  interestPaise: z.number().int(),
+  balancePaise: z.number().int(),
+});
+export type EmiInstallment = z.infer<typeof EmiInstallmentSchema>;
 
 // ---------- Holdings & portfolio ----------
 

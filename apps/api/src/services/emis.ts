@@ -1,8 +1,8 @@
-import { and, eq } from "drizzle-orm";
-import type { CreateEmi, EmiSummary, UpsertEmiDetails } from "@compass/shared";
+import { and, asc, eq, gte, isNull, lt } from "drizzle-orm";
+import type { EmiInstallment, CreateEmi, EmiSummary, UpsertEmiDetails } from "@compass/shared";
 import { CreateEmiSchema, standardEmiPaise, UpsertEmiDetailsSchema } from "@compass/shared";
 import type { Db } from "../db/index.ts";
-import { accounts, emiDetails, recurringTemplates } from "../db/schema.ts";
+import { accounts, emiDetails, recurringTemplates, transactions } from "../db/schema.ts";
 import { HttpError } from "../lib/errors.ts";
 import { assertOwnedCategory } from "./ownership.ts";
 
@@ -49,6 +49,91 @@ export function amortize(
   if (paidInstallments >= totalInstallments) outstanding = 0;
   if (paidInstallments === 0) outstanding = principalPaise;
   return { totalInterestPaise: totalInterest, outstandingPaise: outstanding };
+}
+
+/** Whole calendar months between two ISO dates, ignoring day-of-month —
+ *  the same monthly-period granularity annualRateBps/12 already assumes
+ *  everywhere else in this file. Always >= 0 when `to >= from` lexically
+ *  (guaranteed by callers, which pass date-ascending rows no earlier
+ *  than `startDate` — see P4's date filter). */
+function calendarMonthsBetween(from: string, to: string): number {
+  const [fy, fm] = from.split("-").map(Number) as [number, number, number];
+  const [ty, tm] = to.split("-").map(Number) as [number, number, number];
+  return (ty - fy) * 12 + (tm - fm);
+}
+
+/**
+ * Splits each actual installment payment into principal and interest,
+ * walked against a running balance the same reducing-balance way
+ * amortize() projects the fixed schedule — but driven by the *actual*
+ * payment dates/amounts, so it's elapsed-month-aware rather than
+ * one-period-per-row:
+ *  - the first payment always accrues at least one period of interest
+ *    (from `startDate`), even if it lands the same calendar month as
+ *    `startDate` (that month IS the first period);
+ *  - a later payment in the *same* calendar month as the previous one
+ *    (e.g. a same-month top-up) accrues zero new interest — it's a pure
+ *    principal payment against the already-charged period;
+ *  - a payment after a gap of N unpaid calendar months capitalizes
+ *    (adds to balance, uncompounded-per-day but compounded-per-skipped-
+ *    month) the interest for the N-1 skipped months before charging the
+ *    final, paid period — real negative amortization for a genuinely
+ *    missed payment, not modeled beyond whole-month granularity.
+ * `principalPaise + interestPaise` is always exactly `abs(amountPaise)`
+ * except when a payment overshoots what's needed to zero the balance
+ * (a payoff/overpayment) — the excess isn't attributed to either bucket
+ * and balancePaise simply floors at 0.
+ * Callers must pre-filter to outflow-signed (amountPaise < 0),
+ * same-account transactions — this function trusts its input list is
+ * already the correct set of real installment payments, date-ascending.
+ */
+export function splitInstallments(
+  principalPaise: number,
+  annualRateBps: number,
+  startDate: string,
+  payments: { transactionId: string; date: string; amountPaise: number }[],
+): {
+  transactionId: string;
+  date: string;
+  amountPaise: number;
+  principalPaise: number;
+  interestPaise: number;
+  balancePaise: number;
+}[] {
+  const r = annualRateBps / 10000 / 12;
+  let balance = principalPaise;
+  let prevDate = startDate;
+  const out: ReturnType<typeof splitInstallments> = [];
+  for (const [i, p] of payments.entries()) {
+    const paid = Math.abs(p.amountPaise);
+    const elapsed =
+      i === 0
+        ? Math.max(1, calendarMonthsBetween(startDate, p.date))
+        : Math.max(0, calendarMonthsBetween(prevDate, p.date));
+    // Capitalize interest for any fully-skipped, unpaid months before
+    // this payment's own period.
+    const skippedPeriods = Math.max(0, elapsed - 1);
+    for (let s = 0; s < skippedPeriods; s += 1) {
+      balance += Math.round(balance * r);
+    }
+    // This payment's own period (elapsed === 0 means "same month as the
+    // previous payment" — no new period, no new interest).
+    const periodInterest = elapsed === 0 ? 0 : Math.round(balance * r);
+    const interestPaise = Math.min(periodInterest, paid);
+    const shortfall = periodInterest - interestPaise; // unpaid interest, capitalizes
+    const principalPart = Math.max(0, Math.min(balance, paid - interestPaise));
+    balance = Math.max(0, balance - principalPart + shortfall);
+    out.push({
+      transactionId: p.transactionId,
+      date: p.date,
+      amountPaise: p.amountPaise,
+      principalPaise: principalPart,
+      interestPaise,
+      balancePaise: balance,
+    });
+    prevDate = p.date;
+  }
+  return out;
 }
 
 /**
@@ -153,6 +238,7 @@ export async function listEmis(db: Db, userId: string): Promise<EmiSummary[]> {
       );
       return {
         templateId: t.id,
+        accountId: t.accountId,
         merchant: t.merchant,
         installmentPaise: installment,
         principalPaise: d.principalPaise,
@@ -167,4 +253,54 @@ export async function listEmis(db: Db, userId: string): Promise<EmiSummary[]> {
       };
     })
     .sort((a, b) => a.payoffDate.localeCompare(b.payoffDate));
+}
+
+/**
+ * Real ledger transactions materialized against an EMI's recurring template,
+ * each split into principal/interest via splitInstallments. The query is
+ * defensively scoped to the template's own account, outflow-signed rows,
+ * and dates on-or-after the loan's startDate — see TASK.md P4 (review-1
+ * findings 2/3, review-2 finding 1) for why each filter is needed.
+ */
+export async function listEmiInstallments(
+  db: Db,
+  userId: string,
+  templateId: string,
+): Promise<EmiInstallment[]> {
+  const template = await db.query.recurringTemplates.findFirst({
+    where: and(eq(recurringTemplates.id, templateId), eq(recurringTemplates.userId, userId)),
+  });
+  if (!template) throw new HttpError(404, "Template not found");
+  if (template.kind !== "emi") throw new HttpError(400, "Template kind must be 'emi'");
+  const d = await db.query.emiDetails.findFirst({
+    where: and(eq(emiDetails.templateId, templateId), eq(emiDetails.userId, userId)),
+  });
+  if (!d) throw new HttpError(404, "EMI details not found");
+
+  const rows = await db
+    .select({
+      id: transactions.id,
+      date: transactions.date,
+      amountPaise: transactions.amountPaise,
+    })
+    .from(transactions)
+    .where(
+      and(
+        eq(transactions.recurringTemplateId, templateId),
+        eq(transactions.userId, userId),
+        eq(transactions.accountId, template.accountId),
+        lt(transactions.amountPaise, 0),
+        gte(transactions.date, d.startDate),
+        isNull(transactions.deletedAt),
+      ),
+    )
+    .orderBy(asc(transactions.date), asc(transactions.createdAt), asc(transactions.id))
+    .limit(2000);
+
+  return splitInstallments(
+    d.principalPaise,
+    d.annualRateBps,
+    d.startDate,
+    rows.map((r) => ({ transactionId: r.id, date: r.date, amountPaise: r.amountPaise })),
+  );
 }

@@ -1,8 +1,8 @@
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
-import { CreateEmiSchema, EmiSummarySchema } from "@compass/shared";
-import { createEmi, deleteEmi, listEmis } from "../services/emis.ts";
+import { CreateEmiSchema, EmiInstallmentSchema, EmiSummarySchema } from "@compass/shared";
+import { createEmi, deleteEmi, listEmiInstallments, listEmis } from "../services/emis.ts";
 import { materializeDue } from "../services/recurring.ts";
 import { invalidateUserCache } from "../services/cache.ts";
 import { enqueueBudgetEvaluation } from "../jobs/index.ts";
@@ -41,5 +41,11 @@ export async function emiRoutes(app: FastifyInstance) {
       await deleteEmi(app.db, req.session!.userId, req.params.templateId);
       return { ok: true };
     },
+  );
+
+  r.get(
+    "/api/emis/:templateId/installments",
+    { schema: { params: IdParams, response: { 200: z.array(EmiInstallmentSchema) } } },
+    async (req) => listEmiInstallments(app.db, req.session!.userId, req.params.templateId),
   );
 }
