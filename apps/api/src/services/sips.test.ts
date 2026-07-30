@@ -10,11 +10,14 @@ import {
   firstOccurrenceOnOrAfter,
   installmentDateError,
   isArchived,
+  isCheckViolation,
   isUniqueViolation,
+  laterInstallmentDate,
   lastOccurrenceOnOrBefore,
   monthlyEquivalentPaise,
   nextSipDate,
   resolveSipDateRange,
+  resolveSipFundingTarget,
   resolveTargetGoalDecision,
   sipOccurrencesInWindow,
 } from "./sips.ts";
@@ -345,6 +348,45 @@ test("an update that only changes startDate to after the stored endDate resolves
   assert.equal(sipDateRangeValid(resolved.startDate, resolved.endDate), false);
 });
 
+// ---------- resolveSipFundingTarget (payroll+mf_folio resolved-pair validation on partial update) ----------
+
+test("resolveSipFundingTarget: a patch that changes only fundingSource keeps the stored targetKind", () => {
+  assert.deepEqual(
+    resolveSipFundingTarget(
+      { targetKind: "mf_folio", fundingSource: "bank_debit" },
+      { fundingSource: "payroll" },
+    ),
+    { targetKind: "mf_folio", fundingSource: "payroll" },
+  );
+});
+
+test("resolveSipFundingTarget: a patch that changes only targetKind keeps the stored fundingSource", () => {
+  assert.deepEqual(
+    resolveSipFundingTarget(
+      { targetKind: "account", fundingSource: "payroll" },
+      { targetKind: "mf_folio" },
+    ),
+    { targetKind: "mf_folio", fundingSource: "payroll" },
+  );
+});
+
+test("resolveSipFundingTarget: a patch that changes both uses both new values", () => {
+  assert.deepEqual(
+    resolveSipFundingTarget(
+      { targetKind: "mf_folio", fundingSource: "bank_debit" },
+      { targetKind: "account", fundingSource: "payroll" },
+    ),
+    { targetKind: "account", fundingSource: "payroll" },
+  );
+});
+
+test("resolveSipFundingTarget: an empty patch keeps both stored values", () => {
+  assert.deepEqual(
+    resolveSipFundingTarget({ targetKind: "mf_folio", fundingSource: "bank_debit" }, {}),
+    { targetKind: "mf_folio", fundingSource: "bank_debit" },
+  );
+});
+
 // ---------- assertLinkRowsMatched (Fix 2: TOCTOU-safe conditional link) ----------
 
 test("assertLinkRowsMatched: one matched row (the common case) does not throw", () => {
@@ -370,6 +412,25 @@ test("isArchived: a null archivedAt is not archived", () => {
 test("isArchived: any non-null archivedAt (Date or ISO string) is archived", () => {
   assert.equal(isArchived(new Date("2026-01-01")), true);
   assert.equal(isArchived("2026-01-01T00:00:00.000Z"), true);
+});
+
+// ---------- laterInstallmentDate (merging holding_events + transactions installments) ----------
+
+test("laterInstallmentDate: both null yields null", () => {
+  assert.equal(laterInstallmentDate(null, null), null);
+});
+
+test("laterInstallmentDate: only the holding-event side set returns it", () => {
+  assert.equal(laterInstallmentDate("2026-07-05", null), "2026-07-05");
+});
+
+test("laterInstallmentDate: only the transaction side set returns it", () => {
+  assert.equal(laterInstallmentDate(null, "2026-07-05"), "2026-07-05");
+});
+
+test("laterInstallmentDate: both set returns the more recent (greater) date", () => {
+  assert.equal(laterInstallmentDate("2026-06-05", "2026-07-05"), "2026-07-05");
+  assert.equal(laterInstallmentDate("2026-07-05", "2026-06-05"), "2026-07-05");
 });
 
 // ---------- installmentDateError (recordSipInstallment: date must fall within the SIP's life) ----------
@@ -541,6 +602,33 @@ test("isUniqueViolation: a wrapped 23503 (FK, not unique) with the matching name
 
 test("isUniqueViolation: a non-Postgres error is false", () => {
   assert.equal(isUniqueViolation(new Error("boom"), "holding_events_sip_date_idx"), false);
+});
+
+// ---------- isCheckViolation (Drizzle wraps driver errors — see lib/errors.ts pgError) ----------
+
+test("isCheckViolation: a wrapped 23514 with the matching constraint name is true", () => {
+  const wrapped = Object.assign(new Error("query failed"), {
+    cause: { code: "23514", constraint: "sips_payroll_requires_account_target" },
+  });
+  assert.equal(isCheckViolation(wrapped, "sips_payroll_requires_account_target"), true);
+});
+
+test("isCheckViolation: a wrapped 23514 with a different constraint name is false", () => {
+  const wrapped = Object.assign(new Error("query failed"), {
+    cause: { code: "23514", constraint: "some_other_check" },
+  });
+  assert.equal(isCheckViolation(wrapped, "sips_payroll_requires_account_target"), false);
+});
+
+test("isCheckViolation: a wrapped 23505 (unique, not check) with the matching name is false", () => {
+  const wrapped = Object.assign(new Error("query failed"), {
+    cause: { code: "23505", constraint: "sips_payroll_requires_account_target" },
+  });
+  assert.equal(isCheckViolation(wrapped, "sips_payroll_requires_account_target"), false);
+});
+
+test("isCheckViolation: a non-Postgres error is false", () => {
+  assert.equal(isCheckViolation(new Error("boom"), "sips_payroll_requires_account_target"), false);
 });
 
 // ---------- dueInstallmentDate ----------

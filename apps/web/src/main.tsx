@@ -37,6 +37,9 @@ const TrendsPage = lazy(() =>
 const GoalsPage = lazy(() =>
   import("./routes/goals/GoalsPage.tsx").then((m) => ({ default: m.GoalsPage })),
 );
+const SipsPage = lazy(() =>
+  import("./routes/sips/SipsPage.tsx").then((m) => ({ default: m.SipsPage })),
+);
 const InboxPage = lazy(() =>
   import("./routes/inbox/InboxPage.tsx").then((m) => ({ default: m.InboxPage })),
 );
@@ -132,6 +135,7 @@ const router = createBrowserRouter([
       { path: "import", element: <ImportPage /> },
       { path: "budgets", element: <BudgetsPage /> },
       { path: "goals", element: <GoalsPage /> },
+      { path: "sips", element: <SipsPage /> },
       { path: "cash-flow", element: <CashFlowPage /> },
       { path: "notifications", element: <NotificationsPage /> },
       { path: "investments", element: <PortfolioPage /> },

@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 import {
   BillOccurrenceSchema,
@@ -77,6 +77,22 @@ export function useGoalMutations() {
 
 // ---------- SIPs ----------
 
+/**
+ * Every cached view a SIP write can move. Shared by the single-SIP mutations
+ * and the batch installment recorder so the two can't drift on what they
+ * refresh.
+ */
+function invalidateSipViews(qc: QueryClient): void {
+  void qc.invalidateQueries({ queryKey: ["sips"] });
+  void qc.invalidateQueries({ queryKey: ["goal-progress"] });
+  void qc.invalidateQueries({ queryKey: ["forecast"] });
+  // Recording an installment inserts a `buy` holding event — the same row
+  // addEvent creates in wealth-queries.ts, so it moves the same three views.
+  void qc.invalidateQueries({ queryKey: ["portfolio"] });
+  void qc.invalidateQueries({ queryKey: ["net-worth"] });
+  void qc.invalidateQueries({ queryKey: ["capital-gains"] });
+}
+
 export function useSips(goalId: string) {
   return useQuery({
     queryKey: ["sips", goalId],
@@ -84,18 +100,18 @@ export function useSips(goalId: string) {
   });
 }
 
+/**
+ * Every SIP across every goal — backs the `/sips` page. The `["sips", ...]`
+ * key prefix is deliberate: `invalidateSipViews` invalidates `["sips"]`, which
+ * prefix-matches both this and each per-goal `useSips(goalId)` cache.
+ */
+export function useAllSips() {
+  return useQuery({ queryKey: ["sips", "all"], queryFn: () => apiGet("/api/sips", z.array(SipSchema)) });
+}
+
 export function useSipMutations() {
   const qc = useQueryClient();
-  const invalidate = () => {
-    void qc.invalidateQueries({ queryKey: ["sips"] });
-    void qc.invalidateQueries({ queryKey: ["goal-progress"] });
-    void qc.invalidateQueries({ queryKey: ["forecast"] });
-    // Recording an installment inserts a `buy` holding event — the same row
-    // addEvent creates in wealth-queries.ts, so it moves the same three views.
-    void qc.invalidateQueries({ queryKey: ["portfolio"] });
-    void qc.invalidateQueries({ queryKey: ["net-worth"] });
-    void qc.invalidateQueries({ queryKey: ["capital-gains"] });
-  };
+  const invalidate = () => invalidateSipViews(qc);
   const create = useMutation({
     mutationFn: (body: CreateSip) => apiPost("/api/sips", SipSchema, body),
     onSuccess: invalidate,
@@ -115,6 +131,57 @@ export function useSipMutations() {
     onSuccess: invalidate,
   });
   return { create, update, remove, recordInstallment };
+}
+
+/** One row of a batch installment submission. `id` is the SIP; the rest is the request body. */
+export interface SipInstallmentDraft {
+  id: string;
+  date: string;
+  amountPaise: number;
+  nav: number | null;
+  units: number | null;
+  note: string;
+}
+
+/** Per-row result of a batch submission — `error` is null when that row was recorded. */
+export interface SipInstallmentOutcome {
+  id: string;
+  error: string | null;
+}
+
+/**
+ * Records several SIP installments from one user action by fanning out to the
+ * single-installment endpoint, one request per SIP.
+ *
+ * Deliberately NOT a server-side batch endpoint. Each installment is already
+ * its own transaction, and per-row independence is the behaviour we want: a
+ * mistyped NAV on one folio must not roll back the installments that were
+ * fine, which is exactly what a single-transaction batch route would do.
+ *
+ * Because every row's failure is caught here, the mutation itself always
+ * resolves. That is what keeps a failed row's message inline against its own
+ * row instead of firing the global `mutationCache` error toast (see main.tsx),
+ * and it means one cache invalidation covers the whole batch rather than N.
+ */
+export function useRecordInstallments() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (drafts: SipInstallmentDraft[]): Promise<SipInstallmentOutcome[]> => {
+      const settled = await Promise.allSettled(
+        drafts.map(({ id, ...body }) => apiPost(`/api/sips/${id}/installments`, HoldingEventSchema, body)),
+      );
+      return drafts.map((draft, i) => {
+        const result = settled[i]!;
+        if (result.status === "fulfilled") return { id: draft.id, error: null };
+        const reason: unknown = result.reason;
+        return {
+          id: draft.id,
+          error: reason instanceof Error ? reason.message : "Couldn't record this installment",
+        };
+      });
+    },
+    onSuccess: () => invalidateSipViews(qc),
+  });
 }
 
 // ---------- cash flow & forecast ----------

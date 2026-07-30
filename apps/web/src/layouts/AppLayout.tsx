@@ -55,6 +55,7 @@ const NAV_GROUPS: NavGroup[] = [
     heading: "Plan",
     items: [
       { to: "/goals", label: "Goals", icon: "goals" },
+      { to: "/sips", label: "SIPs", icon: "investments" },
       { to: "/trends", label: "Trends", icon: "trends" },
       { to: "/insights", label: "Insights", icon: "insights" },
       { to: "/reports", label: "Reports", icon: "reports" },

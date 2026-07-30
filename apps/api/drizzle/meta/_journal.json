@@ -428,6 +428,13 @@
       "when": 1785301421273,
       "tag": "0060_brave_ender_wiggin",
       "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1785350615728,
+      "tag": "0061_magical_the_anarchist",
+      "breakpoints": true
     }
   ]
 }

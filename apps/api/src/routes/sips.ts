@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
 import { CreateSipSchema, HoldingEventSchema, RecordSipInstallmentSchema, SipSchema, UpdateSipSchema } from "@compass/shared";
-import { createSip, deleteSip, listSipsForGoal, recordSipInstallment, updateSip } from "../services/sips.ts";
+import { createSip, deleteSip, listAllSips, listSipsForGoal, recordSipInstallment, updateSip } from "../services/sips.ts";
 import { invalidateUserCache } from "../services/cache.ts";
 
 const IdParams = z.object({ id: z.uuid() });
@@ -10,6 +10,12 @@ const GoalIdParams = z.object({ id: z.uuid() });
 
 export async function sipRoutes(app: FastifyInstance) {
   const r = app.withTypeProvider<ZodTypeProvider>();
+
+  r.get(
+    "/api/sips",
+    { schema: { response: { 200: z.array(SipSchema) } } },
+    async (req) => listAllSips(app.db, req.session!.userId),
+  );
 
   r.get(
     "/api/goals/:id/sips",
