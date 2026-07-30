@@ -173,7 +173,21 @@ export const CreateRecurringTemplateSchema = z.object({
 });
 export type CreateRecurringTemplate = z.input<typeof CreateRecurringTemplateSchema>;
 
-export const UpdateRecurringTemplateSchema = CreateRecurringTemplateSchema.partial().extend({
-  paused: z.boolean().optional(),
-});
+export const UpdateRecurringTemplateSchema = z
+  .object({
+    accountId: CreateRecurringTemplateSchema.shape.accountId,
+    categoryId: CreateRecurringTemplateSchema.shape.categoryId.unwrap(),
+    merchant: CreateRecurringTemplateSchema.shape.merchant,
+    amountPaise: CreateRecurringTemplateSchema.shape.amountPaise,
+    notes: CreateRecurringTemplateSchema.shape.notes.unwrap(),
+    frequency: CreateRecurringTemplateSchema.shape.frequency,
+    interval: CreateRecurringTemplateSchema.shape.interval.unwrap(),
+    nextDueDate: CreateRecurringTemplateSchema.shape.nextDueDate,
+    endDate: CreateRecurringTemplateSchema.shape.endDate.unwrap(),
+    kind: CreateRecurringTemplateSchema.shape.kind.unwrap(),
+    remindDays: CreateRecurringTemplateSchema.shape.remindDays.unwrap(),
+    resourceId: CreateRecurringTemplateSchema.shape.resourceId.unwrap(),
+  })
+  .partial()
+  .extend({ paused: z.boolean().optional() });
 export type UpdateRecurringTemplate = z.infer<typeof UpdateRecurringTemplateSchema>;

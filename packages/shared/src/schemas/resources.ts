@@ -33,7 +33,15 @@ export const CreateResourceSchema = z.object({
 });
 export type CreateResource = z.infer<typeof CreateResourceSchema>;
 
-export const UpdateResourceSchema = CreateResourceSchema.partial().extend({
-  archived: z.boolean().optional(),
-});
+export const UpdateResourceSchema = z
+  .object({
+    kind: CreateResourceSchema.shape.kind,
+    name: CreateResourceSchema.shape.name,
+    identifier: CreateResourceSchema.shape.identifier.unwrap(),
+    provider: CreateResourceSchema.shape.provider.unwrap(),
+    planName: CreateResourceSchema.shape.planName.unwrap(),
+    details: CreateResourceSchema.shape.details.unwrap(),
+  })
+  .partial()
+  .extend({ archived: z.boolean().optional() });
 export type UpdateResource = z.infer<typeof UpdateResourceSchema>;
