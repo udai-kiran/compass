@@ -749,7 +749,30 @@ export async function commitImport(
   };
 }
 
-/** Hard-delete exactly the batch's transactions; balances recompute automatically. */
+/**
+ * How many of these transaction rows currently carry a live (non-soft-
+ * deleted) SIP link — used by rollbackImport to decide whether a hard delete
+ * would silently destroy a recorded SIP installment. Pure so it's
+ * unit-testable without a DB.
+ */
+export function linkedRollbackBlockers(
+  rows: { sipId: string | null; deletedAt: Date | string | null }[],
+): number {
+  return rows.filter((r) => r.sipId !== null && r.deletedAt === null).length;
+}
+
+/**
+ * Hard-delete exactly the batch's transactions; balances recompute
+ * automatically. Guarded against a batch that contains a transaction now
+ * linked to a SIP installment (`transactions.sip_id`, stamped later by
+ * `linkSipInstallment`, well after this import ran) — hard-deleting it would
+ * silently destroy that recorded installment with no trace, so the rollback
+ * is rejected until the user unlinks it explicitly. A soft-deleted linked
+ * row is exempt: its link is already excluded from every installment query
+ * and UI surface, so it's already functionally dead, and blocking on it
+ * would leave the user unable to ever roll back an import containing a
+ * soft-deleted row.
+ */
 export async function rollbackImport(
   db: Db,
   userId: string,
@@ -781,6 +804,36 @@ export async function rollbackImport(
   const snapshots = reconciled.map((r) => r.reconciledFrom as Snapshot);
 
   await db.transaction(async (t) => {
+    // Lock every transaction row this import created before touching
+    // anything else — this is the transaction's first statement, so nothing
+    // has been written yet if the guard below throws. Locking (not just
+    // reading) is what closes the race against a concurrent
+    // linkSipInstallment, which itself locks the target transaction row FOR
+    // UPDATE before stamping sip_id (see services/sips.ts's lock-order
+    // comment there); userId-scoping and the deterministic id order are
+    // defense in depth, cheap insurance against any future caller that locks
+    // an overlapping set of transaction rows in a different order.
+    // rollbackImport never locks a sips row, so there's no reverse
+    // transactions -> sips wait edge and no deadlock cycle against
+    // linkSipInstallment's sips-then-transactions order.
+    if (ids.length > 0) {
+      const lockedRows = await t
+        .select({ id: transactions.id, sipId: transactions.sipId, deletedAt: transactions.deletedAt })
+        .from(transactions)
+        .where(and(inArray(transactions.id, ids), eq(transactions.userId, userId)))
+        .orderBy(transactions.id)
+        .for("update");
+      const blockers = linkedRollbackBlockers(lockedRows);
+      if (blockers > 0) {
+        throw new HttpError(
+          409,
+          blockers === 1
+            ? "This import created 1 transaction linked to a SIP installment — unlink it before rolling back"
+            : `This import created ${blockers} transactions linked to a SIP installment — unlink them before rolling back`,
+        );
+      }
+    }
+
     for (let i = 0; i < ids.length; i += BATCH) {
       await t
         .delete(transactions)
