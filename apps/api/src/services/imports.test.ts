@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { dedupeHash, parseRow, suggestMapping } from "./imports.ts";
+import { dedupeHash, linkedRollbackBlockers, parseRow, suggestMapping } from "./imports.ts";
 import { heuristicNormalize, normalizeMerchant } from "./merchants.ts";
 import type { ImportMapping } from "@compass/shared";
 
@@ -136,4 +136,16 @@ test("heuristicNormalize strips bank noise", () => {
   assert.equal(heuristicNormalize("POS 402911 AMAZON PAY INDIA BLR"), "Amazon Blr");
   assert.equal(heuristicNormalize("UPI-swiggy@ybl-9012"), "Swiggy");
   assert.equal(normalizeMerchant("POS AMAZON PAY 123", [{ match: "amazon", replacement: "Amazon" }]), "Amazon");
+});
+
+test("linkedRollbackBlockers: no candidates blocks nothing", () => {
+  assert.equal(linkedRollbackBlockers([]), 0);
+});
+
+test("linkedRollbackBlockers: a linked, live row blocks", () => {
+  assert.equal(linkedRollbackBlockers([{ sipId: "sip-1", deletedAt: null }]), 1);
+});
+
+test("linkedRollbackBlockers: a linked, soft-deleted row does not block", () => {
+  assert.equal(linkedRollbackBlockers([{ sipId: "sip-1", deletedAt: new Date() }]), 0);
 });

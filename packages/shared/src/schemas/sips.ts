@@ -253,3 +253,44 @@ export const RecordSipInstallmentSchema = z
     }
   });
 export type RecordSipInstallment = z.input<typeof RecordSipInstallmentSchema>;
+
+/**
+ * Recording an account-target (PPF/SSY) installment by pointing at a ledger
+ * transaction that already exists, rather than by creating one: the deposit is
+ * a real bank→scheme transfer the user has already entered (or imported), so
+ * the SIP stamps that row instead of duplicating it. Contrast
+ * `RecordSipInstallmentSchema`, which books a brand-new `holding_events` buy
+ * for an MF folio.
+ */
+export const LinkSipInstallmentSchema = z.object({ transactionId: z.uuid() });
+export type LinkSipInstallment = z.infer<typeof LinkSipInstallmentSchema>;
+
+/**
+ * A ledger transaction offered as a possible installment for an account-target
+ * SIP. Deliberately a narrow projection rather than the full `TransactionSchema`
+ * — the picker only needs enough to identify a deposit, and the candidate rules
+ * (which account, which sign, which date window) stay server-side.
+ */
+export const SipInstallmentCandidateSchema = z.object({
+  id: z.uuid(),
+  date: z.iso.date(),
+  /**
+   * Positive for every *unlinked* candidate — only credits into the target
+   * account are offered as new installments. A row that is already `linked` can
+   * come back zero or negative, because a later edit can flip the sign of a
+   * transaction this SIP already claimed and the linked side deliberately keeps
+   * showing it so it can be detached (see `linkedInstallmentRows`).
+   */
+  amountPaise: z.number().int(),
+  merchant: z.string(),
+  notes: z.string(),
+  /**
+   * True when this row is *already* this SIP's recorded installment. The picker
+   * lists these alongside the free ones so a mislink can be undone from the same
+   * place — the (sip, date) unique index means the wrong row must be detached
+   * before the right one can take its slot. A row linked to a *different* SIP is
+   * never returned at all.
+   */
+  linked: z.boolean(),
+});
+export type SipInstallmentCandidate = z.infer<typeof SipInstallmentCandidateSchema>;

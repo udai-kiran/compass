@@ -15,6 +15,7 @@ import { HttpError } from "../lib/errors.ts";
 import { getMerchantRules, normalizeMerchant } from "./merchants.ts";
 import { assertOwnedAccount, assertOwnedCategory } from "./ownership.ts";
 import { assertOwnedResource } from "./resources.ts";
+import { isUniqueViolation } from "./sips.ts";
 
 type TxRow = typeof transactions.$inferSelect;
 
@@ -303,13 +304,26 @@ export async function updateTransaction(
     });
     if (!template) throw new HttpError(404, "Recurring bill or subscription not found");
   }
-  const rows = await db
-    .update(transactions)
-    .set({ ...input, updatedAt: new Date() })
-    .where(
-      and(eq(transactions.id, id), eq(transactions.userId, userId), isNull(transactions.deletedAt)),
-    )
-    .returning();
+  let rows;
+  try {
+    rows = await db
+      .update(transactions)
+      .set({ ...input, updatedAt: new Date() })
+      .where(
+        and(eq(transactions.id, id), eq(transactions.userId, userId), isNull(transactions.deletedAt)),
+      )
+      .returning();
+  } catch (err) {
+    // A SIP's linked installment holds (sip_id, date) uniquely, so moving this
+    // transaction onto the date of another installment of the same SIP collides.
+    // Before `transactions.sip_id` was ever written (see linkSipInstallment in
+    // services/sips.ts) this index could not fire from here at all — without this
+    // catch the collision reaches the client as an unhandled 23505, i.e. a 500.
+    if (isUniqueViolation(err, "transactions_sip_date_idx")) {
+      throw new HttpError(409, "This SIP's installment is already recorded on that date — unlink it first");
+    }
+    throw err;
+  }
   if (rows.length === 0) throw new HttpError(404, "Transaction not found");
   return (await hydrate(db, rows))[0]!;
 }

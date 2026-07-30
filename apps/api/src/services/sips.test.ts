@@ -3,7 +3,9 @@ import test from "node:test";
 import { accountCanHaveGoal, sipDateRangeValid } from "@compass/shared";
 import { HttpError } from "../lib/errors.ts";
 import {
+  accountInstallmentSipIssue,
   assertLinkRowsMatched,
+  candidateDateBounds,
   classifySipTarget,
   committedSplit,
   dueInstallmentDate,
@@ -14,11 +16,13 @@ import {
   isUniqueViolation,
   laterInstallmentDate,
   lastOccurrenceOnOrBefore,
+  linkInstallmentIssue,
   monthlyEquivalentPaise,
   nextSipDate,
   resolveSipDateRange,
   resolveSipFundingTarget,
   resolveTargetGoalDecision,
+  sipEditOrphansLinks,
   sipOccurrencesInWindow,
 } from "./sips.ts";
 
@@ -387,6 +391,68 @@ test("resolveSipFundingTarget: an empty patch keeps both stored values", () => {
   );
 });
 
+// ---------- sipEditOrphansLinks (updateSip: detach installments the edit strands) ----------
+
+test("sipEditOrphansLinks: an empty patch does not orphan anything", () => {
+  assert.equal(
+    sipEditOrphansLinks(
+      { targetKind: "account", targetAccountId: "acc-1", fundingSource: "bank_debit" },
+      {},
+    ),
+    false,
+  );
+});
+
+test("sipEditOrphansLinks: every field resent unchanged does not orphan anything", () => {
+  assert.equal(
+    sipEditOrphansLinks(
+      { targetKind: "account", targetAccountId: "acc-1", fundingSource: "bank_debit" },
+      { targetKind: "account", targetAccountId: "acc-1", fundingSource: "bank_debit" },
+    ),
+    false,
+  );
+});
+
+test("sipEditOrphansLinks: a changed targetAccountId orphans links", () => {
+  assert.equal(
+    sipEditOrphansLinks(
+      { targetKind: "account", targetAccountId: "acc-1", fundingSource: "bank_debit" },
+      { targetAccountId: "acc-2" },
+    ),
+    true,
+  );
+});
+
+test("sipEditOrphansLinks: a changed targetKind orphans links", () => {
+  assert.equal(
+    sipEditOrphansLinks(
+      { targetKind: "account", targetAccountId: "acc-1", fundingSource: "bank_debit" },
+      { targetKind: "mf_folio" },
+    ),
+    true,
+  );
+});
+
+test("sipEditOrphansLinks: a changed fundingSource orphans links", () => {
+  assert.equal(
+    sipEditOrphansLinks(
+      { targetKind: "account", targetAccountId: "acc-1", fundingSource: "bank_debit" },
+      { fundingSource: "payroll" },
+    ),
+    true,
+  );
+});
+
+test("sipEditOrphansLinks: targetAccountId changed from a uuid to null orphans links", () => {
+  assert.equal(
+    sipEditOrphansLinks(
+      { targetKind: "account", targetAccountId: "acc-1", fundingSource: "bank_debit" },
+      { targetAccountId: null },
+    ),
+    true,
+  );
+});
+
 // ---------- assertLinkRowsMatched (Fix 2: TOCTOU-safe conditional link) ----------
 
 test("assertLinkRowsMatched: one matched row (the common case) does not throw", () => {
@@ -639,18 +705,29 @@ test("dueInstallmentDate: null for a paused SIP", () => {
     startDate: "2026-01-01",
     endDate: null,
     status: "paused" as const,
-    targetKind: "mf_folio" as const,
+    fundingSource: "bank_debit" as const,
   };
   assert.equal(dueInstallmentDate(sip, null, "2026-07-23"), null);
 });
 
-test("dueInstallmentDate: null for an account-target SIP", () => {
+test("dueInstallmentDate: an account-target SIP now prompts — it records by linking a ledger transaction", () => {
   const sip = {
     dayOfMonth: 5,
     startDate: "2026-01-01",
     endDate: null,
     status: "active" as const,
-    targetKind: "account" as const,
+    fundingSource: "bank_debit" as const,
+  };
+  assert.equal(dueInstallmentDate(sip, null, "2026-07-23"), "2026-07-05");
+});
+
+test("dueInstallmentDate: a payroll-funded SIP never prompts — the payslip books it and stamps no sip_id", () => {
+  const sip = {
+    dayOfMonth: 5,
+    startDate: "2026-01-01",
+    endDate: null,
+    status: "active" as const,
+    fundingSource: "payroll" as const,
   };
   assert.equal(dueInstallmentDate(sip, null, "2026-07-23"), null);
 });
@@ -661,7 +738,7 @@ test("dueInstallmentDate: the due date when lastInstallmentDate is null", () => 
     startDate: "2026-01-01",
     endDate: null,
     status: "active" as const,
-    targetKind: "mf_folio" as const,
+    fundingSource: "bank_debit" as const,
   };
   assert.equal(dueInstallmentDate(sip, null, "2026-07-23"), "2026-07-05");
 });
@@ -672,7 +749,7 @@ test("dueInstallmentDate: null when lastInstallmentDate equals the due date", ()
     startDate: "2026-01-01",
     endDate: null,
     status: "active" as const,
-    targetKind: "mf_folio" as const,
+    fundingSource: "bank_debit" as const,
   };
   assert.equal(dueInstallmentDate(sip, "2026-07-05", "2026-07-23"), null);
 });
@@ -683,7 +760,7 @@ test("dueInstallmentDate: the due date when lastInstallmentDate is older than it
     startDate: "2026-01-01",
     endDate: null,
     status: "active" as const,
-    targetKind: "mf_folio" as const,
+    fundingSource: "bank_debit" as const,
   };
   assert.equal(dueInstallmentDate(sip, "2026-06-05", "2026-07-23"), "2026-07-05");
 });
@@ -694,7 +771,256 @@ test("dueInstallmentDate: null when lastInstallmentDate is somehow newer than th
     startDate: "2026-01-01",
     endDate: null,
     status: "active" as const,
-    targetKind: "mf_folio" as const,
+    fundingSource: "bank_debit" as const,
   };
   assert.equal(dueInstallmentDate(sip, "2026-07-06", "2026-07-23"), null);
+});
+
+test("dueInstallmentDate: an early deposit earlier in the same cycle clears the due flag (AC1)", () => {
+  const sip = {
+    dayOfMonth: 5,
+    startDate: "2026-01-01",
+    endDate: null,
+    status: "active" as const,
+    fundingSource: "bank_debit" as const,
+  };
+  assert.equal(dueInstallmentDate(sip, "2026-07-01", "2026-07-10"), null);
+});
+
+test("dueInstallmentDate: an installment from a strictly earlier cycle still leaves due reported (AC3)", () => {
+  const sip = {
+    dayOfMonth: 5,
+    startDate: "2026-01-01",
+    endDate: null,
+    status: "active" as const,
+    fundingSource: "bank_debit" as const,
+  };
+  assert.equal(dueInstallmentDate(sip, "2026-06-28", "2026-07-23"), "2026-07-05");
+});
+
+test("dueInstallmentDate: quarterly — a same-cycle-month deposit clears the due flag (AC4)", () => {
+  const sip = {
+    dayOfMonth: 5,
+    startDate: "2025-12-05",
+    endDate: null,
+    status: "active" as const,
+    frequency: "quarterly" as const,
+    fundingSource: "bank_debit" as const,
+  };
+  assert.equal(dueInstallmentDate(sip, "2026-06-01", "2026-06-23"), null);
+});
+
+test("dueInstallmentDate: yearly — a deposit in the prior cycle's final month still leaves due reported (AC4)", () => {
+  const sip = {
+    dayOfMonth: 5,
+    startDate: "2024-03-05",
+    endDate: null,
+    status: "active" as const,
+    frequency: "yearly" as const,
+    fundingSource: "bank_debit" as const,
+  };
+  assert.equal(dueInstallmentDate(sip, "2026-02-28", "2026-03-23"), "2026-03-05");
+});
+
+test("dueInstallmentDate: yearly — a deposit on the 1st of the occurrence month clears the due flag (AC4)", () => {
+  const sip = {
+    dayOfMonth: 5,
+    startDate: "2024-03-05",
+    endDate: null,
+    status: "active" as const,
+    frequency: "yearly" as const,
+    fundingSource: "bank_debit" as const,
+  };
+  assert.equal(dueInstallmentDate(sip, "2026-03-01", "2026-03-23"), null);
+});
+
+test("dueInstallmentDate: quarterly — a deposit from the prior full-cycle block still leaves due reported (AC5)", () => {
+  const sip = {
+    dayOfMonth: 5,
+    startDate: "2025-12-05",
+    endDate: null,
+    status: "active" as const,
+    frequency: "quarterly" as const,
+    fundingSource: "bank_debit" as const,
+  };
+  assert.equal(dueInstallmentDate(sip, "2026-06-05", "2026-09-23"), "2026-09-05");
+  assert.equal(dueInstallmentDate(sip, "2026-06-30", "2026-09-23"), "2026-09-05");
+});
+
+test("dueInstallmentDate: quarterly — a later month within the current multi-month block clears the due flag (AC5)", () => {
+  const sip = {
+    dayOfMonth: 5,
+    startDate: "2025-12-05",
+    endDate: null,
+    status: "active" as const,
+    frequency: "quarterly" as const,
+    fundingSource: "bank_debit" as const,
+  };
+  assert.equal(dueInstallmentDate(sip, "2026-07-15", "2026-08-23"), null);
+  assert.equal(dueInstallmentDate(sip, "2026-08-20", "2026-08-23"), null);
+});
+
+test("dueInstallmentDate: mid-month startDate — a deposit before dayOfMonth in the start month clears the due flag (AC6)", () => {
+  const sip = {
+    dayOfMonth: 5,
+    startDate: "2026-03-03",
+    endDate: null,
+    status: "active" as const,
+    fundingSource: "bank_debit" as const,
+  };
+  assert.equal(dueInstallmentDate(sip, "2026-03-03", "2026-03-23"), null);
+  assert.equal(dueInstallmentDate(sip, "2026-03-04", "2026-03-23"), null);
+});
+
+test("dueInstallmentDate: mid-month startDate after dayOfMonth — no occurrence exists yet (AC6, pinned unchanged)", () => {
+  const sip = {
+    dayOfMonth: 5,
+    startDate: "2026-03-15",
+    endDate: null,
+    status: "active" as const,
+    fundingSource: "bank_debit" as const,
+  };
+  assert.equal(dueInstallmentDate(sip, null, "2026-03-23"), null);
+});
+
+test("dueInstallmentDate: ended SIP clamps the cycle to its endDate, not today (AC6)", () => {
+  const sip = {
+    dayOfMonth: 5,
+    startDate: "2026-01-01",
+    endDate: "2026-07-02",
+    status: "active" as const,
+    fundingSource: "bank_debit" as const,
+  };
+  // The final aligned occurrence is clamped to 2026-06-05 (July's 5th is past
+  // endDate), so a June deposit clears it even though today is well past July.
+  assert.equal(dueInstallmentDate(sip, "2026-06-01", "2026-07-23"), null);
+  assert.equal(dueInstallmentDate(sip, "2026-05-20", "2026-07-23"), "2026-06-05");
+});
+
+test("dueInstallmentDate: exact threshold — the 1st of due's month clears, the last day of the prior month does not (AC7)", () => {
+  const sip = {
+    dayOfMonth: 5,
+    startDate: "2026-01-01",
+    endDate: null,
+    status: "active" as const,
+    fundingSource: "bank_debit" as const,
+  };
+  assert.equal(dueInstallmentDate(sip, "2026-07-01", "2026-07-23"), null);
+  assert.equal(dueInstallmentDate(sip, "2026-06-30", "2026-07-23"), "2026-07-05");
+});
+
+// ---------- linkInstallmentIssue / accountInstallmentSipIssue / candidateDateBounds ----------
+
+const linkSip = {
+  id: "sip-1",
+  targetKind: "account" as const,
+  targetAccountId: "acc-ppf",
+  fundingSource: "bank_debit" as const,
+  startDate: "2026-01-01",
+  endDate: null,
+};
+const linkTx = { accountId: "acc-ppf", amountPaise: 150000, date: "2026-07-02", isOpening: false, sipId: null };
+
+test("linkInstallmentIssue: a credit into the target account inside the window passes", () => {
+  assert.equal(linkInstallmentIssue(linkSip, linkTx), null);
+});
+
+test("linkInstallmentIssue: an mf_folio SIP is rejected", () => {
+  assert.deepEqual(linkInstallmentIssue({ ...linkSip, targetKind: "mf_folio" }, linkTx), {
+    status: 400,
+    message: "Only an account-target SIP records by linking a ledger transaction",
+  });
+});
+
+test("linkInstallmentIssue: an account SIP funded by payroll is rejected", () => {
+  assert.deepEqual(linkInstallmentIssue({ ...linkSip, fundingSource: "payroll" }, linkTx), {
+    status: 400,
+    message: "A payroll-funded SIP is recorded from your payslip, not manually",
+  });
+});
+
+test("linkInstallmentIssue: a transaction in some other account is rejected", () => {
+  assert.deepEqual(linkInstallmentIssue(linkSip, { ...linkTx, accountId: "acc-other" }), {
+    status: 400,
+    message: "That transaction isn't in this SIP's target account",
+  });
+});
+
+test("linkInstallmentIssue: an opening-balance row is rejected", () => {
+  assert.deepEqual(linkInstallmentIssue(linkSip, { ...linkTx, isOpening: true }), {
+    status: 400,
+    message: "An opening-balance entry can't be a SIP installment",
+  });
+});
+
+test("linkInstallmentIssue: a negative amount (the transfer's outgoing leg) is rejected", () => {
+  assert.deepEqual(linkInstallmentIssue(linkSip, { ...linkTx, amountPaise: -150000 }), {
+    status: 400,
+    message: "A SIP installment must be money arriving in the target account",
+  });
+});
+
+test("linkInstallmentIssue: a zero amount is rejected", () => {
+  assert.deepEqual(linkInstallmentIssue(linkSip, { ...linkTx, amountPaise: 0 }), {
+    status: 400,
+    message: "A SIP installment must be money arriving in the target account",
+  });
+});
+
+test("linkInstallmentIssue: a row already linked to a different SIP is rejected 409", () => {
+  assert.deepEqual(linkInstallmentIssue(linkSip, { ...linkTx, sipId: "sip-2" }), {
+    status: 409,
+    message: "That transaction is already linked to another SIP's installment",
+  });
+});
+
+test("linkInstallmentIssue: a row already linked to this SIP passes — the idempotent re-link", () => {
+  assert.equal(linkInstallmentIssue(linkSip, { ...linkTx, sipId: "sip-1" }), null);
+});
+
+test("linkInstallmentIssue: a date before startDate is rejected with installmentDateError's own message", () => {
+  const tx = { ...linkTx, date: "2025-12-31" };
+  assert.deepEqual(linkInstallmentIssue(linkSip, tx), {
+    status: 400,
+    message: installmentDateError(linkSip, tx.date)!,
+  });
+});
+
+test("linkInstallmentIssue: a date after endDate is rejected with installmentDateError's own message", () => {
+  const sip = { ...linkSip, endDate: "2026-06-30" };
+  const tx = { ...linkTx, date: "2026-07-01" };
+  assert.deepEqual(linkInstallmentIssue(sip, tx), {
+    status: 400,
+    message: installmentDateError(sip, tx.date)!,
+  });
+});
+
+test("accountInstallmentSipIssue: null for an account+bank_debit SIP", () => {
+  assert.equal(accountInstallmentSipIssue({ targetKind: "account", fundingSource: "bank_debit" }), null);
+});
+
+test("candidateDateBounds: asOf inside the window returns { from: startDate, to: asOf }", () => {
+  assert.deepEqual(candidateDateBounds({ startDate: "2026-01-01", endDate: null }, "2026-07-23"), {
+    from: "2026-01-01",
+    to: "2026-07-23",
+  });
+});
+
+test("candidateDateBounds: asOf past endDate clamps to to endDate", () => {
+  assert.deepEqual(candidateDateBounds({ startDate: "2026-01-01", endDate: "2026-06-30" }, "2026-07-23"), {
+    from: "2026-01-01",
+    to: "2026-06-30",
+  });
+});
+
+test("candidateDateBounds: an open-ended SIP (endDate: null) never clamps", () => {
+  assert.deepEqual(candidateDateBounds({ startDate: "2026-01-01", endDate: null }, "2099-12-31"), {
+    from: "2026-01-01",
+    to: "2099-12-31",
+  });
+});
+
+test("candidateDateBounds: asOf before startDate yields an inverted (empty) window", () => {
+  const { from, to } = candidateDateBounds({ startDate: "2026-01-01", endDate: null }, "2025-12-01");
+  assert.ok(to < from);
 });

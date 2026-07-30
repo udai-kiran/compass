@@ -8,6 +8,7 @@ import {
   GoalSchema,
   HoldingEventSchema,
   NotificationPrefSchema,
+  SipInstallmentCandidateSchema,
   SipSchema,
   SubscriptionSuggestionSchema,
   type CreateGoal,
@@ -91,6 +92,9 @@ function invalidateSipViews(qc: QueryClient): void {
   void qc.invalidateQueries({ queryKey: ["portfolio"] });
   void qc.invalidateQueries({ queryKey: ["net-worth"] });
   void qc.invalidateQueries({ queryKey: ["capital-gains"] });
+  // Linking a deposit must remove it from every open picker's unlinked list,
+  // and unlinking must put it back — both are the same candidate query.
+  void qc.invalidateQueries({ queryKey: ["sip-installment-candidates"] });
 }
 
 export function useSips(goalId: string) {
@@ -107,6 +111,21 @@ export function useSips(goalId: string) {
  */
 export function useAllSips() {
   return useQuery({ queryKey: ["sips", "all"], queryFn: () => apiGet("/api/sips", z.array(SipSchema)) });
+}
+
+/**
+ * The ledger transactions that could be (or already are) this account-target
+ * SIP's installment as of `date`. `enabled` is what keeps the /sips page from
+ * firing one request per account row on mount — the picker asks only once the
+ * user opens it (or it opened itself because the installment is due).
+ */
+export function useSipInstallmentCandidates(sipId: string, date: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ["sip-installment-candidates", sipId, date],
+    queryFn: () =>
+      apiGet(`/api/sips/${sipId}/installment-candidates?date=${date}`, z.array(SipInstallmentCandidateSchema)),
+    enabled,
+  });
 }
 
 export function useSipMutations() {
@@ -130,7 +149,17 @@ export function useSipMutations() {
       apiPost(`/api/sips/${id}/installments`, HoldingEventSchema, body),
     onSuccess: invalidate,
   });
-  return { create, update, remove, recordInstallment };
+  const linkInstallment = useMutation({
+    mutationFn: ({ id, transactionId }: { id: string; transactionId: string }) =>
+      apiPost(`/api/sips/${id}/installments/link`, SipSchema, { transactionId }),
+    onSuccess: invalidate,
+  });
+  const unlinkInstallment = useMutation({
+    mutationFn: ({ id, transactionId }: { id: string; transactionId: string }) =>
+      send("DELETE", `/api/sips/${id}/installments/link/${transactionId}`, SipSchema),
+    onSuccess: invalidate,
+  });
+  return { create, update, remove, recordInstallment, linkInstallment, unlinkInstallment };
 }
 
 /** One row of a batch installment submission. `id` is the SIP; the rest is the request body. */

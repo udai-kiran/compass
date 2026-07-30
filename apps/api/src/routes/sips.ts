@@ -1,8 +1,27 @@
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
-import { CreateSipSchema, HoldingEventSchema, RecordSipInstallmentSchema, SipSchema, UpdateSipSchema } from "@compass/shared";
-import { createSip, deleteSip, listAllSips, listSipsForGoal, recordSipInstallment, updateSip } from "../services/sips.ts";
+import {
+  CreateSipSchema,
+  HoldingEventSchema,
+  LinkSipInstallmentSchema,
+  RecordSipInstallmentSchema,
+  SipInstallmentCandidateSchema,
+  SipSchema,
+  UpdateSipSchema,
+  defaultSipDate,
+} from "@compass/shared";
+import {
+  createSip,
+  deleteSip,
+  linkSipInstallment,
+  listAllSips,
+  listSipInstallmentCandidates,
+  listSipsForGoal,
+  recordSipInstallment,
+  unlinkSipInstallment,
+  updateSip,
+} from "../services/sips.ts";
 import { invalidateUserCache } from "../services/cache.ts";
 
 const IdParams = z.object({ id: z.uuid() });
@@ -61,5 +80,43 @@ export async function sipRoutes(app: FastifyInstance) {
       await invalidateUserCache(app.redis, req.session!.userId);
       return reply.code(201).send(event);
     },
+  );
+
+  r.post(
+    "/api/sips/:id/installments/link",
+    { schema: { params: IdParams, body: LinkSipInstallmentSchema, response: { 200: SipSchema } } },
+    async (req) => {
+      const sip = await linkSipInstallment(app.db, req.session!.userId, req.params.id, req.body);
+      await invalidateUserCache(app.redis, req.session!.userId);
+      return sip;
+    },
+  );
+
+  r.delete(
+    "/api/sips/:id/installments/link/:transactionId",
+    {
+      schema: {
+        params: z.object({ id: z.uuid(), transactionId: z.uuid() }),
+        response: { 200: SipSchema },
+      },
+    },
+    // Clears the sip_id link only — never deletes the underlying transaction.
+    async (req) => {
+      const sip = await unlinkSipInstallment(app.db, req.session!.userId, req.params.id, req.params.transactionId);
+      await invalidateUserCache(app.redis, req.session!.userId);
+      return sip;
+    },
+  );
+
+  r.get(
+    "/api/sips/:id/installment-candidates",
+    {
+      schema: {
+        params: IdParams,
+        querystring: z.object({ date: z.iso.date().default(() => defaultSipDate()) }),
+        response: { 200: z.array(SipInstallmentCandidateSchema) },
+      },
+    },
+    async (req) => listSipInstallmentCandidates(app.db, req.session!.userId, req.params.id, req.query.date),
   );
 }

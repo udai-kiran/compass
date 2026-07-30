@@ -13,7 +13,7 @@ export type SipRecordBlock = "account_target" | "payroll" | "before_start" | "af
 
 /** Human label for each block reason, shown in place of the row's inputs. */
 export const SIP_RECORD_BLOCK_LABEL: Record<SipRecordBlock, string> = {
-  account_target: "Recorded from the account's own ledger, not here",
+  account_target: "Recorded by linking a ledger transaction",
   payroll: "Comes in from your payslip",
   before_start: "Hadn't started yet on this date",
   after_end: "Had already ended by this date",
@@ -21,19 +21,24 @@ export const SIP_RECORD_BLOCK_LABEL: Record<SipRecordBlock, string> = {
 
 /**
  * The reason this SIP can't record an installment on `date`, or null when it
- * can. Order matches the server's: target kind, then funding source, then the
- * date window. A `paused` SIP is deliberately NOT blocked — the server allows
- * backfilling one by hand, it just never prompts for it (see
- * `dueInstallmentDate`).
+ * can. Order is payroll, then the date window, then target kind — not the
+ * server's own check order. The server re-checks all of these and stays the
+ * sole authority, so this file is free to order for the clearest single
+ * message: a row outside its date window should read as out-of-window
+ * whichever recording path it uses, and `account_target` — which isn't really
+ * a block any more, just "record this by linking, not by NAV" — is the least
+ * urgent thing to say about it. A `paused` SIP is deliberately NOT blocked —
+ * the server allows backfilling one by hand, it just never prompts for it
+ * (see `dueInstallmentDate`).
  */
 export function sipRecordBlock(
   sip: Pick<Sip, "targetKind" | "fundingSource" | "startDate" | "endDate">,
   date: string,
 ): SipRecordBlock | null {
-  if (sip.targetKind !== "mf_folio") return "account_target";
   if (sip.fundingSource === "payroll") return "payroll";
   if (date < sip.startDate) return "before_start";
   if (sip.endDate !== null && date > sip.endDate) return "after_end";
+  if (sip.targetKind !== "mf_folio") return "account_target";
   return null;
 }
 
@@ -56,6 +61,25 @@ export function sipPrechecked(
 }
 
 /**
+ * Whether a link-style row is asking for attention on `date`: an active
+ * account-target SIP, recordable on this date, whose outstanding installment has
+ * come due on or before it. The mirror of `sipPrechecked` for the link path —
+ * but there is no checkbox to pre-tick, because linking commits on its own
+ * button rather than through the batch, so this only drives ordering and
+ * emphasis. Gated on `sipRecordBlock` rather than the target kind alone so that
+ * ranking and rendering can never disagree: a row that shows "had already ended
+ * by this date" must not also sort to the top as though it needed action.
+ */
+export function sipLinkDue(
+  sip: Pick<Sip, "targetKind" | "fundingSource" | "startDate" | "endDate" | "status" | "dueInstallmentDate">,
+  date: string,
+): boolean {
+  if (sipRecordBlock(sip, date) !== "account_target") return false;
+  if (sip.status !== "active") return false;
+  return sip.dueInstallmentDate !== null && sip.dueInstallmentDate <= date;
+}
+
+/**
  * Sort rank for the page's single list, lowest first: rows awaiting a record
  * on the chosen date, then other recordable rows, then blocked ones. Ties are
  * broken by the caller (by goal, then creation order) so the ordering stays
@@ -65,8 +89,12 @@ export function sipRowRank(
   sip: Pick<Sip, "targetKind" | "fundingSource" | "startDate" | "endDate" | "status" | "dueInstallmentDate">,
   date: string,
 ): number {
-  if (sipPrechecked(sip, date)) return 0;
-  if (sipRecordBlock(sip, date) === null) return 1;
+  if (sipPrechecked(sip, date) || sipLinkDue(sip, date)) return 0;
+  const block = sipRecordBlock(sip, date);
+  // `account_target` is not a real block any more — it only means "this row
+  // records by linking, not by NAV" — so such a row is still actionable and
+  // ranks with the recordable ones rather than sinking to the bottom.
+  if (block === null || block === "account_target") return 1;
   return 2;
 }
 

@@ -16,6 +16,7 @@ import {
   useAllSips,
   useGoals,
   useRecordInstallments,
+  useSipInstallmentCandidates,
   useSipMutations,
   type SipInstallmentDraft,
   type SipInstallmentOutcome,
@@ -26,6 +27,7 @@ import { DateField } from "../../components/DateField.tsx";
 import {
   installmentDraftReady,
   rowIsSubmittable,
+  sipLinkDue,
   sipPrechecked,
   sipRecordBlock,
   sipRowRank,
@@ -312,6 +314,8 @@ function InstallmentBatch({
 
               {outcome === null ? (
                 <p role="status" className="mt-1 text-xs font-medium text-green-700">✓ Recorded</p>
+              ) : block === "account_target" ? (
+                <LinkInstallmentRow sip={sip} date={date} />
               ) : block !== null ? (
                 <p className="mt-1 text-xs text-slate-400">{SIP_RECORD_BLOCK_LABEL[block]}</p>
               ) : (
@@ -610,5 +614,115 @@ function SipForm({ onDone }: { onDone: () => void }) {
         </button>
       </div>
     </form>
+  );
+}
+
+/**
+ * The account-target (PPF/SSY) recording control: point the SIP at the ledger
+ * transaction that funded this installment. Deliberately outside the batch —
+ * there is nothing to type, the deposit already exists, so it commits on its own
+ * button instead of waiting for the batch submit. It renders plain
+ * `type="button"` controls and never a nested <form>, because it lives inside
+ * InstallmentBatch's form element.
+ */
+function LinkInstallmentRow({ sip, date }: { sip: Sip; date: string }) {
+  // A due row opens itself; anything else stays collapsed so the page doesn't
+  // fire a candidates request per account row on mount.
+  const [open, setOpen] = useState(sipLinkDue(sip, date));
+  const [selected, setSelected] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const { linkInstallment, unlinkInstallment } = useSipMutations();
+  const { data: candidates, isPending, isError } = useSipInstallmentCandidates(sip.id, date, open);
+
+  if (!open) {
+    return (
+      <p className="mt-1 text-xs text-slate-400">
+        Recorded by linking a ledger transaction —{" "}
+        <button type="button" className="underline" onClick={() => setOpen(true)}>
+          choose one
+        </button>
+      </p>
+    );
+  }
+
+  if (isPending) {
+    return <p className="mt-1 text-xs text-slate-400">Loading deposits…</p>;
+  }
+  if (isError) {
+    return <p className="mt-1 text-xs text-slate-400">Couldn't load this account's deposits.</p>;
+  }
+
+  const unlinked = candidates.filter((c) => !c.linked);
+  const linked = candidates.filter((c) => c.linked);
+
+  return (
+    <div className="mt-1">
+      {unlinked.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <select
+            value={selected}
+            onChange={(e) => setSelected(e.target.value)}
+            className="rounded-md border border-slate-300 px-2 py-1.5"
+          >
+            <option value="">Select a deposit…</option>
+            {unlinked.map((c) => (
+              <option key={c.id} value={c.id}>
+                {formatDisplayDate(c.date)} · {formatINR(c.amountPaise)}
+                {c.merchant !== "" ? ` · ${c.merchant}` : ""}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            disabled={selected === "" || linkInstallment.isPending}
+            className="rounded-md bg-brand-600 px-2 py-1 text-white disabled:opacity-40"
+            onClick={() => {
+              setError(null);
+              linkInstallment.mutate(
+                { id: sip.id, transactionId: selected },
+                {
+                  onSuccess: () => {
+                    setSelected("");
+                    toast("Installment linked", "success");
+                  },
+                  onError: (err) =>
+                    setError(err instanceof Error ? err.message : "Couldn't link this installment"),
+                },
+              );
+            }}
+          >
+            Link
+          </button>
+        </div>
+      ) : (
+        <p className="text-xs text-slate-400">No unlinked deposits in this account up to this date.</p>
+      )}
+      {linked.map((c) => (
+        <div key={c.id} className="mt-1 flex items-center gap-2 text-xs">
+          <span className="font-medium text-green-700">
+            ✓ {formatDisplayDate(c.date)} · {formatINR(c.amountPaise)} recorded
+          </span>
+          <button
+            type="button"
+            className="text-slate-500 underline"
+            disabled={unlinkInstallment.isPending}
+            onClick={() => {
+              setError(null);
+              unlinkInstallment.mutate(
+                { id: sip.id, transactionId: c.id },
+                {
+                  onSuccess: () => toast("Installment unlinked", "success"),
+                  onError: (err) =>
+                    setError(err instanceof Error ? err.message : "Couldn't unlink this installment"),
+                },
+              );
+            }}
+          >
+            Unlink
+          </button>
+        </div>
+      ))}
+      {error !== null && <p role="alert" className="mt-1 text-xs text-red-600">{error}</p>}
+    </div>
   );
 }
