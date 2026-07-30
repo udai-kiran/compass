@@ -1,6 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { CreateSipSchema, RecordSipInstallmentSchema, defaultSipDate, sipDateRangeValid, unitsForInstallment } from "./sips.ts";
+import {
+  CreateSipSchema,
+  RecordSipInstallmentSchema,
+  UpdateSipSchema,
+  defaultSipDate,
+  sipDateRangeValid,
+  sipFundingSourceIssue,
+  unitsForInstallment,
+} from "./sips.ts";
 import { todayInIST } from "../date.ts";
 
 const base = {
@@ -130,4 +138,68 @@ test("CreateSipSchema: an omitted startDate defaults to today in IST", () => {
   const after = todayInIST();
   assert.equal(result.success, true);
   if (result.success) assert.ok([before, after].includes(result.data.startDate));
+});
+
+// ---------- fundingSource (bank_debit vs payroll) ----------
+
+test("CreateSipSchema: an omitted fundingSource defaults to bank_debit", () => {
+  const result = CreateSipSchema.safeParse({ ...base });
+  assert.equal(result.success, true);
+  if (result.success) assert.equal(result.data.fundingSource, "bank_debit");
+});
+
+test("CreateSipSchema: an invalid fundingSource value is rejected", () => {
+  const result = CreateSipSchema.safeParse({ ...base, fundingSource: "cash" });
+  assert.equal(result.success, false);
+});
+
+test("UpdateSipSchema: fundingSource is optional and accepts a valid value", () => {
+  const result = UpdateSipSchema.safeParse({ fundingSource: "payroll" });
+  assert.equal(result.success, true);
+  if (result.success) assert.equal(result.data.fundingSource, "payroll");
+});
+
+test("UpdateSipSchema: an omitted fundingSource is fine (untouched)", () => {
+  const result = UpdateSipSchema.safeParse({});
+  assert.equal(result.success, true);
+  if (result.success) assert.equal(result.data.fundingSource, undefined);
+});
+
+// ---------- sipFundingSourceIssue / payroll targeting ----------
+
+test("sipFundingSourceIssue: payroll + mf_folio is rejected", () => {
+  const issue = sipFundingSourceIssue("mf_folio", "payroll");
+  assert.notEqual(issue, null);
+  assert.equal(issue?.path, "fundingSource");
+});
+
+test("sipFundingSourceIssue: payroll + account is allowed", () => {
+  assert.equal(sipFundingSourceIssue("account", "payroll"), null);
+});
+
+test("sipFundingSourceIssue: bank_debit + mf_folio is allowed", () => {
+  assert.equal(sipFundingSourceIssue("mf_folio", "bank_debit"), null);
+});
+
+test("sipFundingSourceIssue: bank_debit + account is allowed", () => {
+  assert.equal(sipFundingSourceIssue("account", "bank_debit"), null);
+});
+
+test("CreateSipSchema: rejects a payroll + mf_folio body", () => {
+  const result = CreateSipSchema.safeParse({ ...base, fundingSource: "payroll" });
+  assert.equal(result.success, false);
+  if (!result.success) {
+    assert.ok(result.error.issues.some((i) => i.path.includes("fundingSource")));
+  }
+});
+
+test("CreateSipSchema: accepts a payroll + account body", () => {
+  const result = CreateSipSchema.safeParse({
+    ...base,
+    targetKind: "account",
+    targetHoldingId: null,
+    targetAccountId: "44444444-4444-4444-8444-444444444444",
+    fundingSource: "payroll",
+  });
+  assert.equal(result.success, true);
 });

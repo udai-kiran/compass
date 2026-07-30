@@ -11,7 +11,9 @@ export const DEFERRED_RESTORE_COLUMNS = {
   categories: ["parent_id"],
   // policy_id → insurance_policies and reconciled_statement_id →
   // statement_reconciliations both restore after transactions in ALL_TABLES order.
-  transactions: ["policy_id", "recurring_template_id", "reconciled_statement_id"],
+  // sips also restores after transactions in ALL_TABLES order, so sip_id must
+  // be filled on the second pass too.
+  transactions: ["policy_id", "recurring_template_id", "reconciled_statement_id", "sip_id"],
 } as const satisfies Record<string, readonly string[]>;
 
 /** Database-generated columns present in `select *` dumps but never insertable. */
@@ -67,31 +69,19 @@ export async function restoreDump(pool: pg.Pool, dump: Dump): Promise<void> {
       for (const row of dump[table]!) await insertRow(client, table, firstPassRow(table, row));
     }
 
-    for (const row of dump.accounts ?? []) {
-      if (row.goal_id !== null && row.goal_id !== undefined) {
-        await client.query("update accounts set goal_id = $1 where id = $2", [row.goal_id, row.id]);
-      }
-    }
-    for (const row of dump.categories ?? []) {
-      if (row.parent_id !== null && row.parent_id !== undefined) {
-        await client.query("update categories set parent_id = $1 where id = $2", [row.parent_id, row.id]);
-      }
-    }
-    for (const row of dump.transactions ?? []) {
-      if (row.policy_id !== null && row.policy_id !== undefined) {
-        await client.query("update transactions set policy_id = $1 where id = $2", [row.policy_id, row.id]);
-      }
-      if (row.recurring_template_id !== null && row.recurring_template_id !== undefined) {
-        await client.query("update transactions set recurring_template_id = $1 where id = $2", [
-          row.recurring_template_id,
-          row.id,
-        ]);
-      }
-      if (row.reconciled_statement_id !== null && row.reconciled_statement_id !== undefined) {
-        await client.query("update transactions set reconciled_statement_id = $1 where id = $2", [
-          row.reconciled_statement_id,
-          row.id,
-        ]);
+    // Second pass: references deferred out of the first insert. This loop is
+    // generic over DEFERRED_RESTORE_COLUMNS so that adding a column there can
+    // never again silently do nothing — a hard-coded per-column block here
+    // (as this used to be) would need updating in lockstep with that map, and
+    // did not (sip_id was added to the map but had no corresponding block).
+    for (const [table, columns] of Object.entries(DEFERRED_RESTORE_COLUMNS)) {
+      for (const column of columns) {
+        for (const row of dump[table] ?? []) {
+          const value = row[column];
+          if (value !== null && value !== undefined) {
+            await client.query(`update ${ident(table)} set ${ident(column)} = $1 where id = $2`, [value, row.id]);
+          }
+        }
       }
     }
     await client.query("commit");

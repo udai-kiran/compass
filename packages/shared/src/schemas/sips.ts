@@ -15,6 +15,15 @@ export const SipStatusSchema = z.enum(["active", "paused"]);
 export type SipStatus = z.infer<typeof SipStatusSchema>;
 
 /**
+ * Where the SIP's money comes from. `bank_debit` is the default auto-debit
+ * SIP; `payroll` (EPF) is a salary deduction already booked as a real
+ * bank→retirement transfer by `createPayslip` — it must never be subtracted
+ * again by the cash forecast, and is never manually recorded.
+ */
+export const SipFundingSourceSchema = z.enum(["bank_debit", "payroll"]);
+export type SipFundingSource = z.infer<typeof SipFundingSourceSchema>;
+
+/**
  * Debit cadence. Most MF SIPs are monthly; PPF/SSY are often funded with a
  * single lump quarterly/annual deposit instead — quarterly/yearly let those
  * still be modelled as a SIP. See sipOccurrencesInWindow for the anchoring rule.
@@ -34,6 +43,7 @@ export const SipSchema = z.object({
   dayOfMonth: z.number().int().min(1).max(28),
   frequency: SipFrequencySchema,
   status: SipStatusSchema,
+  fundingSource: SipFundingSourceSchema,
   startDate: z.iso.date(),
   endDate: z.iso.date().nullable(),
   /** Date of the most recently recorded installment for this SIP; null if none. */
@@ -82,6 +92,28 @@ function sipTargetIssue(
 }
 
 /**
+ * A payroll-funded SIP only makes sense for an account target (EPF/PPF/SSY):
+ * `payroll` means the contribution is deducted from salary and already reaches
+ * the ledger via `createPayslip`'s bank→retirement transfer, so it's
+ * meaningless for an MF-folio target and would silently drop a real debit
+ * from the 90-day cash forecast if allowed. Pure (no zod types), following
+ * `sipTargetIssue`, so both the create schema's `.check()` and the update
+ * service's resolved-pair validation (services/sips.ts) can share the rule.
+ */
+export function sipFundingSourceIssue(
+  targetKind: SipTargetKind,
+  fundingSource: SipFundingSource,
+): { path: string; message: string } | null {
+  if (fundingSource === "payroll" && targetKind !== "account") {
+    return {
+      path: "fundingSource",
+      message: "a payroll-funded SIP must target an account (EPF/PPF/SSY), not an MF folio",
+    };
+  }
+  return null;
+}
+
+/**
  * `endDate` must not be before `startDate`. Dates are `YYYY-MM-DD` ISO strings,
  * so a plain string comparison is chronological. `endDate === null` (open-ended)
  * always passes. Shared by the create schema's `.check()` and the update
@@ -100,6 +132,7 @@ export const CreateSipSchema = z
     amountPaise: z.number().int().positive(),
     dayOfMonth: z.number().int().min(1).max(28),
     frequency: SipFrequencySchema.default("monthly"),
+    fundingSource: SipFundingSourceSchema.default("bank_debit"),
     startDate: z.iso.date().default(() => defaultSipDate()),
     endDate: z.iso.date().nullable().default(null),
   })
@@ -116,6 +149,10 @@ export const CreateSipSchema = z
         path: ["endDate"],
       });
     }
+    const fundingIssue = sipFundingSourceIssue(ctx.value.targetKind, ctx.value.fundingSource);
+    if (fundingIssue) {
+      ctx.issues.push({ code: "custom", message: fundingIssue.message, input: ctx.value, path: [fundingIssue.path] });
+    }
   });
 export type CreateSip = z.input<typeof CreateSipSchema>;
 
@@ -129,6 +166,7 @@ export const UpdateSipSchema = z
     dayOfMonth: z.number().int().min(1).max(28).optional(),
     frequency: SipFrequencySchema.optional(),
     status: SipStatusSchema.optional(),
+    fundingSource: SipFundingSourceSchema.optional(),
     startDate: z.iso.date().optional(),
     endDate: z.iso.date().nullable().optional(),
   })

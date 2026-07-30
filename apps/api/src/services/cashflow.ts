@@ -101,6 +101,9 @@ export async function getForecast(db: Db, redis: Redis, userId: string): Promise
 
     // Upcoming goal-SIP debits — the same predictable outflow as a recurring
     // template, so they count toward the trough/runway just like a bill.
+    // A payroll-funded SIP (EPF) is already booked as a real bank→retirement
+    // transfer by `createPayslip`, so projecting it again here would subtract
+    // the same money from the forecast twice.
     const activeSips = await db
       .select({
         amountPaise: sips.amountPaise,
@@ -116,7 +119,9 @@ export async function getForecast(db: Db, redis: Redis, userId: string): Promise
       .from(sips)
       .leftJoin(holdings, eq(holdings.id, sips.targetHoldingId))
       .leftJoin(accounts, eq(accounts.id, sips.targetAccountId))
-      .where(and(eq(sips.userId, userId), eq(sips.status, "active")));
+      .where(
+        and(eq(sips.userId, userId), eq(sips.status, "active"), eq(sips.fundingSource, "bank_debit")),
+      );
     for (const s of activeSips) {
       const target = s.targetKind === "mf_folio" ? s.holdingName : s.accountName;
       const merchant = `SIP → ${target ?? "goal"}`;

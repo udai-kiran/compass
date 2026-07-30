@@ -1,4 +1,5 @@
-import { and, asc, eq, isNull, max } from "drizzle-orm";
+import { and, asc, eq, isNull, max, sql } from "drizzle-orm";
+import type { SQL } from "drizzle-orm";
 import type { CreateSip, HoldingEvent, RecordSipInstallment, Sip, UpdateSip } from "@compass/shared";
 import {
   CreateSipSchema,
@@ -7,12 +8,13 @@ import {
   accountCanHaveGoal,
   isBankAccount,
   sipDateRangeValid,
+  sipFundingSourceIssue,
   todayInIST,
   unitsForInstallment,
 } from "@compass/shared";
-import type { AccountType, AssetClass, GainsTaxClass, SipFrequency, SipTargetKind } from "@compass/shared";
+import type { AccountType, AssetClass, GainsTaxClass, SipFrequency, SipFundingSource, SipTargetKind } from "@compass/shared";
 import type { Db, DbOrTx } from "../db/index.ts";
-import { accounts, holdingEvents, holdings, sips } from "../db/schema.ts";
+import { accounts, holdingEvents, holdings, sips, transactions } from "../db/schema.ts";
 import { HttpError, pgError } from "../lib/errors.ts";
 import { accountAllocationClass, holdingAllocationClass, type GoalAllocationClass } from "./goal-allocation.ts";
 import { nextSeqForDate } from "./holdings.ts";
@@ -32,6 +34,7 @@ function toSip(s: SipRow, lastInstallmentDate: string | null, today: string = to
     dayOfMonth: s.dayOfMonth,
     frequency: s.frequency,
     status: s.status,
+    fundingSource: s.fundingSource,
     startDate: s.startDate,
     endDate: s.endDate,
     lastInstallmentDate,
@@ -51,13 +54,55 @@ export function isUniqueViolation(err: unknown, constraint: string): boolean {
   return pg !== null && pg.code === "23505" && pg.constraint === constraint;
 }
 
-/** MAX(holding_events.date) over a SIP's recorded installments, or null if it has none. */
+/**
+ * True when an error is a Postgres check-constraint violation (SQLSTATE
+ * 23514) raised by one specific constraint. Matching the constraint name as
+ * well as the code matters: a bare 23514 check would relabel any future check
+ * constraint on sips as "this SIP update conflicts with another". Goes
+ * through `pgError` because Drizzle wraps the driver error — see its doc
+ * comment.
+ */
+export function isCheckViolation(err: unknown, constraint: string): boolean {
+  const pg = pgError(err);
+  return pg !== null && pg.code === "23514" && pg.constraint === constraint;
+}
+
+/**
+ * The greater (more recent) of two nullable ISO `YYYY-MM-DD` installment
+ * dates — null when neither side has a recorded installment. Pure so the
+ * merge of an MF-folio SIP's `holding_events` installments and an
+ * account-target SIP's `transactions` installments (see
+ * `lastInstallmentDateFor` / `listSipsForGoal`) is unit-testable without a
+ * DB. ISO dates compare correctly as plain strings, so no Date parsing is
+ * needed.
+ */
+export function laterInstallmentDate(a: string | null, b: string | null): string | null {
+  if (a === null) return b;
+  if (b === null) return a;
+  return a > b ? a : b;
+}
+
+/**
+ * The greater of MAX(holding_events.date) and MAX(transactions.date) over a
+ * SIP's recorded installments, or null if it has none. An MF-folio SIP
+ * records via `holding_events`; an account-target SIP (PPF/SSY) will record
+ * via a ledger `transactions` row instead — so both sources are checked.
+ * Soft-deleted transactions are excluded: a deleted transaction must not
+ * count as a recorded installment (see services/balances.ts).
+ */
 async function lastInstallmentDateFor(db: DbOrTx, sipId: string): Promise<string | null> {
-  const rows = await db
+  const holdingRows = await db
     .select({ lastInstallmentDate: max(holdingEvents.date) })
     .from(holdingEvents)
     .where(eq(holdingEvents.sipId, sipId));
-  return rows[0]?.lastInstallmentDate ?? null;
+  const txRows = await db
+    .select({ lastInstallmentDate: max(transactions.date) })
+    .from(transactions)
+    .where(and(eq(transactions.sipId, sipId), isNull(transactions.deletedAt)));
+  return laterInstallmentDate(
+    holdingRows[0]?.lastInstallmentDate ?? null,
+    txRows[0]?.lastInstallmentDate ?? null,
+  );
 }
 
 async function ownedSip(db: Db, userId: string, id: string): Promise<SipRow> {
@@ -198,6 +243,26 @@ export function resolveSipDateRange(
 }
 
 /**
+ * Merges a partial SIP target-kind/funding-source update with the stored
+ * row's values — `undefined` means "not touched" (keep the current value).
+ * Pure so the resolved-pair rule (`sipFundingSourceIssue`) is testable
+ * without a DB: a patch that only changes `fundingSource` (or only
+ * `targetKind`) can produce an invalid payroll+mf_folio pair even though
+ * neither field is invalid on its own — the schema-level `.check()` can't
+ * catch this, it only sees the fields actually sent. Mirrors
+ * `resolveSipDateRange`.
+ */
+export function resolveSipFundingTarget(
+  current: { targetKind: SipTargetKind; fundingSource: SipFundingSource },
+  patch: { targetKind?: SipTargetKind; fundingSource?: SipFundingSource },
+): { targetKind: SipTargetKind; fundingSource: SipFundingSource } {
+  return {
+    targetKind: patch.targetKind ?? current.targetKind,
+    fundingSource: patch.fundingSource ?? current.fundingSource,
+  };
+}
+
+/**
  * Turns the affected-row count of `linkTargetToGoal`'s conditional UPDATE into
  * a pass/reject decision — pure so the TOCTOU guard is unit-testable without a
  * DB. Zero rows means the `goal_id IS NULL` predicate no longer matched: some
@@ -274,15 +339,41 @@ async function assertAndLinkTarget(
   }
 }
 
-export async function listSipsForGoal(db: Db, userId: string, goalId: string): Promise<Sip[]> {
+/**
+ * Shared SIP-list query. Both installment-date sources are scalar subqueries
+ * rather than a second `leftJoin` — two leftJoins here would produce a
+ * cartesian product across a SIP's holding-event and transaction rows.
+ * `laterInstallmentDate` picks the greater of the two in TypeScript.
+ *
+ * Kept as one builder so the per-goal and cross-goal listings can never drift
+ * on how `lastInstallmentDate` (and therefore `dueInstallmentDate`) is derived.
+ * Every caller must include a `sips.userId` predicate in `where` — there is no
+ * unscoped SIP listing.
+ */
+async function listSipsWhere(db: Db, where: SQL): Promise<Sip[]> {
   const rows = await db
-    .select({ sip: sips, lastInstallmentDate: max(holdingEvents.date) })
+    .select({
+      sip: sips,
+      lastHoldingEventDate: sql<string | null>`(select max(${holdingEvents.date}) from ${holdingEvents} where ${holdingEvents.sipId} = ${sips.id})`,
+      lastTransactionDate: sql<string | null>`(select max(${transactions.date}) from ${transactions} where ${transactions.sipId} = ${sips.id} and ${transactions.deletedAt} is null)`,
+    })
     .from(sips)
-    .leftJoin(holdingEvents, eq(holdingEvents.sipId, sips.id))
-    .where(and(eq(sips.userId, userId), eq(sips.goalId, goalId)))
-    .groupBy(sips.id)
+    .where(where)
     .orderBy(asc(sips.createdAt));
-  return rows.map((r) => toSip(r.sip, r.lastInstallmentDate));
+  return rows.map((r) => toSip(r.sip, laterInstallmentDate(r.lastHoldingEventDate, r.lastTransactionDate)));
+}
+
+export async function listSipsForGoal(db: Db, userId: string, goalId: string): Promise<Sip[]> {
+  return listSipsWhere(db, and(eq(sips.userId, userId), eq(sips.goalId, goalId))!);
+}
+
+/**
+ * Every SIP the user has, across all goals — backs the `/sips` page's
+ * cross-goal recording list. Ordered by `createdAt` like the per-goal listing;
+ * the page does its own due-first grouping.
+ */
+export async function listAllSips(db: Db, userId: string): Promise<Sip[]> {
+  return listSipsWhere(db, eq(sips.userId, userId));
 }
 
 export async function createSip(db: Db, userId: string, input: CreateSip): Promise<Sip> {
@@ -317,6 +408,15 @@ export async function updateSip(db: Db, userId: string, id: string, input: Updat
     throw new HttpError(400, "endDate must be on or after startDate");
   }
 
+  // Same reasoning as the date-range check above: a patch that only touches
+  // `fundingSource` or only `targetKind` can produce an invalid payroll+mf_folio
+  // pair without either field failing the create-time schema check on its own.
+  const resolvedFunding = resolveSipFundingTarget(current, parsed);
+  const fundingIssue = sipFundingSourceIssue(resolvedFunding.targetKind, resolvedFunding.fundingSource);
+  if (fundingIssue) {
+    throw new HttpError(400, fundingIssue.message);
+  }
+
   return db.transaction(async (tx) => {
     // See createSip: source/target locks must happen inside this transaction,
     // before the target decision+write, to close the same edit-vs-SIP race.
@@ -342,11 +442,24 @@ export async function updateSip(db: Db, userId: string, id: string, input: Updat
       await assertAccountTargetType(tx, userId, current.targetAccountId!, sourceAccountId);
     }
 
-    const rows = await tx
-      .update(sips)
-      .set(parsed)
-      .where(and(eq(sips.id, id), eq(sips.userId, userId)))
-      .returning();
+    let rows;
+    try {
+      rows = await tx
+        .update(sips)
+        .set(parsed)
+        .where(and(eq(sips.id, id), eq(sips.userId, userId)))
+        .returning();
+    } catch (err) {
+      // A concurrent partial update can each validate the merged
+      // (targetKind, fundingSource) pair against the same pre-transaction row
+      // and still combine into an invalid pair — the sipFundingSourceIssue
+      // check above can't catch that race, so the DB-level check constraint
+      // is what actually rejects it here.
+      if (isCheckViolation(err, "sips_payroll_requires_account_target")) {
+        throw new HttpError(409, "This SIP's funding source or target just changed — refresh and retry");
+      }
+      throw err;
+    }
     if (rows.length === 0) throw new HttpError(404, "SIP not found");
     // The update itself never touches installments — carry forward whatever
     // was already recorded rather than hardcoding null.
@@ -445,6 +558,16 @@ export async function recordSipInstallment(
     if (!sip) throw new HttpError(404, "SIP not found");
     if (sip.targetKind !== "mf_folio" || sip.targetHoldingId !== probe.targetHoldingId) {
       throw new HttpError(409, "The SIP's target folio just changed — refresh and retry");
+    }
+    // Defence in depth: createSip/updateSip already reject a payroll-funded
+    // mf_folio SIP (see sipFundingSourceIssue), so this should be unreachable —
+    // but a SIP row created before that constraint existed could still carry
+    // this combination, and a payroll SIP's installment is booked automatically
+    // from the payslip, never by hand. Read from the locked `sip` row, not the
+    // unlocked `probe`, since a concurrent updateSip could have changed
+    // `fundingSource` in between.
+    if (sip.fundingSource === "payroll") {
+      throw new HttpError(400, "A payroll-funded SIP is recorded from your payslip, not manually");
     }
 
     const dateError = installmentDateError(sip, parsed.date);

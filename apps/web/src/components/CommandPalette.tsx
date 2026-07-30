@@ -12,6 +12,7 @@ const PAGES: Array<{ label: string; to: string }> = [
   { label: "Budgets", to: "/budgets" },
   { label: "Trends", to: "/trends" },
   { label: "Goals", to: "/goals" },
+  { label: "SIPs", to: "/sips" },
   { label: "Cash Flow", to: "/cash-flow" },
   { label: "Investments", to: "/investments" },
   { label: "Net Worth", to: "/net-worth" },

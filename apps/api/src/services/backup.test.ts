@@ -10,7 +10,8 @@ import {
   LINKED_TABLES,
   USER_TABLES,
 } from "./backup.ts";
-import { firstPassRow } from "../db/restore.ts";
+import type pg from "pg";
+import { DEFERRED_RESTORE_COLUMNS, firstPassRow, restoreDump } from "../db/restore.ts";
 import { restorableTables } from "./restore-user.ts";
 
 /** Every pgTable defined in the schema, by its SQL name. */
@@ -125,4 +126,47 @@ test("restore defers cyclic and self-referencing foreign keys", () => {
     firstPassRow("transactions", { id: "t", merchant: "Cafe", policy_id: "p", search: "'cafe':1" }),
     { id: "t", merchant: "Cafe", policy_id: null },
   );
+});
+
+test("restoreDump's second pass issues an update for every column in DEFERRED_RESTORE_COLUMNS", async () => {
+  // A mock pg.Pool/PoolClient: restoreDump's second pass must be a generic loop
+  // over DEFERRED_RESTORE_COLUMNS, not a series of hard-coded per-column update
+  // blocks — a column added to the map (e.g. sip_id) but missing its own
+  // hard-coded block would silently never get restored. This records every
+  // query restoreDump issues so the test can assert an update ran for each
+  // (table, column) pair the map lists, with no DB required.
+  const calls: { sql: string; params: unknown[] }[] = [];
+  const client = {
+    query: async (sql: string, params: unknown[] = []) => {
+      calls.push({ sql, params });
+      if (sql.includes("count(*)::bigint as count from users")) return { rows: [{ count: "0" }] };
+      return { rows: [] };
+    },
+    release: () => {},
+  };
+  const pool = { connect: async () => client } as unknown as pg.Pool;
+
+  // One row per deferred-column table, each deferred column set to a distinct
+  // non-null value — a column the loop skips shows up as a missing update call.
+  const dump: Record<string, Array<Record<string, unknown>>> = Object.fromEntries(ALL_TABLES.map((t) => [t, []]));
+  dump.accounts = [{ id: "acc1", goal_id: "goal1" }];
+  dump.categories = [{ id: "cat1", parent_id: "cat0" }];
+  dump.transactions = [
+    { id: "txn1", policy_id: "pol1", recurring_template_id: "rt1", reconciled_statement_id: "rs1", sip_id: "sip1" },
+  ];
+
+  await restoreDump(pool, dump);
+
+  const updateCalls = calls.filter((c) => c.sql.startsWith("update "));
+  const expected = Object.entries(DEFERRED_RESTORE_COLUMNS).flatMap(([table, columns]) =>
+    columns.map((column) => ({ table, column })),
+  );
+  assert.equal(updateCalls.length, expected.length, "one update per deferred column, no more, no fewer");
+  for (const { table, column } of expected) {
+    const call = updateCalls.find((c) => c.sql === `update "${table}" set "${column}" = $1 where id = $2`);
+    assert.ok(call, `expected an update for ${table}.${column}`);
+  }
+  // sip_id specifically — this is the column the hard-coded blocks used to miss.
+  const sipUpdate = updateCalls.find((c) => c.sql === 'update "transactions" set "sip_id" = $1 where id = $2');
+  assert.deepEqual(sipUpdate?.params, ["sip1", "txn1"]);
 });

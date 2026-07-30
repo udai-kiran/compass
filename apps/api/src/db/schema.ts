@@ -349,6 +349,13 @@ export const transactions = pgTable(
       onDelete: "set null",
     }),
     resourceId: uuid("resource_id").references(() => resources.id, { onDelete: "set null" }),
+    /**
+     * The SIP installment this transaction booked, when it was recorded from
+     * a SIP rather than hand-entered or imported. `set null` on delete, not
+     * cascade: deleting the SIP *plan* must not erase a real ledger
+     * transaction.
+     */
+    sipId: uuid("sip_id").references((): AnyPgColumn => sips.id, { onDelete: "set null" }),
     recurringTemplateId: uuid("recurring_template_id").references(
       (): AnyPgColumn => recurringTemplates.id,
       { onDelete: "set null" },
@@ -380,6 +387,15 @@ export const transactions = pgTable(
     index("transactions_resource_idx").on(t.resourceId),
     index("transactions_recurring_template_idx").on(t.recurringTemplateId),
     index("transactions_reconciled_idx").on(t.reconciledStatementId),
+    // A soft-deleted installment must free its (sip, date) slot for a
+    // re-linked transaction — `deleted_at is null` excludes it from the
+    // uniqueness predicate. This deliberately differs from
+    // `holding_events_sip_date_idx`, which has no such exclusion: holding_events
+    // rows are hard-deleted (see services/holdings.ts), so there's no
+    // soft-deleted row left to collide with in the first place.
+    uniqueIndex("transactions_sip_date_idx")
+      .on(t.sipId, t.date)
+      .where(sql`sip_id is not null and deleted_at is null`),
   ],
 );
 
@@ -1328,6 +1344,7 @@ export const holdingEvents = pgTable(
 
 export const sipTargetKind = pgEnum("sip_target_kind", ["mf_folio", "account"]);
 export const sipStatus = pgEnum("sip_status", ["active", "paused"]);
+export const sipFundingSource = pgEnum("sip_funding_source", ["bank_debit", "payroll"]);
 /**
  * How often the SIP debits. Most MF SIPs are monthly, but PPF/SSY are often
  * funded with a single lump quarterly/annual deposit rather than a monthly
@@ -1380,6 +1397,14 @@ export const sips = pgTable(
      */
     frequency: sipFrequency("frequency").notNull().default("monthly"),
     status: sipStatus("status").notNull().default("active"),
+    /**
+     * `payroll` means the contribution is deducted from salary (EPF) and
+     * already reaches the ledger via `createPayslip`'s bank→retirement
+     * transfer — so it counts toward a goal's committed funding but must
+     * never be subtracted again by the cash forecast, and is never manually
+     * recorded.
+     */
+    fundingSource: sipFundingSource("funding_source").notNull().default("bank_debit"),
     startDate: date("start_date").notNull(),
     endDate: date("end_date"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -1388,6 +1413,16 @@ export const sips = pgTable(
     index("sips_user_idx").on(t.userId),
     index("sips_goal_idx").on(t.goalId),
     index("sips_source_account_idx").on(t.sourceAccountId),
+    // Storage-level guarantee, not just a service-level one: the app-level
+    // `sipFundingSourceIssue` check gives the friendly error, but two concurrent
+    // partial updateSip calls can each validate the merged (targetKind,
+    // fundingSource) pair against the same pre-transaction row and still combine
+    // into an invalid payroll+mf_folio pair — this constraint is what actually
+    // makes that state unreachable, regardless of code path or interleaving.
+    check(
+      "sips_payroll_requires_account_target",
+      sql`${t.fundingSource} <> 'payroll' or ${t.targetKind} = 'account'`,
+    ),
   ],
 );
 

@@ -1,28 +1,19 @@
 import { useState, type FormEvent } from "react";
+import { Link } from "react-router";
 import {
-  accountCanHaveGoal,
-  formatDisplayDate,
   formatINR,
-  isBankAccount,
-  rupeesToPaise,
-  todayInIST,
   type Goal,
   type GoalProgress,
   type GoalType,
-  type Sip,
-  type SipFrequency,
-  type SipTargetKind,
 } from "@compass/shared";
 import { toast } from "../../lib/toast.tsx";
 import {
   useGoalMutations,
   useGoalProgress,
   useGoals,
-  useSipMutations,
   useSips,
 } from "../../lib/goal-queries.ts";
-import { useAccounts } from "../../lib/queries.ts";
-import { useAssetGoalMutation, useNetWorthByGoal, usePortfolio } from "../../lib/wealth-queries.ts";
+import { useAssetGoalMutation, useNetWorthByGoal } from "../../lib/wealth-queries.ts";
 import { SERIES } from "../../lib/viz.tsx";
 import { formatGoalDeadlineDistance } from "./goal-date.ts";
 import { DateField } from "../../components/DateField.tsx";
@@ -309,8 +300,46 @@ function GoalProgressBody({ goal, p }: { goal: Goal; p: GoalProgress }) {
       <ProjectionLine p={p} />
       <GoalPlanBody p={p} />
       <MappedAssets goalId={goal.id} p={p} />
-      <SipsSection goalId={goal.id} />
+      <SipsSummary goalId={goal.id} p={p} />
     </>
+  );
+}
+
+/**
+ * Read-only SIP roll-up on a goal card. Managing SIPs and recording
+ * installments both live on `/sips` now, so a card only answers "how much is
+ * committed here, and is anything waiting to be recorded?" and links there.
+ * `committedMonthlyPaise` comes from the goal plan, which already monthlyizes
+ * quarterly/yearly SIPs and counts only active ones.
+ */
+function SipsSummary({ goalId, p }: { goalId: string; p: GoalProgress }) {
+  const { data: sipList } = useSips(goalId);
+  const sips = sipList ?? [];
+  const pausedCount = sips.filter((s) => s.status === "paused").length;
+  const awaitingCount = sips.filter((s) => s.dueInstallmentDate !== null).length;
+
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md border border-slate-200 px-3 py-2 text-xs">
+      <span className="font-medium text-slate-500">SIPs ({sips.length})</span>
+      {sips.length > 0 ? (
+        <span className="text-slate-600">
+          Committed <b className="tabular-nums text-slate-800">{formatINR(p.plan.committedMonthlyPaise)}</b>/mo
+        </span>
+      ) : (
+        <span className="text-slate-400">none yet</span>
+      )}
+      {pausedCount > 0 && (
+        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500">{pausedCount} paused</span>
+      )}
+      {awaitingCount > 0 && (
+        <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] text-amber-700">
+          {awaitingCount} awaiting a record
+        </span>
+      )}
+      <Link to="/sips" className="ml-auto text-brand-600 underline">
+        Manage SIPs →
+      </Link>
+    </div>
   );
 }
 
@@ -637,396 +666,6 @@ function MappedAssets({ goalId, p }: { goalId: string; p: GoalProgress }) {
         </ul>
       )}
     </div>
-  );
-}
-
-const SIP_FREQUENCY_LABEL: Record<SipFrequency, string> = { monthly: "mo", quarterly: "qtr", yearly: "yr" };
-const SIP_FREQUENCY_OPTIONS: Array<{ value: SipFrequency; label: string }> = [
-  { value: "monthly", label: "Monthly" },
-  { value: "quarterly", label: "Quarterly" },
-  { value: "yearly", label: "Yearly" },
-];
-
-/** SIPs funding this goal — a source account debiting monthly into an MF folio or another account (e.g. PPF/SSY). */
-function SipsSection({ goalId }: { goalId: string }) {
-  const { data: sipList } = useSips(goalId);
-  const { data: accountList } = useAccounts();
-  const { data: portfolio } = usePortfolio();
-  const { update, remove } = useSipMutations();
-  const [showForm, setShowForm] = useState(false);
-  const [recordingId, setRecordingId] = useState<string | null>(null);
-
-  const accountName = (id: string) => accountList?.find((a) => a.id === id)?.name ?? "Account";
-  const targetLabel = (sip: Sip) => {
-    if (sip.targetKind === "mf_folio") {
-      const h = portfolio?.positions.find((p) => p.id === sip.targetHoldingId);
-      return h ? `${h.name}${h.folioNumber ? ` (Folio ${h.folioNumber})` : ""}` : "MF folio";
-    }
-    return accountName(sip.targetAccountId!);
-  };
-
-  const sips = sipList ?? [];
-
-  return (
-    <div className="mt-3 rounded-md border border-slate-200">
-      <div className="flex items-center justify-between gap-2 border-b border-slate-100 px-3 py-1.5">
-        <span className="text-xs font-medium text-slate-500">SIPs ({sips.length})</span>
-        <button
-          className="text-xs text-brand-600 underline"
-          onClick={() => setShowForm((v) => !v)}
-        >
-          {showForm ? "Close" : "+ Add SIP"}
-        </button>
-      </div>
-
-      {showForm && (
-        <div className="border-b border-slate-100 p-3">
-          <SipForm goalId={goalId} onDone={() => setShowForm(false)} />
-        </div>
-      )}
-
-      {sips.length === 0 ? (
-        <p className="px-3 py-3 text-center text-xs text-slate-400">
-          No SIPs yet — add one to fund this goal automatically each month.
-        </p>
-      ) : (
-        <ul className="divide-y divide-slate-100 text-sm">
-          {sips.map((sip) => {
-            const isFolioTarget = sip.targetKind === "mf_folio";
-            return (
-              <li key={sip.id} className="px-3 py-1.5">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="truncate text-slate-700">{accountName(sip.sourceAccountId)}</span>
-                  <span className="text-slate-400">→</span>
-                  <span className="truncate text-slate-700">{targetLabel(sip)}</span>
-                  <span className="ml-auto tabular-nums text-slate-700">
-                    {formatINR(sip.amountPaise)}/{SIP_FREQUENCY_LABEL[sip.frequency]}
-                  </span>
-                  <span className="text-xs text-slate-400">day {sip.dayOfMonth}</span>
-                  {sip.status === "paused" && (
-                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500">paused</span>
-                  )}
-                  {isFolioTarget && sip.dueInstallmentDate !== null && (
-                    <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] text-amber-700">
-                      due {formatDisplayDate(sip.dueInstallmentDate)}
-                    </span>
-                  )}
-                  {isFolioTarget && sip.dueInstallmentDate === null && sip.lastInstallmentDate !== null && (
-                    <span className="text-[11px] text-slate-400">last {formatDisplayDate(sip.lastInstallmentDate)}</span>
-                  )}
-                  {isFolioTarget && (
-                    <button
-                      className="text-xs text-slate-500 underline"
-                      onClick={() => setRecordingId((v) => (v === sip.id ? null : sip.id))}
-                    >
-                      {recordingId === sip.id ? "Close" : "Record"}
-                    </button>
-                  )}
-                  <button
-                    className="text-xs text-slate-500 underline"
-                    disabled={update.isPending}
-                    onClick={() =>
-                      update.mutate({ id: sip.id, status: sip.status === "active" ? "paused" : "active" })
-                    }
-                  >
-                    {sip.status === "active" ? "Pause" : "Resume"}
-                  </button>
-                  <button
-                    className="text-slate-400 hover:text-red-600"
-                    title="Delete"
-                    disabled={remove.isPending}
-                    onClick={() => {
-                      if (confirm("Delete this SIP?")) remove.mutate(sip.id);
-                    }}
-                  >
-                    ✕
-                  </button>
-                </div>
-                {isFolioTarget && recordingId === sip.id && (
-                  <RecordInstallmentForm sip={sip} onDone={() => setRecordingId(null)} />
-                )}
-              </li>
-            );
-          })}
-        </ul>
-      )}
-    </div>
-  );
-}
-
-/** Inline form (toggled by a SIP row's "Record" button) for booking one actual installment as an MF buy. */
-function RecordInstallmentForm({ sip, onDone }: { sip: Sip; onDone: () => void }) {
-  const { recordInstallment } = useSipMutations();
-  const [date, setDate] = useState(sip.dueInstallmentDate ?? sip.lastInstallmentDate ?? todayInIST());
-  const [amountR, setAmountR] = useState(String(sip.amountPaise / 100));
-  const [valueKind, setValueKind] = useState<"nav" | "units">("nav");
-  const [valueInput, setValueInput] = useState("");
-  const [note, setNote] = useState("");
-
-  const canSubmit = date !== "" && amountR !== "" && valueInput !== "";
-
-  function submit(e: FormEvent) {
-    e.preventDefault();
-    if (!canSubmit) return;
-    const value = parseFloat(valueInput);
-    recordInstallment.mutate(
-      {
-        id: sip.id,
-        date,
-        amountPaise: rupeesToPaise(parseFloat(amountR)),
-        nav: valueKind === "nav" ? value : null,
-        units: valueKind === "units" ? value : null,
-        note,
-      },
-      {
-        onSuccess: () => {
-          toast("Installment recorded", "success");
-          onDone();
-        },
-      },
-    );
-  }
-
-  return (
-    <form onSubmit={submit} className="mt-2 flex flex-wrap items-end gap-2 rounded-md bg-slate-50 p-2 text-xs">
-      <label className="block">
-        <span className="text-slate-600">Date</span>
-        <DateField value={date} onChange={setDate} className="mt-1 w-28" aria-label="Installment date" />
-      </label>
-      <label className="block">
-        <span className="text-slate-600">Amount (₹)</span>
-        <input
-          value={amountR}
-          onChange={(e) => setAmountR(e.target.value)}
-          inputMode="decimal"
-          required
-          className="mt-1 w-24 rounded-md border border-slate-300 px-2 py-1.5 text-right"
-        />
-      </label>
-      <label className="block">
-        <span className="text-slate-600">Basis</span>
-        <select
-          value={valueKind}
-          onChange={(e) => setValueKind(e.target.value as "nav" | "units")}
-          className="mt-1 w-20 rounded-md border border-slate-300 px-2 py-1.5"
-        >
-          <option value="nav">NAV</option>
-          <option value="units">Units</option>
-        </select>
-      </label>
-      <label className="block">
-        <span className="text-slate-600">{valueKind === "nav" ? "NAV (₹)" : "Units"}</span>
-        <input
-          value={valueInput}
-          onChange={(e) => setValueInput(e.target.value)}
-          inputMode="decimal"
-          required
-          className="mt-1 w-24 rounded-md border border-slate-300 px-2 py-1.5 text-right"
-        />
-      </label>
-      <label className="block min-w-[8rem] flex-1">
-        <span className="text-slate-600">Note (optional)</span>
-        <input
-          value={note}
-          onChange={(e) => setNote(e.target.value)}
-          className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5"
-        />
-      </label>
-      <div className="flex items-center gap-3">
-        <button
-          type="submit"
-          disabled={recordInstallment.isPending || !canSubmit}
-          className="rounded-md bg-brand-600 px-3 py-1.5 text-white disabled:opacity-40"
-        >
-          {recordInstallment.isPending ? "Recording…" : "Record"}
-        </button>
-        <button type="button" className="text-slate-500 underline" onClick={onDone}>
-          Cancel
-        </button>
-      </div>
-      {recordInstallment.isError && (
-        <p className="w-full text-xs text-red-600">{recordInstallment.error.message}</p>
-      )}
-      <p className="w-full text-[11px] text-slate-400">
-        Records the fund purchase only — the bank debit comes in from your statement or email import.
-      </p>
-    </form>
-  );
-}
-
-/** Add-SIP form: a bank source account, a polymorphic target (MF folio or account), amount, and debit day. */
-function SipForm({ goalId, onDone }: { goalId: string; onDone: () => void }) {
-  const { data: accountList } = useAccounts();
-  const { data: portfolio } = usePortfolio();
-  const { create } = useSipMutations();
-
-  const bankAccounts = (accountList ?? []).filter((a) => isBankAccount(a.type) && a.archivedAt === null);
-
-  const [sourceAccountId, setSourceAccountId] = useState("");
-  const [targetKind, setTargetKind] = useState<SipTargetKind>("mf_folio");
-  const [targetHoldingId, setTargetHoldingId] = useState("");
-  const [targetAccountId, setTargetAccountId] = useState("");
-  const [amountR, setAmountR] = useState("");
-  const [dayOfMonth, setDayOfMonth] = useState("5");
-  const [frequency, setFrequency] = useState<SipFrequency>("monthly");
-
-  // MF-folio target candidates: this goal's own folios, plus unmapped ones —
-  // a folio mapped to a *different* goal can't be picked (it would double-count
-  // toward two goals' funding). Unmapped folios get linked to this goal on create.
-  const folios = (portfolio?.positions ?? []).filter(
-    (p) => !p.archived && (p.goalId === null || p.goalId === goalId),
-  );
-
-  // Account-target candidates: investment-scheme accounts (PPF/EPF/SSY/investment)
-  // — bank/cash accounts are excluded because the cash-flow forecast already
-  // aggregates every bank/cash balance, so crediting one as a SIP target would
-  // fabricate a cash loss — mapped to this goal or unmapped, excluding the source.
-  const targetAccounts = (accountList ?? []).filter(
-    (a) =>
-      a.archivedAt === null &&
-      accountCanHaveGoal(a.type) &&
-      (a.goalId === null || a.goalId === goalId) &&
-      a.id !== sourceAccountId,
-  );
-
-  const canSubmit =
-    sourceAccountId !== "" &&
-    amountR !== "" &&
-    (targetKind === "mf_folio" ? targetHoldingId !== "" : targetAccountId !== "");
-
-  function submit(e: FormEvent) {
-    e.preventDefault();
-    if (!canSubmit) return;
-    create.mutate(
-      {
-        goalId,
-        sourceAccountId,
-        targetKind,
-        targetHoldingId: targetKind === "mf_folio" ? targetHoldingId : null,
-        targetAccountId: targetKind === "account" ? targetAccountId : null,
-        amountPaise: rupeesToPaise(parseFloat(amountR)),
-        dayOfMonth: parseInt(dayOfMonth, 10),
-        frequency,
-      },
-      {
-        onSuccess: () => {
-          toast("SIP added", "success");
-          onDone();
-        },
-        onError: () => toast("Couldn't add the SIP"),
-      },
-    );
-  }
-
-  return (
-    <form onSubmit={submit} className="grid gap-2 text-xs sm:grid-cols-2">
-      <label className="block">
-        <span className="text-slate-600">Source account</span>
-        <select
-          value={sourceAccountId}
-          onChange={(e) => setSourceAccountId(e.target.value)}
-          required
-          className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5"
-        >
-          <option value="">Select…</option>
-          {bankAccounts.map((a) => (
-            <option key={a.id} value={a.id}>{a.name}</option>
-          ))}
-        </select>
-      </label>
-      <label className="block">
-        <span className="text-slate-600">Target</span>
-        <select
-          value={targetKind}
-          onChange={(e) => setTargetKind(e.target.value as SipTargetKind)}
-          className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5"
-        >
-          <option value="mf_folio">MF folio</option>
-          <option value="account">Account (PPF/SSY…)</option>
-        </select>
-      </label>
-      {targetKind === "mf_folio" ? (
-        <label className="block sm:col-span-2">
-          <span className="text-slate-600">MF folio</span>
-          <select
-            value={targetHoldingId}
-            onChange={(e) => setTargetHoldingId(e.target.value)}
-            required
-            className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5"
-          >
-            <option value="">Select…</option>
-            {folios.map((f) => (
-              <option key={f.id} value={f.id}>
-                {f.name}{f.folioNumber ? ` (Folio ${f.folioNumber})` : ""}
-                {f.goalId === null ? " (will link to this goal)" : ""}
-              </option>
-            ))}
-          </select>
-        </label>
-      ) : (
-        <label className="block sm:col-span-2">
-          <span className="text-slate-600">Target account</span>
-          <select
-            value={targetAccountId}
-            onChange={(e) => setTargetAccountId(e.target.value)}
-            required
-            className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5"
-          >
-            <option value="">Select…</option>
-            {targetAccounts.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.name}{a.goalId === null ? " (will link to this goal)" : ""}
-              </option>
-            ))}
-          </select>
-        </label>
-      )}
-      <label className="block">
-        <span className="text-slate-600">Amount (₹/{SIP_FREQUENCY_LABEL[frequency]})</span>
-        <input
-          value={amountR}
-          onChange={(e) => setAmountR(e.target.value)}
-          inputMode="decimal"
-          required
-          className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-right"
-        />
-      </label>
-      <label className="block">
-        <span className="text-slate-600">Frequency</span>
-        <select
-          value={frequency}
-          onChange={(e) => setFrequency(e.target.value as SipFrequency)}
-          className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5"
-        >
-          {SIP_FREQUENCY_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>{o.label}</option>
-          ))}
-        </select>
-      </label>
-      <label className="block">
-        <span className="text-slate-600">Day of month</span>
-        <input
-          type="number"
-          min={1}
-          max={28}
-          value={dayOfMonth}
-          onChange={(e) => setDayOfMonth(e.target.value)}
-          className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-right"
-        />
-      </label>
-      <div className="flex items-center gap-3 sm:col-span-2">
-        <button
-          type="submit"
-          disabled={create.isPending || !canSubmit}
-          className="rounded-md bg-brand-600 px-4 py-1.5 text-white disabled:opacity-40"
-        >
-          {create.isPending ? "Adding…" : "Add SIP"}
-        </button>
-        <button type="button" className="text-slate-500 underline" onClick={onDone}>
-          Cancel
-        </button>
-      </div>
-    </form>
   );
 }
 
