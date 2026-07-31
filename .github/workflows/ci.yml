@@ -22,8 +22,6 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
-    env:
-      DATABASE_URL: postgres://compass:compass-ci@localhost:${{ job.services.postgres.ports['5432'] }}/compass_ci
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -34,7 +32,11 @@ jobs:
       - run: npm run typecheck
       - run: npm run lint
       - run: npm run db:migrate
+        env:
+          DATABASE_URL: postgres://compass:compass-ci@localhost:${{ job.services.postgres.ports['5432'] }}/compass_ci
       - run: npm test
+        env:
+          DATABASE_URL: postgres://compass:compass-ci@localhost:${{ job.services.postgres.ports['5432'] }}/compass_ci
       - run: npm run build -w apps/web
       - run: npm run build -w apps/docs
 
