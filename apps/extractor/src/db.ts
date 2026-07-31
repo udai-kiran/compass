@@ -295,8 +295,8 @@ export async function saveResults(
         `insert into extracted_transactions
            (user_id, ingestion_id, amount_paise, direction, occurred_at, occurred_at_ts, counterparty,
             suggested_account_id, suggested_category_id, bank_ref, source_quote, confidence,
-            dedupe_hash, status, matched_transaction_id)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+            dedupe_hash, status, matched_transaction_id, intent)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
          on conflict (user_id, dedupe_hash) do nothing`,
         [
           args.ingestion.userId,
@@ -314,6 +314,7 @@ export async function saveResults(
           row.dedupeHash,
           row.status ?? "pending",
           row.matchedTransactionId ?? null,
+          row.intent,
         ],
       );
       inserted += res.rowCount ?? 0;

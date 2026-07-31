@@ -442,6 +442,13 @@
       "when": 1785433505883,
       "tag": "0062_stale_garia",
       "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1785501480240,
+      "tag": "0063_cheerful_switch",
+      "breakpoints": true
     }
   ]
 }

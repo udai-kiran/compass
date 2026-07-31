@@ -3,6 +3,7 @@ import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
 import {
   AcceptExtractedTxnSchema,
+  AcceptRepaymentSchema,
   AcceptTransferSchema,
   ExtractedTransactionSchema,
   InboxCountSchema,
@@ -10,6 +11,7 @@ import {
 } from "@compass/shared";
 import {
   acceptExtracted,
+  acceptRepayment,
   acceptTransfer,
   countPending,
   listInbox,
@@ -58,6 +60,18 @@ export async function inboxRoutes(app: FastifyInstance) {
       },
     },
     async (req) => acceptExtracted(app.db, req.session!.userId, req.params.id, req.body),
+  );
+
+  r.post(
+    "/api/inbox/:id/repayment",
+    {
+      schema: {
+        params: z.object({ id: z.uuid() }),
+        body: AcceptRepaymentSchema,
+        response: { 200: ExtractedTransactionSchema },
+      },
+    },
+    async (req) => acceptRepayment(app.db, req.session!.userId, req.params.id, req.body),
   );
 
   r.post(
