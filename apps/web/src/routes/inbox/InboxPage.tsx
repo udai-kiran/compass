@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { formatINR, type Account, type Category, type ExtractedTransaction } from "@compass/shared";
 import { useAccounts, useCategories } from "../../lib/queries.ts";
-import { useInbox, useInboxMutations } from "../../lib/inbox-queries.ts";
+import { useInbox, useInboxMutations, useOrphanedInbox } from "../../lib/inbox-queries.ts";
 import { toast } from "../../lib/toast.tsx";
 import { CategoryPicker } from "../../components/CategoryPicker.tsx";
 import { DateField } from "../../components/DateField.tsx";
@@ -11,6 +11,7 @@ const today = () => new Date().toISOString().slice(0, 10);
 export function InboxPage() {
   const { data: drafts, isLoading } = useInbox("pending");
   const { data: duplicates } = useInbox("duplicate");
+  const { data: orphaned } = useOrphanedInbox();
   const { data: accounts } = useAccounts();
   const { data: categories } = useCategories();
   const openAccounts = (accounts ?? []).filter((a) => a.archivedAt === null);
@@ -27,6 +28,8 @@ export function InboxPage() {
           a matching credit are grouped as one transfer. Nothing is added automatically.
         </p>
       </header>
+
+      {orphaned && orphaned.length > 0 && <OrphanedSection rows={orphaned} />}
 
       {isLoading && <p className="text-sm text-slate-400">Loading…</p>}
 
@@ -46,6 +49,66 @@ export function InboxPage() {
 }
 
 /**
+ * "Needs attention": accepted drafts whose ledger transaction was hard-deleted
+ * after acceptance — otherwise invisible (gone from the pending queue, absent
+ * from the ledger). Restore sends one back to `pending` for re-review;
+ * Dismiss rejects it outright. Only rendered when non-empty.
+ */
+function OrphanedSection({ rows }: { rows: ExtractedTransaction[] }) {
+  const { restore, reject } = useInboxMutations();
+  const busy = restore.isPending || reject.isPending;
+  return (
+    <div className="mb-4 overflow-hidden rounded-lg border border-amber-300">
+      <div className="bg-amber-100 px-4 py-3">
+        <p className="text-sm font-medium text-amber-900">
+          {rows.length} accepted transactions are missing from your ledger
+        </p>
+        <p className="mt-0.5 text-xs text-amber-800">
+          Their ledger entry was deleted after they were accepted. Restore to send one back to
+          review, or dismiss if you don't want to track it.
+        </p>
+      </div>
+      <ul className="divide-y divide-amber-100 bg-white">
+        {rows.map((r) => {
+          const isDebit = r.direction === "debit";
+          return (
+            <li key={r.id} className="flex items-center gap-3 px-4 py-2.5 text-sm">
+              <span className="min-w-0 flex-1 truncate text-slate-700">
+                {r.counterparty || "Unknown"}
+                <span className="ml-2 text-xs text-slate-400">{r.occurredAt ?? ""}</span>
+                <span className="block truncate text-xs text-slate-400">
+                  {r.subject} · {r.fromAddr}
+                </span>
+              </span>
+              <span
+                className={`shrink-0 tabular-nums ${isDebit ? "text-rose-700" : "text-emerald-700"}`}
+              >
+                {isDebit ? "−" : "+"}
+                {formatINR(r.amountPaise)}
+              </span>
+              <button
+                onClick={() => restore.mutate(r.id, { onSuccess: () => toast("Restored to review") })}
+                disabled={busy}
+                className="shrink-0 text-xs font-medium text-brand-700 hover:underline disabled:opacity-40"
+              >
+                Restore
+              </button>
+              <button
+                onClick={() => reject.mutate(r.id, { onSuccess: () => toast("Dismissed") })}
+                disabled={busy}
+                className="shrink-0 text-xs text-slate-500 hover:text-slate-800 hover:underline disabled:opacity-40"
+              >
+                Dismiss
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
+/**
  * Statement lines the matcher tied to a transaction already in the ledger (from
  * a real-time alert this cycle). Collapsed by default so they stay out of the
  * way; "Not a duplicate" sends one back to the pending queue if the match is wrong.
@@ -53,6 +116,8 @@ export function InboxPage() {
 function DuplicatesGroup({ rows }: { rows: ExtractedTransaction[] }) {
   const [open, setOpen] = useState(false);
   const { unmatch } = useInboxMutations();
+  const missingCount = rows.filter((r) => r.matchedTransactionId === null).length;
+  const matchedCount = rows.length - missingCount;
   return (
     <div className="mt-4 rounded-lg border border-slate-200 bg-white">
       <button
@@ -60,8 +125,23 @@ function DuplicatesGroup({ rows }: { rows: ExtractedTransaction[] }) {
         className="flex w-full items-center justify-between px-4 py-3 text-left text-sm text-slate-600 hover:bg-slate-50"
       >
         <span>
-          <span className="font-medium text-slate-700">{rows.length}</span> already in your ledger —
-          matched from earlier alerts, hidden from review
+          {missingCount === 0 ? (
+            <>
+              <span className="font-medium text-slate-700">{rows.length}</span> already in your
+              ledger — matched from earlier alerts, hidden from review
+            </>
+          ) : matchedCount === 0 ? (
+            <>
+              <span className="font-medium text-slate-700">{rows.length}</span> previously matched —
+              ledger entry missing, hidden from review
+            </>
+          ) : (
+            <>
+              <span className="font-medium text-slate-700">{matchedCount}</span> already in your
+              ledger · <span className="font-medium text-slate-700">{missingCount}</span> previously
+              matched — ledger entry missing
+            </>
+          )}
         </span>
         <span className="text-slate-400">{open ? "▾" : "▸"}</span>
       </button>
@@ -74,6 +154,13 @@ function DuplicatesGroup({ rows }: { rows: ExtractedTransaction[] }) {
                 <span className="min-w-0 flex-1 truncate text-slate-700">
                   {r.counterparty || "Unknown"}
                   <span className="ml-2 text-xs text-slate-400">{r.occurredAt ?? ""}</span>
+                  {/* The matched ledger row was hard-deleted after matching — don't
+                      assert a link that no longer exists. */}
+                  {r.matchedTransactionId === null && (
+                    <span className="ml-2 text-xs text-amber-600">
+                      previously matched — ledger entry missing
+                    </span>
+                  )}
                 </span>
                 <span
                   className={`shrink-0 tabular-nums ${isDebit ? "text-rose-700" : "text-emerald-700"}`}

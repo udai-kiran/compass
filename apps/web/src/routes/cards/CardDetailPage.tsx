@@ -7,14 +7,16 @@ import {
   type StatementReconciliation,
 } from "@compass/shared";
 import {
+  useAbsorbCarryoverMutation,
   useCardActivity,
   useCardStatements,
   useRecomputeReconciliation,
   useReconciliations,
   useStatementMutations,
 } from "../../lib/card-queries.ts";
-import { useCategories } from "../../lib/queries.ts";
+import { useAccounts, useCategories } from "../../lib/queries.ts";
 import { DateField } from "../../components/DateField.tsx";
+import { reconRowView } from "./reconRowView.ts";
 
 export function CardDetailPage() {
   const { accountId } = useParams();
@@ -87,7 +89,7 @@ export function CardDetailPage() {
         empty="No transactions in the last statement period."
       />
 
-      <ReconciliationSection accountId={data.accountId} />
+      <ReconciliationSection accountId={data.accountId} cardName={data.name} />
       <StatementsSection accountId={data.accountId} />
     </div>
   );
@@ -116,9 +118,10 @@ function formatPeriod(period: string): string {
  * processed. `deltaPaise` is the listed spend not yet recorded; unmatched lines
  * are the exceptions worth a look.
  */
-function ReconciliationSection({ accountId }: { accountId: string }) {
+function ReconciliationSection({ accountId, cardName }: { accountId: string; cardName: string }) {
   const { data: cycles } = useReconciliations(accountId);
   const recompute = useRecomputeReconciliation(accountId);
+  const absorb = useAbsorbCarryoverMutation(accountId);
 
   return (
     <section className="rounded-lg border border-slate-200 bg-white">
@@ -134,6 +137,9 @@ function ReconciliationSection({ accountId }: { accountId: string }) {
       {recompute.isError && (
         <p className="px-4 pt-2 text-xs text-rose-600">{(recompute.error as Error).message}</p>
       )}
+      {absorb.isError && (
+        <p className="px-4 pt-2 text-xs text-rose-600">{(absorb.error as Error).message}</p>
+      )}
       {!cycles || cycles.length === 0 ? (
         <p className="px-4 py-6 text-center text-sm text-slate-400">
           No statements reconciled yet.
@@ -144,8 +150,11 @@ function ReconciliationSection({ accountId }: { accountId: string }) {
             <ReconciliationRow
               key={c.id}
               cycle={c}
+              cardName={cardName}
               onRecheck={() => recompute.mutate(c.id)}
               pending={recompute.isPending && recompute.variables === c.id}
+              onAbsorb={() => absorb.mutate(c.id)}
+              absorbPending={absorb.isPending && absorb.variables === c.id}
             />
           ))}
         </ul>
@@ -156,14 +165,53 @@ function ReconciliationSection({ accountId }: { accountId: string }) {
 
 function ReconciliationRow({
   cycle,
+  cardName,
   onRecheck,
   pending,
+  onAbsorb,
+  absorbPending,
 }: {
   cycle: StatementReconciliation;
+  cardName: string;
   onRecheck: () => void;
   pending: boolean;
+  onAbsorb: () => void;
+  absorbPending: boolean;
 }) {
-  const fullyCleared = cycle.lineCount > 0 && cycle.unmatchedCount === 0;
+  const view = reconRowView(cycle);
+  const { data: accounts, isLoading: accountsLoading, isError: accountsError } = useAccounts();
+  const account = accounts?.find((a) => a.id === cycle.accountId);
+  const before = account?.openingBalancePaise ?? null;
+
+  // Only a POSITIVE drift ("shortfall") gets this affordance — `carryHint` is
+  // only ever set for that kind (see reconRowView/driftPresentation). A
+  // negative or credit drift has no button here (tasks/cc-recon-02-carryover-
+  // seed/TASK.md P2).
+  const canAbsorb = view.carryHint !== null && cycle.dueDriftPaise !== null;
+  // The confirm dialog must always show the before → after opening balance,
+  // so the button stays disabled until that data has actually loaded (and
+  // stays disabled if the accounts query errored) rather than silently
+  // dropping the line.
+  const balanceUnavailable = accountsLoading || accountsError || before === null;
+
+  const onClick = () => {
+    if (cycle.dueDriftPaise === null || before === null) return;
+    const after = before - cycle.dueDriftPaise;
+    const lines = [
+      `Set carried-forward balance for ${cardName}?`,
+      `Statement period: ${formatPeriod(cycle.period)}`,
+      `Adjustment: ${formatINR(cycle.dueDriftPaise)}`,
+      `Opening balance: ${formatINR(before)} → ${formatINR(after)}`,
+      "If you think ledger entries are missing instead, add those first — this permanently shifts the card's starting balance.",
+      // Range-disclosure caveat (TASK.md P4): the account's exact age isn't
+      // available on this page, so this is shown unconditionally rather than
+      // only past the 370-day threshold — see the delegation iteration log.
+      "Net-worth history older than about a year will not be fully restated by this change.",
+    ].filter((l): l is string => l !== null);
+    if (!confirm(lines.join("\n"))) return;
+    onAbsorb();
+  };
+
   return (
     <li className="border-b border-slate-50 px-4 py-2.5 text-sm last:border-0">
       <div className="flex items-baseline justify-between gap-3">
@@ -201,12 +249,44 @@ function ReconciliationRow({
             {cycle.unmatchedCount} to review
           </span>
         )}
-        {fullyCleared && (
-          <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-emerald-700">
+        {view.showClearedBadge && (
+          <span
+            title={view.badgeTitle}
+            className="rounded bg-emerald-50 px-1.5 py-0.5 text-emerald-700"
+          >
             ✓ fully cleared
           </span>
         )}
       </div>
+      {view.driftLine && (
+        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+          <span className={view.driftLine.tone === "amber" ? "text-amber-700" : "text-slate-500"}>
+            {view.driftLine.text}
+          </span>
+          {view.carryHint && <span className="text-slate-400">{view.carryHint}</span>}
+          {canAbsorb && (
+            <button
+              type="button"
+              onClick={onClick}
+              disabled={absorbPending || balanceUnavailable}
+              title={
+                accountsError
+                  ? "Couldn't load the account's opening balance — try reloading the page."
+                  : balanceUnavailable
+                    ? "Loading the account's opening balance…"
+                    : undefined
+              }
+              className="text-amber-700 underline hover:text-amber-900 disabled:opacity-50"
+            >
+              {absorbPending
+                ? "Setting…"
+                : balanceUnavailable
+                  ? "Loading balance…"
+                  : "Set carried-forward balance"}
+            </button>
+          )}
+        </div>
+      )}
     </li>
   );
 }

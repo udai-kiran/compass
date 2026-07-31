@@ -147,6 +147,35 @@ export function useRecomputeReconciliation(accountId: string) {
   });
 }
 
+/**
+ * Absorb a statement's carried-forward balance into the card's opening
+ * balance (see tasks/cc-recon-02-carryover-seed). No request body — the
+ * server recomputes the drift itself; no client-supplied amount is ever
+ * sent. Invalidates every surface the opening-balance change touches:
+ * this card's reconciliations/activity, the card-holders list, the
+ * account list (`["accounts"]`, the convention every account mutation
+ * follows), and net worth.
+ */
+export function useAbsorbCarryoverMutation(accountId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      send(
+        "POST",
+        `/api/cards/${accountId}/reconciliations/${id}/absorb-carryover`,
+        StatementReconciliationSchema,
+      ),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["reconciliations", accountId] });
+      void qc.invalidateQueries({ queryKey: ["card-activity", accountId] });
+      void qc.invalidateQueries({ queryKey: ["cards"] });
+      void qc.invalidateQueries({ queryKey: ["accounts"] });
+      void qc.invalidateQueries({ queryKey: ["net-worth"] });
+      void qc.invalidateQueries({ queryKey: ["net-worth-by-goal"] });
+    },
+  });
+}
+
 export function useRewardMutations(accountId: string) {
   const qc = useQueryClient();
   const invalidate = () => {

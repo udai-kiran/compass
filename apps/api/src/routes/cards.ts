@@ -15,6 +15,7 @@ import {
 } from "@compass/shared";
 import { HttpError } from "../lib/errors.ts";
 import {
+  absorbCarryover,
   addRewardEntry,
   deleteRewardEntry,
   getCardActivity,
@@ -115,6 +116,25 @@ export async function cardRoutes(app: FastifyInstance) {
     { schema: { params: RewardParams, response: { 200: StatementReconciliationSchema } } },
     async (req) =>
       recomputeReconciliation(app.db, req.session!.userId, req.params.accountId, req.params.id),
+  );
+
+  // Absorb a statement's carried-forward balance into the card's opening
+  // balance (see tasks/cc-recon-02-carryover-seed). No request body — the
+  // server recomputes drift itself; no client-supplied amount is ever
+  // trusted. Reuses the recompute route's combined accountId/id params
+  // schema rather than duplicating it. Demo-mode blocked automatically
+  // (mutating method).
+  r.post(
+    "/api/cards/:accountId/reconciliations/:id/absorb-carryover",
+    { schema: { params: RewardParams, response: { 200: StatementReconciliationSchema } } },
+    async (req) =>
+      absorbCarryover(
+        app.db,
+        app.redis,
+        req.session!.userId,
+        req.params.accountId,
+        req.params.id,
+      ),
   );
 
   r.post(

@@ -13,7 +13,9 @@ import {
   acceptTransfer,
   countPending,
   listInbox,
+  listOrphanedAccepts,
   rejectExtracted,
+  restoreOrphan,
   unmatchDuplicate,
 } from "../services/inbox.ts";
 
@@ -35,6 +37,15 @@ export async function inboxRoutes(app: FastifyInstance) {
     "/api/inbox/count",
     { schema: { response: { 200: InboxCountSchema } } },
     async (req) => ({ pending: await countPending(app.db, req.session!.userId) }),
+  );
+
+  // Accepted drafts whose ledger transaction was hard-deleted — surfaced
+  // separately from the normal status filters so the UI can flag them as
+  // needing attention rather than losing them silently.
+  r.get(
+    "/api/inbox/orphaned",
+    { schema: { response: { 200: z.array(ExtractedTransactionSchema) } } },
+    async (req) => listOrphanedAccepts(app.db, req.session!.userId),
   );
 
   r.post(
@@ -69,6 +80,17 @@ export async function inboxRoutes(app: FastifyInstance) {
       },
     },
     async (req) => rejectExtracted(app.db, req.session!.userId, req.params.id),
+  );
+
+  r.post(
+    "/api/inbox/:id/restore",
+    {
+      schema: {
+        params: z.object({ id: z.uuid() }),
+        response: { 200: ExtractedTransactionSchema },
+      },
+    },
+    async (req) => restoreOrphan(app.db, req.session!.userId, req.params.id),
   );
 
   r.post(
