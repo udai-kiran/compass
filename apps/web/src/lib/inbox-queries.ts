@@ -4,6 +4,7 @@ import {
   ExtractedTransactionSchema,
   InboxCountSchema,
   type AcceptExtractedTxn,
+  type AcceptRepayment,
   type AcceptTransfer,
   type ExtractedTxnReviewStatus,
 } from "@compass/shared";
@@ -65,6 +66,19 @@ export function useInboxMutations() {
     },
   });
 
+  const acceptRepayment = useMutation({
+    mutationFn: ({ id, ...body }: AcceptRepayment & { id: string }) =>
+      apiPost(`/api/inbox/${id}/repayment`, ExtractedTransactionSchema, body),
+    onSuccess: () => {
+      invalidate();
+      // two ledger transactions + a transfer link landed — refresh the ledger views
+      void qc.invalidateQueries({ queryKey: ["transactions"] });
+      void qc.invalidateQueries({ queryKey: ["accounts"] });
+      void qc.invalidateQueries({ queryKey: ["dashboard"] });
+      void qc.invalidateQueries({ queryKey: ["transfers"] });
+    },
+  });
+
   const reject = useMutation({
     mutationFn: (id: string) => apiPost(`/api/inbox/${id}/reject`, ExtractedTransactionSchema),
     onSuccess: invalidate,
@@ -82,5 +96,5 @@ export function useInboxMutations() {
     onSuccess: invalidate,
   });
 
-  return { accept, acceptTransfer, reject, unmatch, restore };
+  return { accept, acceptTransfer, acceptRepayment, reject, unmatch, restore };
 }

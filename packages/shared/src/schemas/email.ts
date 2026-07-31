@@ -42,6 +42,14 @@ export type EmailIngestStatus = z.infer<typeof EmailIngestStatusSchema>;
 export const TxnDirectionSchema = z.enum(["debit", "credit"]);
 export type TxnDirection = z.infer<typeof TxnDirectionSchema>;
 
+/**
+ * The model's classification of a credit draft's purpose. Captured so the
+ * reviewer can see a card repayment for what it is, distinct from a genuine
+ * refund or cashback — it does not suppress or alter any category suggestion.
+ */
+export const ExtractedTxnIntentSchema = z.enum(["repayment", "refund", "cashback"]);
+export type ExtractedTxnIntent = z.infer<typeof ExtractedTxnIntentSchema>;
+
 // ---------- Model I/O (the extractor's structured output) ----------
 
 /** One transaction the model extracted from an email. Positive magnitude + direction. */
@@ -58,6 +66,8 @@ export const ExtractedTxnDraftSchema = z.object({
   /** verbatim snippet the figures came from, kept for review provenance */
   sourceQuote: z.string().default(""),
   confidence: z.number().min(0).max(1).default(0.5),
+  /** repayment/refund/cashback classification of a credit; absent or invalid normalizes to null */
+  intent: ExtractedTxnIntentSchema.nullable().catch(null).default(null),
 });
 export type ExtractedTxnDraft = z.infer<typeof ExtractedTxnDraftSchema>;
 
@@ -91,6 +101,8 @@ export const ExtractedTransactionSchema = z.object({
   suggestedAccountId: z.uuid().nullable(),
   /** a category the AI guessed from the merchant; the reviewer confirms or changes it */
   suggestedCategoryId: z.uuid().nullable(),
+  /** the model's repayment/refund/cashback classification of a credit, or null */
+  intent: ExtractedTxnIntentSchema.nullable(),
   bankRef: z.string().nullable(),
   sourceQuote: z.string(),
   confidence: z.number(),
@@ -143,6 +155,26 @@ export const AcceptTransferSchema = z.object({
   occurredAt: z.iso.date(),
 });
 export type AcceptTransfer = z.input<typeof AcceptTransferSchema>;
+
+/**
+ * Accept a single credit draft (a card-repayment alert) as a transfer: the
+ * paying account (`fromAccountId`) debits, the card (`cardAccountId`) credits.
+ * There is no `draftId` here — the draft is identified by the route path, not
+ * the body — and no amount override: the amount always comes from the claimed
+ * draft server-side. The server either reuses an existing eligible debit on
+ * `fromAccountId` or creates one; see `acceptRepayment`.
+ */
+export const AcceptRepaymentSchema = z
+  .object({
+    cardAccountId: z.uuid(),
+    fromAccountId: z.uuid(),
+    occurredAt: z.iso.date(),
+  })
+  .refine((v) => v.fromAccountId !== v.cardAccountId, {
+    message: "The paying account must be different from the card",
+    path: ["fromAccountId"],
+  });
+export type AcceptRepayment = z.input<typeof AcceptRepaymentSchema>;
 
 /** Which review-inbox rows to list. */
 export const InboxStatusFilterSchema = z.object({

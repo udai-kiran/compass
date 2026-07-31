@@ -30,6 +30,13 @@ const ModelTxnSchema = z.object({
   bankRef: z.string().nullable().default(null),
   sourceQuote: z.string().default(""),
   confidence: z.number().min(0).max(1).default(0.5),
+  /**
+   * The model's classification of a credit's purpose. Field-local normalization:
+   * any unknown/wrong-typed value is caught and coerced to null here, rather than
+   * failing the whole ModelResultSchema.safeParse — a bare z.enum would reject one
+   * bad `intent` and silently discard every transaction in the same extraction.
+   */
+  intent: z.enum(["repayment", "refund", "cashback"]).nullable().catch(null).default(null),
 });
 
 const ModelResultSchema = z.object({
@@ -52,10 +59,11 @@ export const EXTRACT_SYSTEM = [
   ' "accountHint": string (last 4 digits or account/card name the mail names, else ""),',
   ' "category": string (best-fit category NAME for the merchant, chosen VERBATIM from the Categories list in the user message — expense names for a debit, income names for a credit — or "" if none fits),',
   ' "bankRef": string or null (UTR / reference / transaction id), "sourceQuote": string (verbatim snippet the amount came from),',
-  ' "confidence": number 0..1}',
+  ' "confidence": number 0..1, "intent": "repayment"|"refund"|"cashback"|null}',
   "",
   "direction: debit = money LEAVING the user (spend, payment, withdrawal, purchase); credit = money ENTERING (refund, salary, received, cashback).",
   "category: infer it from the merchant/counterparty (e.g. a food-delivery brand → Food). Only ever return a name that appears in the provided list; if unsure or the list is empty, return \"\".",
+  "intent: classify a credit's purpose. A credit that is a BILL PAYMENT to a credit card — \"PAYMENT RECEIVED\", \"BBPS\"/\"BPPY\", autopay, a NEFT/UPI/cheque payment, \"payment thank you\" — is a transfer/repayment, NOT income: set intent to \"repayment\". A genuine refund (money returned for a purchase) is intent \"refund\"; card/wallet cashback is intent \"cashback\" — both may still take an income category if one fits. For a debit, or any credit that is none of the above (salary, interest, etc.), leave intent null.",
   "date: output YYYY-MM-DD (ISO). Emails are INDIAN and print dates DAY-FIRST: all-numeric dates like DD-MM-YY, DD-MM-YYYY, DD/MM/YYYY are day-month-year. E.g. 24-07-26 and 24/07/2026 both mean 24 July 2026 → output 2026-07-24. A 2-digit year expands to 20YY. A date already in ISO YYYY-MM-DD is correct — output it unchanged. A textual date with a month name (e.g. 27 May 26) is unambiguous — keep its day and month, just expand a 2-digit year to 20YY.",
   "Extract every distinct transaction; a statement may list many. Never invent figures — if a field is unknown use null or \"\". Amounts are Indian Rupees.",
 ].join("\n");
@@ -104,6 +112,8 @@ export interface InboxRow {
   sourceQuote: string;
   confidence: number;
   dedupeHash: string;
+  /** repayment/refund/cashback classification of a credit, or null (see misc-01) */
+  intent: "repayment" | "refund" | "cashback" | null;
 }
 
 export interface ExtractionOutcome {
@@ -282,6 +292,7 @@ function toInboxRow(
     sourceQuote: t.sourceQuote.trim(),
     confidence: t.confidence,
     dedupeHash: dedupeHashFor(base),
+    intent: t.intent,
   };
 }
 
@@ -355,11 +366,11 @@ export const STATEMENT_SYSTEM = [
   ' "date": "YYYY-MM-DD" or null, "time": "HH:MM" 24-hour if the line prints a transaction time, else null,',
   ' "counterparty": string (the merchant/description),',
   ' "accountHint": "", "category": string (best-fit category NAME chosen verbatim from the list — expense for a debit, income for a credit — or ""),',
-  ' "bankRef": string or null, "sourceQuote": string (the verbatim statement line), "confidence": number 0..1}',
+  ' "bankRef": string or null, "sourceQuote": string (the verbatim statement line), "confidence": number 0..1, "intent": "repayment"|"refund"|"cashback"|null}',
   "",
   "A transaction line looks like: DATE  DESCRIPTION  AMOUNT  <C|D>.",
   'direction: a "D" (debit) is a purchase/spend on the card → "debit"; a "C" (credit) is a payment received, refund, or cashback → "credit".',
-  'A credit that is a BILL PAYMENT to the card — "PAYMENT RECEIVED", "BBPS"/"BPPY", autopay, a NEFT/UPI/cheque payment, "payment thank you" — is a transfer/repayment, NOT income: keep direction "credit" but set its category to "". Only a genuine refund or cashback may take an income category.',
+  'A credit that is a BILL PAYMENT to the card — "PAYMENT RECEIVED", "BBPS"/"BPPY", autopay, a NEFT/UPI/cheque payment, "payment thank you" — is a transfer/repayment, NOT income: keep direction "credit" but set its category to "" AND its intent to "repayment". A genuine refund is intent "refund"; cashback is intent "cashback" — only these two may still take an income category if one fits. For a debit, or any other credit (salary, interest, etc.), leave intent null.',
   "date: output YYYY-MM-DD (ISO). Statements are INDIAN and print dates DAY-FIRST: all-numeric dates like DD-MM-YY, DD-MM-YYYY, DD/MM/YYYY are day-month-year. E.g. 24-07-26 and 24/07/2026 both mean 24 July 2026 → output 2026-07-24. A 2-digit year expands to 20YY. A date already in ISO YYYY-MM-DD is correct — output it unchanged. A textual date with a month name (e.g. 27 May 26) is unambiguous — keep its day and month, just expand a 2-digit year to 20YY.",
   "Extract every dated transaction in the statement period. Ignore summary, subtotal, interest-explanation and marketing lines that aren't dated transactions. In particular NEVER emit balance/summary lines as transactions: Opening Balance, Previous/Closing Balance, Balance B/F or C/F, Total Amount Due, Minimum Amount Due, and any running-balance figure are NOT transactions. Never invent figures. Amounts are Indian Rupees.",
 ].join("\n");

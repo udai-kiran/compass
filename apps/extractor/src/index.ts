@@ -7,7 +7,6 @@ import {
   createPool,
   loadAccounts,
   loadAiSettings,
-  loadCardLedgerTxns,
   loadCategories,
   loadCreditCards,
   loadIdentity,
@@ -24,11 +23,9 @@ import {
   extractStatementSummary,
   extractStatementTxns,
   hasRewardData,
-  matchLinesToLedger,
   MAX_STATEMENT_CHARS,
   runExtraction,
   statementPeriodKey,
-  STATEMENT_MATCH_WINDOW_DAYS,
   summarizeMatches,
   type StatementSummary,
 } from "./extract.ts";
@@ -36,6 +33,7 @@ import { extractPdfText } from "./pdf.ts";
 import type { CategoryRef } from "./extract.ts";
 import type { InboxRow } from "./extract.ts";
 import type { EmailIngestStatus } from "@compass/shared";
+import { annotateStatementDuplicates } from "./statement-duplicates.ts";
 
 const config = loadConfig();
 const pool = createPool(config.DATABASE_URL);
@@ -201,44 +199,6 @@ function periodLabel(isoDate: string | null): string {
     : d.toLocaleString("en-US", { month: "short", year: "numeric", timeZone: "UTC" });
 }
 
-function shiftIso(iso: string, days: number): string {
-  const d = new Date(`${iso}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
-}
-
-/**
- * Flag statement lines that just re-list a spend already in the ledger (recorded
- * from a real-time alert during the cycle): match each to a ledger transaction
- * and mark the hits `duplicate` so they stay out of the pending review queue.
- * Matching runs against the card's ledger over the lines' own date span padded
- * by the posting-lag window — never the statement period — so a near-close spend
- * that bills next cycle isn't force-matched here. Non-matches pass through as
- * ordinary pending drafts.
- */
-async function annotateStatementDuplicates(rows: InboxRow[], userId: string): Promise<SaveRow[]> {
-  const accountId = rows.find((r) => r.suggestedAccountId)?.suggestedAccountId ?? null;
-  const dates = rows.map((r) => r.occurredAt).filter((d): d is string => d !== null);
-  if (!accountId || dates.length === 0) return rows;
-  const from = shiftIso(dates.reduce((a, b) => (a < b ? a : b)), -STATEMENT_MATCH_WINDOW_DAYS);
-  const to = shiftIso(dates.reduce((a, b) => (a > b ? a : b)), STATEMENT_MATCH_WINDOW_DAYS);
-  const ledger = await loadCardLedgerTxns(pool, userId, accountId, from, to);
-  if (ledger.length === 0) return rows;
-  const matched = matchLinesToLedger(
-    rows.map((r) => ({
-      amountPaise: r.amountPaise,
-      direction: r.direction,
-      occurredAt: r.occurredAt,
-      occurredAtTs: r.occurredAtTs,
-      counterparty: r.counterparty,
-    })),
-    ledger,
-  );
-  return rows.map((r, i) =>
-    matched[i] ? { ...r, status: "duplicate" as const, matchedTransactionId: matched[i]! } : r,
-  );
-}
-
 const worker = new Worker(
   EXTRACT_QUEUE,
   async (job) => {
@@ -305,7 +265,7 @@ const worker = new Worker(
         );
         status = stmt.status;
         // Suppress lines already in the ledger from real-time alerts this cycle.
-        rows = await annotateStatementDuplicates(stmt.rows, ingestion.userId);
+        rows = await annotateStatementDuplicates(pool, stmt.rows, ingestion.userId);
       }
       const inserted = await saveResults(pool, {
         ingestion,

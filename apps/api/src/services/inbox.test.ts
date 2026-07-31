@@ -3,10 +3,12 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { and, eq, or } from "drizzle-orm";
 import type { AccountType, ExtractedTransaction } from "@compass/shared";
+import { ExtractedTransactionSchema } from "@compass/shared";
 import { createDb } from "../db/index.ts";
 import { createPool } from "../infra/db.ts";
 import {
   accounts,
+  categories,
   emailIngestions,
   extractedTransactions,
   transactions,
@@ -14,9 +16,12 @@ import {
   users,
 } from "../db/schema.ts";
 import { HttpError } from "../lib/errors.ts";
+import { incomeExpense } from "./periods.ts";
 import { createTransaction } from "./transactions.ts";
+import { linkTransfer, TRANSFER_WINDOW_DAYS } from "./transfers.ts";
 import {
   acceptExtracted,
+  acceptRepayment,
   acceptTransfer,
   historyKey,
   listInbox,
@@ -25,6 +30,7 @@ import {
   pickTransferPairs,
   rejectExtracted,
   restoreOrphan,
+  selectRepaymentCandidate,
 } from "./inbox.ts";
 
 type Row = { merchant: string; categoryId: string; kind: "income" | "expense"; date: string };
@@ -120,6 +126,27 @@ test("pickTransferPairs: an ambiguous match is left unpaired", () => {
   assert.equal(pairs.size, 0);
 });
 
+// ---------- selectRepaymentCandidate (T5): pure 0/1/many selection ----------
+
+test("selectRepaymentCandidate: zero candidates selects create", () => {
+  assert.deepEqual(selectRepaymentCandidate([]), { kind: "create" });
+});
+
+test("selectRepaymentCandidate: exactly one candidate selects reuse with its id", () => {
+  assert.deepEqual(selectRepaymentCandidate([{ id: "tx-1" }]), { kind: "reuse", id: "tx-1" });
+});
+
+test("selectRepaymentCandidate: two or more candidates selects ambiguous, naming the count", () => {
+  assert.deepEqual(selectRepaymentCandidate([{ id: "tx-1" }, { id: "tx-2" }]), {
+    kind: "ambiguous",
+    count: 2,
+  });
+  assert.deepEqual(
+    selectRepaymentCandidate([{ id: "tx-1" }, { id: "tx-2" }, { id: "tx-3" }]),
+    { kind: "ambiguous", count: 3 },
+  );
+});
+
 // ---------- DB-backed regression coverage for cc-recon-03-orphaned-accepts:
 // listOrphanedAccepts, restoreOrphan, and rejectExtracted's atomic-guard
 // rewrite. ----------
@@ -190,11 +217,13 @@ type DraftOverrides = Partial<{
   amountPaise: number;
   direction: "debit" | "credit";
   occurredAt: string | null;
+  occurredAtTs: Date | null;
   suggestedAccountId: string | null;
   status: "pending" | "accepted" | "rejected" | "duplicate";
   transactionId: string | null;
   matchedTransactionId: string | null;
   dedupeHash: string | null;
+  intent: "repayment" | "refund" | "cashback" | null;
 }>;
 
 async function createDraft(userId: string, ingestionId: string, over: DraftOverrides = {}): Promise<string> {
@@ -206,6 +235,7 @@ async function createDraft(userId: string, ingestionId: string, over: DraftOverr
       amountPaise: over.amountPaise ?? 500000,
       direction: over.direction ?? "debit",
       occurredAt: over.occurredAt === undefined ? BASE_DATE : over.occurredAt,
+      occurredAtTs: over.occurredAtTs ?? null,
       counterparty: "Test Merchant",
       suggestedAccountId: over.suggestedAccountId ?? null,
       sourceQuote: "",
@@ -214,9 +244,34 @@ async function createDraft(userId: string, ingestionId: string, over: DraftOverr
       status: over.status ?? "pending",
       transactionId: over.transactionId ?? null,
       matchedTransactionId: over.matchedTransactionId ?? null,
+      intent: over.intent ?? null,
     })
     .returning({ id: extractedTransactions.id });
   return d!.id;
+}
+
+async function createCategory(userId: string, kind: "income" | "expense", name = "Test Category"): Promise<string> {
+  const [c] = await db.insert(categories).values({ userId, name, kind }).returning({ id: categories.id });
+  return c!.id;
+}
+
+/** A ledger transaction filed under `categoryId`, for `applyHistoryCategory` to tally against. */
+async function createHistoryTxn(
+  userId: string,
+  accountId: string,
+  categoryId: string,
+  amountPaise: number,
+): Promise<void> {
+  await createTransaction(db, userId, {
+    accountId,
+    date: BASE_DATE,
+    amountPaise,
+    merchant: "Test Merchant",
+    categoryId,
+    notes: "",
+    tags: [],
+    source: "manual",
+  });
 }
 
 async function draftRow(id: string) {
@@ -897,4 +952,816 @@ test("re-accept after restore: succeeds exactly once (second accept 409s) and de
 
   const row = await draftRow(draftId);
   assert.equal(row?.dedupeHash, dedupeHash);
+});
+
+// ---------- intent round-trips onto the DTO (AC5b), and is purely informational (AC1) ----------
+//
+// misc-01 adds a captured `intent` marker to the review-inbox DTO but changes
+// no suggestion/history behaviour. This asserts both halves through the real
+// `listInbox` path: intent survives the DB round trip and validates against
+// the wire schema, and `applyHistoryCategory`'s unconditional override still
+// fires identically for every intent value, including `repayment`.
+
+test("listInbox: intent round-trips onto the DTO for every value and validates against ExtractedTransactionSchema", async (t) => {
+  const userId = await createUser();
+  t.after(() => cleanupUser(userId));
+  const ingestionId = await createIngestion(userId);
+
+  const repaymentId = await createDraft(userId, ingestionId, { direction: "credit", intent: "repayment" });
+  const refundId = await createDraft(userId, ingestionId, { direction: "credit", intent: "refund" });
+  const cashbackId = await createDraft(userId, ingestionId, { direction: "credit", intent: "cashback" });
+  const plainId = await createDraft(userId, ingestionId, { direction: "debit", intent: null });
+
+  const pending = await listInbox(db, userId, "pending");
+  const byId = new Map(pending.map((d) => [d.id, d]));
+
+  assert.equal(byId.get(repaymentId)?.intent, "repayment");
+  assert.equal(byId.get(refundId)?.intent, "refund");
+  assert.equal(byId.get(cashbackId)?.intent, "cashback");
+  assert.equal(byId.get(plainId)?.intent, null);
+
+  for (const id of [repaymentId, refundId, cashbackId, plainId]) {
+    const dto = byId.get(id);
+    assert.ok(dto);
+    ExtractedTransactionSchema.parse(dto); // throws on any mismatch with the response schema
+  }
+});
+
+test("listInbox: applyHistoryCategory still unconditionally overrides suggestedCategoryId for every intent value, including repayment — byte-for-byte unchanged history behaviour", async (t) => {
+  const userId = await createUser();
+  // This test also creates a category, which cleanupUser doesn't know about and
+  // which carries a plain (non-cascading) FK from transactions — it must be
+  // deleted after transactions but before accounts/users, so it gets its own
+  // ordered cleanup rather than a bare cleanupUser(userId) call.
+  t.after(async () => {
+    await db.delete(extractedTransactions).where(eq(extractedTransactions.userId, userId));
+    await db.delete(emailIngestions).where(eq(emailIngestions.userId, userId));
+    await db.delete(transactions).where(eq(transactions.userId, userId));
+    await db.delete(categories).where(eq(categories.userId, userId));
+    await db.delete(accounts).where(eq(accounts.userId, userId));
+    await db.delete(users).where(eq(users.id, userId));
+  });
+  const accountId = await createAccount(userId);
+  const ingestionId = await createIngestion(userId);
+
+  // The user has previously filed "Test Merchant" credits under this income category.
+  const historyCategoryId = await createCategory(userId, "income", "Refunds");
+  await createHistoryTxn(userId, accountId, historyCategoryId, 100000);
+
+  const repaymentId = await createDraft(userId, ingestionId, { direction: "credit", intent: "repayment" });
+  const refundId = await createDraft(userId, ingestionId, { direction: "credit", intent: "refund" });
+  const cashbackId = await createDraft(userId, ingestionId, { direction: "credit", intent: "cashback" });
+  const noIntentId = await createDraft(userId, ingestionId, { direction: "credit", intent: null });
+
+  const pending = await listInbox(db, userId, "pending");
+  const byId = new Map(pending.map((d) => [d.id, d]));
+
+  // History wins unconditionally, exactly as before this change, regardless of intent.
+  for (const id of [repaymentId, refundId, cashbackId, noIntentId]) {
+    assert.equal(byId.get(id)?.suggestedCategoryId, historyCategoryId);
+  }
+});
+
+// ---------- acceptRepayment (misc-02): accept a single card-repayment credit
+// draft as a transfer, naming the paying account. ----------
+
+function addDays(iso: string, days: number): string {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+async function ledgerRowsFor(userId: string) {
+  return db.select().from(transactions).where(eq(transactions.userId, userId));
+}
+
+async function linksFor(userId: string) {
+  return db.select().from(transferLinks).where(eq(transferLinks.userId, userId));
+}
+
+async function repaymentDraft(
+  userId: string,
+  ingestionId: string,
+  over: DraftOverrides = {},
+): Promise<string> {
+  return createDraft(userId, ingestionId, {
+    direction: "credit",
+    amountPaise: 500000,
+    occurredAt: BASE_DATE,
+    ...over,
+  });
+}
+
+// ---------- AC1: zero candidates creates both legs ----------
+
+test("acceptRepayment AC1: no existing candidate creates exactly two ledger rows, equal and opposite, both uncategorized, and one transfer_links row", async (t) => {
+  const userId = await createUser();
+  t.after(() => cleanupUser(userId));
+  const fromAccountId = await createAccount(userId, "bank");
+  const cardAccountId = await createAccount(userId, "credit_card");
+  const ingestionId = await createIngestion(userId);
+  const draftId = await repaymentDraft(userId, ingestionId);
+
+  const dto = await acceptRepayment(db, userId, draftId, {
+    cardAccountId,
+    fromAccountId,
+    occurredAt: BASE_DATE,
+  });
+
+  const rows = await ledgerRowsFor(userId);
+  assert.equal(rows.length, 2);
+  const outRow = rows.find((r) => r.accountId === fromAccountId)!;
+  const inRow = rows.find((r) => r.accountId === cardAccountId)!;
+  assert.ok(outRow);
+  assert.ok(inRow);
+  assert.equal(outRow.amountPaise, -500000);
+  assert.equal(inRow.amountPaise, 500000);
+  assert.equal(outRow.categoryId, null);
+  assert.equal(inRow.categoryId, null);
+  assert.equal(dto.transactionId, inRow.id);
+
+  const links = await linksFor(userId);
+  assert.equal(links.length, 1);
+  assert.equal(links[0]!.outTransactionId, outRow.id);
+  assert.equal(links[0]!.inTransactionId, inRow.id);
+
+  const row = await draftRow(draftId);
+  assert.equal(row?.status, "accepted");
+  assert.equal(row?.transactionId, inRow.id);
+});
+
+// ---------- AC2 / AC4: exactly one candidate is reused untouched ----------
+
+test("acceptRepayment AC2/AC4: exactly one eligible candidate is reused — only the card leg is created, and the reused row's amount/date/occurredAt/merchant/categoryId are unchanged", async (t) => {
+  const userId = await createUser();
+  // A category is created below; cleanupUser doesn't know about it (same
+  // ordering note as the applyHistoryCategory test above) — it must be
+  // deleted after transactions but before accounts/users.
+  t.after(async () => {
+    await db.delete(extractedTransactions).where(eq(extractedTransactions.userId, userId));
+    await db.delete(emailIngestions).where(eq(emailIngestions.userId, userId));
+    await db.delete(transactions).where(eq(transactions.userId, userId));
+    await db.delete(categories).where(eq(categories.userId, userId));
+    await db.delete(accounts).where(eq(accounts.userId, userId));
+    await db.delete(users).where(eq(users.id, userId));
+  });
+  const fromAccountId = await createAccount(userId, "bank");
+  const cardAccountId = await createAccount(userId, "credit_card");
+  const categoryId = await createCategory(userId, "expense", "Existing category");
+  const ingestionId = await createIngestion(userId);
+
+  const existingDebit = await createTransaction(db, userId, {
+    accountId: fromAccountId,
+    date: BASE_DATE,
+    amountPaise: -500000,
+    merchant: "HDFC autopay",
+    categoryId,
+    notes: "hand-entered",
+    tags: ["autopay"],
+    source: "manual",
+  });
+  const before = (await ledgerRowsFor(userId)).find((r) => r.id === existingDebit.id)!;
+
+  const draftId = await repaymentDraft(userId, ingestionId);
+
+  const dto = await acceptRepayment(db, userId, draftId, {
+    cardAccountId,
+    fromAccountId,
+    occurredAt: BASE_DATE,
+  });
+
+  const rows = await ledgerRowsFor(userId);
+  assert.equal(rows.length, 2); // the reused debit + the new card leg — no new debit
+  const after = rows.find((r) => r.id === existingDebit.id)!;
+  assert.ok(after);
+  assert.equal(after.amountPaise, before.amountPaise);
+  assert.equal(after.date, before.date);
+  assert.equal(after.occurredAt?.getTime() ?? null, before.occurredAt?.getTime() ?? null);
+  assert.equal(after.merchant, before.merchant);
+  assert.equal(after.categoryId, before.categoryId);
+
+  const links = await linksFor(userId);
+  assert.equal(links.length, 1);
+  assert.equal(links[0]!.outTransactionId, existingDebit.id);
+  assert.equal(links[0]!.inTransactionId, dto.transactionId);
+});
+
+// ---------- AC3: two or more candidates refuses ----------
+
+test("acceptRepayment AC3: two or more eligible candidates 409s, naming the count, creates no ledger row, and leaves the draft pending", async (t) => {
+  const userId = await createUser();
+  t.after(() => cleanupUser(userId));
+  const fromAccountId = await createAccount(userId, "bank");
+  const cardAccountId = await createAccount(userId, "credit_card");
+  const ingestionId = await createIngestion(userId);
+
+  await createTransaction(db, userId, {
+    accountId: fromAccountId,
+    date: BASE_DATE,
+    amountPaise: -500000,
+    merchant: "Candidate A",
+    categoryId: null,
+    notes: "",
+    tags: [],
+    source: "manual",
+  });
+  await createTransaction(db, userId, {
+    accountId: fromAccountId,
+    date: BASE_DATE,
+    amountPaise: -500000,
+    merchant: "Candidate B",
+    categoryId: null,
+    notes: "",
+    tags: [],
+    source: "manual",
+  });
+
+  const draftId = await repaymentDraft(userId, ingestionId);
+
+  await assert.rejects(
+    acceptRepayment(db, userId, draftId, { cardAccountId, fromAccountId, occurredAt: BASE_DATE }),
+    (e: unknown) => e instanceof HttpError && e.statusCode === 409 && e.message.includes("2"),
+  );
+
+  const rows = await ledgerRowsFor(userId);
+  assert.equal(rows.length, 2); // only the two pre-existing candidates — nothing created
+
+  const row = await draftRow(draftId);
+  assert.equal(row?.status, "pending");
+});
+
+// ---------- AC4: timestamp/date provenance on newly created legs ----------
+
+test("acceptRepayment AC4: the synthetic out leg has occurredAt = null; the in leg carries the draft's occurredAtTs and the reviewer's date", async (t) => {
+  const userId = await createUser();
+  t.after(() => cleanupUser(userId));
+  const fromAccountId = await createAccount(userId, "bank");
+  const cardAccountId = await createAccount(userId, "credit_card");
+  const ingestionId = await createIngestion(userId);
+  const draftOccurredAtTs = new Date("2026-01-05T12:34:56.000Z");
+  const reviewerDate = addDays(BASE_DATE, 1);
+
+  const draftId = await repaymentDraft(userId, ingestionId, { occurredAtTs: draftOccurredAtTs });
+
+  await acceptRepayment(db, userId, draftId, {
+    cardAccountId,
+    fromAccountId,
+    occurredAt: reviewerDate,
+  });
+
+  const rows = await ledgerRowsFor(userId);
+  const outRow = rows.find((r) => r.accountId === fromAccountId)!;
+  const inRow = rows.find((r) => r.accountId === cardAccountId)!;
+
+  assert.equal(outRow.occurredAt, null);
+  assert.equal(outRow.date, reviewerDate);
+  assert.equal(inRow.date, reviewerDate);
+  assert.equal(inRow.occurredAt?.toISOString(), draftOccurredAtTs.toISOString());
+});
+
+// ---------- AC4b: a candidate linked concurrently between detection and linking ----------
+
+test("acceptRepayment AC4b: a candidate linked by a concurrent request between detection and linking returns a defined 409 (not a raw unique-violation), creates no ledger row, and leaves the draft pending", async (t) => {
+  const userId = await createUser();
+  t.after(() => cleanupUser(userId));
+  const fromAccountId = await createAccount(userId, "bank");
+  const cardAccountId = await createAccount(userId, "credit_card");
+  const otherAccountId = await createAccount(userId, "bank");
+  const ingestionId = await createIngestion(userId);
+
+  // The single existing debit both `acceptRepayment` and a concurrent manual
+  // link race to claim.
+  const candidate = await createTransaction(db, userId, {
+    accountId: fromAccountId,
+    date: BASE_DATE,
+    amountPaise: -500000,
+    merchant: "Existing debit",
+    categoryId: null,
+    notes: "",
+    tags: [],
+    source: "manual",
+  });
+  // A spurious credit for the concurrent request to pair the candidate with —
+  // standing in for some other transfer accepted at the same instant.
+  const spuriousCredit = await createTransaction(db, userId, {
+    accountId: otherAccountId,
+    date: BASE_DATE,
+    amountPaise: 500000,
+    merchant: "Spurious credit",
+    categoryId: null,
+    notes: "",
+    tags: [],
+    source: "manual",
+  });
+
+  const draftId = await repaymentDraft(userId, ingestionId);
+
+  const started = makeGate();
+  const release = makeGate();
+
+  // Connection A: opens an explicit transaction, links the candidate to the
+  // spurious credit, and holds the transaction open (uncommitted) via the gate.
+  const aTxPromise = db.transaction(async (tx) => {
+    await linkTransfer(tx, userId, candidate.id, spuriousCredit.id, false);
+    started.release();
+    await release.opened;
+  });
+  await started.opened;
+
+  // Connection B: the real call under test. Its candidate SELECT (read-committed,
+  // A uncommitted) still sees the debit as unlinked, so it proceeds to
+  // `linkTransfer`'s insert — which blocks on A's held row lock.
+  const bPromise = acceptRepayment(db, userId, draftId, {
+    cardAccountId,
+    fromAccountId,
+    occurredAt: BASE_DATE,
+  });
+  let bSettled = false;
+  void bPromise.then(
+    () => {
+      bSettled = true;
+    },
+    () => {
+      bSettled = true;
+    },
+  );
+  await new Promise((r) => setTimeout(r, 250));
+  assert.equal(bSettled, false, "B (acceptRepayment) should still be blocked on A's held row lock");
+
+  release.release();
+  await aTxPromise;
+
+  await assert.rejects(
+    bPromise,
+    (e: unknown) =>
+      e instanceof HttpError && e.statusCode === 409 && e.message.includes("linked to another transfer"),
+  );
+
+  const row = await draftRow(draftId);
+  assert.equal(row?.status, "pending");
+
+  // A's link committed (one row); B's attempted in-leg insert rolled back with
+  // the rest of its transaction — no ledger row was left behind by B.
+  const rows = await ledgerRowsFor(userId);
+  assert.equal(rows.length, 2); // candidate + spuriousCredit only
+  const links = await linksFor(userId);
+  assert.equal(links.length, 1);
+  assert.equal(links[0]!.outTransactionId, candidate.id);
+  assert.equal(links[0]!.inTransactionId, spuriousCredit.id);
+});
+
+// ---------- AC5: neither leg counts as income or expense ----------
+
+test("acceptRepayment AC5: neither leg appears in income or expense — unrelated positive/negative controls in the same window prove exclusion, not just a zero total", async (t) => {
+  const userId = await createUser();
+  t.after(() => cleanupUser(userId));
+  const fromAccountId = await createAccount(userId, "bank");
+  const cardAccountId = await createAccount(userId, "credit_card");
+  const ingestionId = await createIngestion(userId);
+
+  await createTransaction(db, userId, {
+    accountId: fromAccountId,
+    date: BASE_DATE,
+    amountPaise: 200000,
+    merchant: "Salary",
+    categoryId: null,
+    notes: "",
+    tags: [],
+    source: "manual",
+  });
+  await createTransaction(db, userId, {
+    accountId: fromAccountId,
+    date: BASE_DATE,
+    amountPaise: -75000,
+    merchant: "Groceries",
+    categoryId: null,
+    notes: "",
+    tags: [],
+    source: "manual",
+  });
+
+  const draftId = await repaymentDraft(userId, ingestionId);
+  await acceptRepayment(db, userId, draftId, { cardAccountId, fromAccountId, occurredAt: BASE_DATE });
+
+  const totals = await incomeExpense(db, userId, BASE_DATE, BASE_DATE);
+  assert.equal(totals.incomePaise, 200000);
+  assert.equal(totals.expensePaise, 75000);
+});
+
+// ---------- AC6: a genuine concurrent double-accept of the same draft ----------
+
+test("acceptRepayment AC6: a genuine concurrent double-accept of the same draft yields exactly one success and one 409, exactly two ledger rows, and exactly one link", async (t) => {
+  const userId = await createUser();
+  t.after(() => cleanupUser(userId));
+  const fromAccountId = await createAccount(userId, "bank");
+  const cardAccountId = await createAccount(userId, "credit_card");
+  const ingestionId = await createIngestion(userId);
+  const draftId = await repaymentDraft(userId, ingestionId);
+  const input = { cardAccountId, fromAccountId, occurredAt: BASE_DATE };
+
+  const results = await Promise.allSettled([
+    acceptRepayment(db, userId, draftId, input),
+    acceptRepayment(db, userId, draftId, input),
+  ]);
+
+  const fulfilled = results.filter((r): r is PromiseFulfilledResult<ExtractedTransaction> => r.status === "fulfilled");
+  const rejected = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+  assert.equal(fulfilled.length, 1);
+  assert.equal(rejected.length, 1);
+  assert.ok(rejected[0]!.reason instanceof HttpError);
+  assert.equal((rejected[0]!.reason as HttpError).statusCode, 409);
+
+  const rows = await ledgerRowsFor(userId);
+  assert.equal(rows.length, 2);
+  const links = await linksFor(userId);
+  assert.equal(links.length, 1);
+});
+
+// ---------- AC8: rejected 400s, and a foreign account 404s (not grouped with 400) ----------
+
+test("acceptRepayment AC8: fromAccountId === cardAccountId is rejected 400 and leaves the draft pending", async (t) => {
+  const userId = await createUser();
+  t.after(() => cleanupUser(userId));
+  const cardAccountId = await createAccount(userId, "credit_card");
+  const ingestionId = await createIngestion(userId);
+  const draftId = await repaymentDraft(userId, ingestionId);
+
+  await assert.rejects(
+    acceptRepayment(db, userId, draftId, {
+      cardAccountId,
+      fromAccountId: cardAccountId,
+      occurredAt: BASE_DATE,
+    }),
+    (e: unknown) => e instanceof HttpError && e.statusCode === 400,
+  );
+  const row = await draftRow(draftId);
+  assert.equal(row?.status, "pending");
+  assert.equal((await ledgerRowsFor(userId)).length, 0);
+});
+
+test("acceptRepayment AC8: a cardAccountId that is not a credit card is rejected 400", async (t) => {
+  const userId = await createUser();
+  t.after(() => cleanupUser(userId));
+  const cardAccountId = await createAccount(userId, "bank"); // not a credit card
+  const fromAccountId = await createAccount(userId, "bank");
+  const ingestionId = await createIngestion(userId);
+  const draftId = await repaymentDraft(userId, ingestionId);
+
+  await assert.rejects(
+    acceptRepayment(db, userId, draftId, { cardAccountId, fromAccountId, occurredAt: BASE_DATE }),
+    (e: unknown) => e instanceof HttpError && e.statusCode === 400,
+  );
+  const row = await draftRow(draftId);
+  assert.equal(row?.status, "pending");
+});
+
+test("acceptRepayment AC8: a fromAccountId that is itself a credit card is rejected 400", async (t) => {
+  const userId = await createUser();
+  t.after(() => cleanupUser(userId));
+  const cardAccountId = await createAccount(userId, "credit_card");
+  const fromAccountId = await createAccount(userId, "credit_card"); // a second card
+  const ingestionId = await createIngestion(userId);
+  const draftId = await repaymentDraft(userId, ingestionId);
+
+  await assert.rejects(
+    acceptRepayment(db, userId, draftId, { cardAccountId, fromAccountId, occurredAt: BASE_DATE }),
+    (e: unknown) => e instanceof HttpError && e.statusCode === 400,
+  );
+  const row = await draftRow(draftId);
+  assert.equal(row?.status, "pending");
+});
+
+test("acceptRepayment AC8: an archived fromAccountId is rejected 400", async (t) => {
+  const userId = await createUser();
+  t.after(() => cleanupUser(userId));
+  const cardAccountId = await createAccount(userId, "credit_card");
+  const fromAccountId = await createAccount(userId, "bank");
+  await db.update(accounts).set({ archivedAt: new Date() }).where(eq(accounts.id, fromAccountId));
+  const ingestionId = await createIngestion(userId);
+  const draftId = await repaymentDraft(userId, ingestionId);
+
+  await assert.rejects(
+    acceptRepayment(db, userId, draftId, { cardAccountId, fromAccountId, occurredAt: BASE_DATE }),
+    (e: unknown) => e instanceof HttpError && e.statusCode === 400,
+  );
+  const row = await draftRow(draftId);
+  assert.equal(row?.status, "pending");
+});
+
+test("acceptRepayment AC8: a debit draft is rejected 400 and leaves the draft pending", async (t) => {
+  const userId = await createUser();
+  t.after(() => cleanupUser(userId));
+  const cardAccountId = await createAccount(userId, "credit_card");
+  const fromAccountId = await createAccount(userId, "bank");
+  const ingestionId = await createIngestion(userId);
+  const draftId = await createDraft(userId, ingestionId, { direction: "debit", amountPaise: 500000 });
+
+  await assert.rejects(
+    acceptRepayment(db, userId, draftId, { cardAccountId, fromAccountId, occurredAt: BASE_DATE }),
+    (e: unknown) => e instanceof HttpError && e.statusCode === 400,
+  );
+  const row = await draftRow(draftId);
+  assert.equal(row?.status, "pending");
+});
+
+test("acceptRepayment AC8: an account owned by another user 404s (not grouped with the 400 cases) and is never written to", async (t) => {
+  const userA = await createUser();
+  const userB = await createUser();
+  t.after(async () => {
+    await cleanupUser(userA);
+    await cleanupUser(userB);
+  });
+  const cardAccountId = await createAccount(userA, "credit_card");
+  const fromAccountIdOtherUser = await createAccount(userB, "bank");
+  const ingestionId = await createIngestion(userA);
+  const draftId = await repaymentDraft(userA, ingestionId);
+
+  await assert.rejects(
+    acceptRepayment(db, userA, draftId, {
+      cardAccountId,
+      fromAccountId: fromAccountIdOtherUser,
+      occurredAt: BASE_DATE,
+    }),
+    (e: unknown) => e instanceof HttpError && e.statusCode === 404,
+  );
+  const row = await draftRow(draftId);
+  assert.equal(row?.status, "pending");
+  assert.equal((await ledgerRowsFor(userA)).length, 0);
+});
+
+// ---------- T5b: DB-backed coverage of the SQL eligibility predicate itself.
+// Each case sets up a single existing debit that would match a naive query,
+// excluded for exactly one of the predicate's clauses, and asserts
+// `acceptRepayment` falls through to the "create" branch (proving the
+// existing row was NOT selected as a candidate) rather than reusing it. ----------
+
+test("SQL eligibility predicate: a debit with the wrong amount is excluded — the create branch runs instead", async (t) => {
+  const userId = await createUser();
+  t.after(() => cleanupUser(userId));
+  const fromAccountId = await createAccount(userId, "bank");
+  const cardAccountId = await createAccount(userId, "credit_card");
+  const ingestionId = await createIngestion(userId);
+
+  const wrongAmount = await createTransaction(db, userId, {
+    accountId: fromAccountId,
+    date: BASE_DATE,
+    amountPaise: -400000, // draft is 500000, so -500000 would match; this doesn't
+    merchant: "Wrong amount",
+    categoryId: null,
+    notes: "",
+    tags: [],
+    source: "manual",
+  });
+
+  const draftId = await repaymentDraft(userId, ingestionId);
+  await acceptRepayment(db, userId, draftId, { cardAccountId, fromAccountId, occurredAt: BASE_DATE });
+
+  const rows = await ledgerRowsFor(userId);
+  assert.equal(rows.length, 3); // the wrong-amount debit, untouched, plus a new out+in pair
+  const untouched = rows.find((r) => r.id === wrongAmount.id)!;
+  assert.equal(untouched.amountPaise, -400000);
+  const links = await linksFor(userId);
+  assert.equal(links.length, 1);
+  assert.notEqual(links[0]!.outTransactionId, wrongAmount.id);
+});
+
+test("SQL eligibility predicate: a debit exactly TRANSFER_WINDOW_DAYS away is included (reused)", async (t) => {
+  const userId = await createUser();
+  t.after(() => cleanupUser(userId));
+  const fromAccountId = await createAccount(userId, "bank");
+  const cardAccountId = await createAccount(userId, "credit_card");
+  const ingestionId = await createIngestion(userId);
+  const reviewerDate = BASE_DATE;
+  const debitDate = addDays(BASE_DATE, -TRANSFER_WINDOW_DAYS);
+
+  const boundary = await createTransaction(db, userId, {
+    accountId: fromAccountId,
+    date: debitDate,
+    amountPaise: -500000,
+    merchant: "At the window boundary",
+    categoryId: null,
+    notes: "",
+    tags: [],
+    source: "manual",
+  });
+
+  const draftId = await repaymentDraft(userId, ingestionId, { occurredAt: BASE_DATE });
+  await acceptRepayment(db, userId, draftId, { cardAccountId, fromAccountId, occurredAt: reviewerDate });
+
+  const rows = await ledgerRowsFor(userId);
+  assert.equal(rows.length, 2); // reused, no new debit
+  const links = await linksFor(userId);
+  assert.equal(links.length, 1);
+  assert.equal(links[0]!.outTransactionId, boundary.id);
+});
+
+test("SQL eligibility predicate: a debit one day beyond TRANSFER_WINDOW_DAYS is excluded — the create branch runs instead", async (t) => {
+  const userId = await createUser();
+  t.after(() => cleanupUser(userId));
+  const fromAccountId = await createAccount(userId, "bank");
+  const cardAccountId = await createAccount(userId, "credit_card");
+  const ingestionId = await createIngestion(userId);
+  const reviewerDate = BASE_DATE;
+  const debitDate = addDays(BASE_DATE, -(TRANSFER_WINDOW_DAYS + 1));
+
+  const tooFar = await createTransaction(db, userId, {
+    accountId: fromAccountId,
+    date: debitDate,
+    amountPaise: -500000,
+    merchant: "Beyond the window",
+    categoryId: null,
+    notes: "",
+    tags: [],
+    source: "manual",
+  });
+
+  const draftId = await repaymentDraft(userId, ingestionId, { occurredAt: BASE_DATE });
+  await acceptRepayment(db, userId, draftId, { cardAccountId, fromAccountId, occurredAt: reviewerDate });
+
+  const rows = await ledgerRowsFor(userId);
+  assert.equal(rows.length, 3);
+  const links = await linksFor(userId);
+  assert.equal(links.length, 1);
+  assert.notEqual(links[0]!.outTransactionId, tooFar.id);
+});
+
+test("SQL eligibility predicate: a soft-deleted debit is excluded — the create branch runs instead", async (t) => {
+  const userId = await createUser();
+  t.after(() => cleanupUser(userId));
+  const fromAccountId = await createAccount(userId, "bank");
+  const cardAccountId = await createAccount(userId, "credit_card");
+  const ingestionId = await createIngestion(userId);
+
+  const deleted = await createTransaction(db, userId, {
+    accountId: fromAccountId,
+    date: BASE_DATE,
+    amountPaise: -500000,
+    merchant: "Soft deleted",
+    categoryId: null,
+    notes: "",
+    tags: [],
+    source: "manual",
+  });
+  await db.update(transactions).set({ deletedAt: new Date() }).where(eq(transactions.id, deleted.id));
+
+  const draftId = await repaymentDraft(userId, ingestionId);
+  await acceptRepayment(db, userId, draftId, { cardAccountId, fromAccountId, occurredAt: BASE_DATE });
+
+  const rows = await ledgerRowsFor(userId);
+  assert.equal(rows.length, 3); // the soft-deleted row plus the new out+in pair
+  const links = await linksFor(userId);
+  assert.equal(links.length, 1);
+  assert.notEqual(links[0]!.outTransactionId, deleted.id);
+});
+
+test("SQL eligibility predicate: an isOpening debit is excluded — the create branch runs instead", async (t) => {
+  const userId = await createUser();
+  t.after(() => cleanupUser(userId));
+  const fromAccountId = await createAccount(userId, "bank");
+  const cardAccountId = await createAccount(userId, "credit_card");
+  const ingestionId = await createIngestion(userId);
+
+  const [opening] = await db
+    .insert(transactions)
+    .values({
+      userId,
+      accountId: fromAccountId,
+      date: BASE_DATE,
+      amountPaise: -500000,
+      merchant: "Opening balance",
+      categoryId: null,
+      notes: "",
+      tags: [],
+      source: "manual",
+      isOpening: true,
+    })
+    .returning({ id: transactions.id });
+
+  const draftId = await repaymentDraft(userId, ingestionId);
+  await acceptRepayment(db, userId, draftId, { cardAccountId, fromAccountId, occurredAt: BASE_DATE });
+
+  const rows = await ledgerRowsFor(userId);
+  assert.equal(rows.length, 3);
+  const links = await linksFor(userId);
+  assert.equal(links.length, 1);
+  assert.notEqual(links[0]!.outTransactionId, opening!.id);
+});
+
+test("SQL eligibility predicate: a debit already referenced by transfer_links is excluded — the create branch runs instead", async (t) => {
+  const userId = await createUser();
+  t.after(() => cleanupUser(userId));
+  const fromAccountId = await createAccount(userId, "bank");
+  const cardAccountId = await createAccount(userId, "credit_card");
+  const otherAccountId = await createAccount(userId, "bank");
+  const ingestionId = await createIngestion(userId);
+
+  const alreadyLinked = await createTransaction(db, userId, {
+    accountId: fromAccountId,
+    date: BASE_DATE,
+    amountPaise: -500000,
+    merchant: "Already linked",
+    categoryId: null,
+    notes: "",
+    tags: [],
+    source: "manual",
+  });
+  const otherCredit = await createTransaction(db, userId, {
+    accountId: otherAccountId,
+    date: BASE_DATE,
+    amountPaise: 500000,
+    merchant: "Other credit",
+    categoryId: null,
+    notes: "",
+    tags: [],
+    source: "manual",
+  });
+  await linkTransfer(db, userId, alreadyLinked.id, otherCredit.id, false);
+
+  const draftId = await repaymentDraft(userId, ingestionId);
+  await acceptRepayment(db, userId, draftId, { cardAccountId, fromAccountId, occurredAt: BASE_DATE });
+
+  const rows = await ledgerRowsFor(userId);
+  assert.equal(rows.length, 4); // alreadyLinked + otherCredit + new out+in pair
+  const links = await linksFor(userId);
+  assert.equal(links.length, 2);
+  assert.ok(links.every((l) => l.outTransactionId !== alreadyLinked.id || l.inTransactionId === otherCredit.id));
+});
+
+test("SQL eligibility predicate: a debit on a different account is excluded — the create branch runs instead", async (t) => {
+  const userId = await createUser();
+  t.after(() => cleanupUser(userId));
+  const fromAccountId = await createAccount(userId, "bank");
+  const otherAccountId = await createAccount(userId, "bank");
+  const cardAccountId = await createAccount(userId, "credit_card");
+  const ingestionId = await createIngestion(userId);
+
+  const wrongAccount = await createTransaction(db, userId, {
+    accountId: otherAccountId,
+    date: BASE_DATE,
+    amountPaise: -500000,
+    merchant: "Wrong account",
+    categoryId: null,
+    notes: "",
+    tags: [],
+    source: "manual",
+  });
+
+  const draftId = await repaymentDraft(userId, ingestionId);
+  await acceptRepayment(db, userId, draftId, { cardAccountId, fromAccountId, occurredAt: BASE_DATE });
+
+  const rows = await ledgerRowsFor(userId);
+  assert.equal(rows.length, 3);
+  const links = await linksFor(userId);
+  assert.equal(links.length, 1);
+  assert.notEqual(links[0]!.outTransactionId, wrongAccount.id);
+});
+
+test("SQL eligibility predicate: a row-level userId mismatch is excluded — the create branch runs instead", async (t) => {
+  const userA = await createUser();
+  const userB = await createUser();
+  const fromAccountId = await createAccount(userA, "bank");
+  const cardAccountId = await createAccount(userA, "credit_card");
+  const ingestionId = await createIngestion(userA);
+
+  // Deliberately mismatched: a transaction row that sits on userA's own
+  // account (so the account-ownership check in acceptRepayment isn't what
+  // excludes it) but is stamped with userB's userId — isolating the
+  // predicate's own `user_id` filter from account ownership.
+  const [mismatched] = await db
+    .insert(transactions)
+    .values({
+      userId: userB,
+      accountId: fromAccountId,
+      date: BASE_DATE,
+      amountPaise: -500000,
+      merchant: "Mismatched user",
+      categoryId: null,
+      notes: "",
+      tags: [],
+      source: "manual",
+    })
+    .returning({ id: transactions.id });
+
+  t.after(async () => {
+    // The mismatched row sits on userA's account but carries userB's userId,
+    // so it must be removed before either account is deleted (the account_id
+    // FK has no cascade) — cleanupUser's own userId-scoped delete won't catch
+    // a row whose userId and accountId belong to different users.
+    await db.delete(transactions).where(eq(transactions.id, mismatched!.id));
+    await cleanupUser(userA);
+    await cleanupUser(userB);
+  });
+
+  const draftId = await repaymentDraft(userA, ingestionId);
+  await acceptRepayment(db, userA, draftId, { cardAccountId, fromAccountId, occurredAt: BASE_DATE });
+
+  const rows = await ledgerRowsFor(userA);
+  assert.equal(rows.length, 2); // userA's own new out+in pair — the mismatched row isn't userA's
+
+  const [mismatchedAfter] = await db.select().from(transactions).where(eq(transactions.id, mismatched!.id));
+  assert.equal(mismatchedAfter!.amountPaise, -500000); // untouched
+
+  const links = await linksFor(userA);
+  assert.equal(links.length, 1);
+  assert.notEqual(links[0]!.outTransactionId, mismatched!.id);
 });

@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { AiProvider } from "@compass/ai";
 import {
+  classifyAndExtract,
   computeStatementRewardEntries,
   decideStatus,
   dedupeHashFor,
@@ -239,6 +240,69 @@ test("runExtraction: unparseable model output degrades to 'other'/ignored", asyn
   assert.equal(out.classification, "other");
   assert.equal(out.status, "ignored");
   assert.equal(out.rows.length, 0);
+});
+
+// ---------- intent: field-local normalization (misc-01) ----------
+//
+// `intent` on ModelTxnSchema MUST be field-local normalized
+// (`z.enum([...]).nullable().catch(null)`), not a bare z.enum — a bare enum
+// would fail the whole ModelResultSchema.safeParse on one bad value and make
+// classifyAndExtract silently return zero transactions for the entire email.
+// This exercises that guarantee through the exported classifyAndExtract with
+// a faked model response covering valid, absent, unknown-string, and
+// wrong-typed intent values in a single extraction.
+
+const baseTxn = {
+  amount: 100,
+  direction: "credit" as const,
+  date: null,
+  accountHint: "",
+  category: "",
+  bankRef: null,
+  sourceQuote: "",
+  confidence: 0.9,
+};
+
+test("classifyAndExtract: intent normalizes valid/absent/unknown/wrong-typed values, and one malformed intent does not discard sibling transactions", async () => {
+  const ai = fakeAi(
+    JSON.stringify({
+      classification: "transaction_alert",
+      transactions: [
+        { ...baseTxn, counterparty: "Card Payment", intent: "repayment" },
+        { ...baseTxn, counterparty: "Amazon Refund", intent: "refund" },
+        { ...baseTxn, counterparty: "Cashback Credit", intent: "cashback" },
+        { ...baseTxn, counterparty: "No Intent Field" }, // intent key absent entirely
+        { ...baseTxn, counterparty: "Bogus String", intent: "not-a-real-intent" },
+        { ...baseTxn, counterparty: "Wrong Type", intent: 42 },
+      ],
+    }),
+  );
+  const result = await classifyAndExtract(email("..."), ai, [], { names: [], emails: [], upiIds: [] });
+  // every row survives — a malformed `intent` on one row must not discard the extraction
+  assert.equal(result.transactions.length, 6);
+  assert.equal(result.transactions[0]!.intent, "repayment");
+  assert.equal(result.transactions[1]!.intent, "refund");
+  assert.equal(result.transactions[2]!.intent, "cashback");
+  assert.equal(result.transactions[3]!.intent, null); // absent
+  // the malformed row itself survives, with intent normalized to null
+  assert.equal(result.transactions[4]!.intent, null); // unknown string
+  assert.equal(result.transactions[5]!.intent, null); // wrong type
+});
+
+test("runExtraction: intent threads through toInboxRow onto the persistable InboxRow", async () => {
+  const ai = fakeAi(
+    JSON.stringify({
+      classification: "transaction_alert",
+      transactions: [
+        { ...baseTxn, counterparty: "Card Payment Received", intent: "repayment" },
+        { ...baseTxn, counterparty: "Ordinary Credit" }, // no intent
+      ],
+    }),
+  );
+  const out = await runExtraction(email("..."), ai, ctx());
+  assert.equal(out.rows.length, 2);
+  assert.equal(out.rows[0]!.intent, "repayment");
+  assert.equal(out.rows[1]!.intent, null);
 });
 
 test("extractStatementTxns: statement lines → normalized rows against the matched card", async () => {

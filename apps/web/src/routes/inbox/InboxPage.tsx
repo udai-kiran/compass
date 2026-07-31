@@ -5,6 +5,7 @@ import { useInbox, useInboxMutations, useOrphanedInbox } from "../../lib/inbox-q
 import { toast } from "../../lib/toast.tsx";
 import { CategoryPicker } from "../../components/CategoryPicker.tsx";
 import { DateField } from "../../components/DateField.tsx";
+import { isRepaymentEligible } from "./repayment-eligibility.ts";
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -226,14 +227,17 @@ function DraftCard({
   accounts: Account[];
   categories: Category[];
 }) {
-  const { accept, reject } = useInboxMutations();
+  const { accept, acceptRepayment, reject } = useInboxMutations();
   const [accountId, setAccountId] = useState(draft.suggestedAccountId ?? "");
+  const [payingAccountId, setPayingAccountId] = useState("");
   const [categoryId, setCategoryId] = useState(draft.suggestedCategoryId ?? "");
   const [date, setDate] = useState(draft.occurredAt ?? today());
   const [merchant, setMerchant] = useState(draft.counterparty);
 
   const isDebit = draft.direction === "debit";
-  const busy = accept.isPending || reject.isPending;
+  const busy = accept.isPending || acceptRepayment.isPending || reject.isPending;
+  const selectedAccount = accounts.find((a) => a.id === accountId);
+  const repaymentEligible = isRepaymentEligible(draft, selectedAccount);
 
   function onAccept() {
     if (!accountId) {
@@ -251,6 +255,17 @@ function DraftCard({
         merchant: merchant.trim() || draft.counterparty || "—",
       },
       { onSuccess: () => toast("Added to the ledger", "success") },
+    );
+  }
+
+  function onRecordRepayment() {
+    if (!payingAccountId) {
+      toast("Pick a paying account first", "error");
+      return;
+    }
+    acceptRepayment.mutate(
+      { id: draft.id, cardAccountId: accountId, fromAccountId: payingAccountId, occurredAt: date },
+      { onSuccess: () => toast("Card payment recorded", "success") },
     );
   }
 
@@ -273,6 +288,13 @@ function DraftCard({
             >
               {isDebit ? "Debit" : "Credit"}
             </span>
+            {/* Display-only: the model flagged this credit as a card bill payment,
+                not a merchant refund. No behaviour changes on the back of it. */}
+            {draft.intent === "repayment" && (
+              <span className="shrink-0 rounded bg-indigo-50 px-1.5 py-0.5 text-xs font-medium text-indigo-700">
+                Card payment
+              </span>
+            )}
           </div>
           <p className="mt-0.5 truncate text-xs text-slate-400">
             {draft.subject} · {draft.fromAddr}
@@ -322,6 +344,23 @@ function DraftCard({
         <Field label="Merchant">
           <input value={merchant} onChange={(e) => setMerchant(e.target.value)} className="input" />
         </Field>
+        {repaymentEligible && (
+          <Field label="Paying account">
+            <select
+              value={payingAccountId}
+              onChange={(e) => setPayingAccountId(e.target.value)}
+              className="input"
+              aria-label="Paying account"
+            >
+              <option value="">Select…</option>
+              {accounts
+                .filter((a) => a.id !== accountId)
+                .map((a) => (
+                  <option key={a.id} value={a.id}>{a.name}</option>
+                ))}
+            </select>
+          </Field>
+        )}
       </div>
 
       <div className="flex items-center gap-2 border-t border-slate-100 px-4 py-3">
@@ -332,6 +371,15 @@ function DraftCard({
         >
           {accept.isPending ? "Adding…" : "Accept"}
         </button>
+        {repaymentEligible && (
+          <button
+            onClick={onRecordRepayment}
+            disabled={busy}
+            className="rounded-md bg-brand-600 px-4 py-1.5 text-sm text-white disabled:opacity-40"
+          >
+            {acceptRepayment.isPending ? "Recording…" : "Record as card payment"}
+          </button>
+        )}
         <button
           onClick={onReject}
           disabled={busy}
