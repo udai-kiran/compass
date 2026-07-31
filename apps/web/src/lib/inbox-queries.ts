@@ -25,6 +25,14 @@ export function useInboxCount() {
   });
 }
 
+/** Accepted drafts whose ledger transaction was hard-deleted — needs-attention list. */
+export function useOrphanedInbox() {
+  return useQuery({
+    queryKey: ["inbox", "orphaned"],
+    queryFn: () => apiGet("/api/inbox/orphaned", z.array(ExtractedTransactionSchema)),
+  });
+}
+
 export function useInboxMutations() {
   const qc = useQueryClient();
   const invalidate = () => {
@@ -68,5 +76,11 @@ export function useInboxMutations() {
     onSuccess: invalidate,
   });
 
-  return { accept, acceptTransfer, reject, unmatch };
+  // An orphaned accept (its ledger transaction was hard-deleted) back to pending.
+  const restore = useMutation({
+    mutationFn: (id: string) => apiPost(`/api/inbox/${id}/restore`, ExtractedTransactionSchema),
+    onSuccess: invalidate,
+  });
+
+  return { accept, acceptTransfer, reject, unmatch, restore };
 }
