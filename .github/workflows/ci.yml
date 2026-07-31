@@ -8,6 +8,22 @@ on:
 jobs:
   check:
     runs-on: [self-hosted, docker]
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: compass
+          POSTGRES_PASSWORD: compass-ci
+          POSTGRES_DB: compass_ci
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -U compass -d compass_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://compass:compass-ci@localhost:${{ job.services.postgres.ports['5432'] }}/compass_ci
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -17,6 +33,7 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run lint
+      - run: npm run db:migrate
       - run: npm test
       - run: npm run build -w apps/web
       - run: npm run build -w apps/docs
