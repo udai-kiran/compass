@@ -228,6 +228,22 @@ export type CreateRewardEntry = z.input<typeof CreateRewardEntrySchema>;
  * the cycle's lines were already in the ledger from real-time alerts. `deltaPaise`
  * is the listed spend not yet cleared (lineDebit − matched) — what a review should
  * look at. One row per (card, period).
+ *
+ * `ledgerDuePaise`/`dueDriftPaise` compare the issuer's own `totalDuePaise`
+ * against what the ledger itself says was owed at the statement close —
+ * catching a carried-forward balance or other ledger shortfall that the
+ * statement's own lines never surface. `ledgerDuePaise` is SIGNED and never
+ * clamped (negative = the ledger shows this card in credit); unlike
+ * `amountDuePaise`/`totalDuePaise` elsewhere, do not `Math.max(0, …)` it.
+ * `dueDriftPaise` is `totalDuePaise − ledgerDuePaise`, null unless both are
+ * known. Both are required-but-nullable, computed at read time (not stored).
+ *
+ * This is a plain, non-strict `z.object` — unknown keys are stripped, not
+ * rejected — so an old web client (pre-dating these two fields) still parses
+ * a new API response fine; it simply never sees them. That is a convenience,
+ * not a compatibility guarantee: rollout is API-first / same-release (both
+ * images bump together on one `COMPASS_VERSION`), since a genuinely mixed
+ * old-web/new-API pairing is never exercised.
  */
 export const StatementReconciliationSchema = z.object({
   id: z.uuid(),
@@ -245,6 +261,10 @@ export const StatementReconciliationSchema = z.object({
   unmatchedCount: z.number().int(),
   /** listed spend not yet in the ledger: max(0, lineDebitPaise − matchedPaise) */
   deltaPaise: z.number().int(),
+  /** signed ledger balance at close: −(opening + Σ tx dated before statementDate); negative = credit */
+  ledgerDuePaise: z.number().int().nullable(),
+  /** totalDuePaise − ledgerDuePaise; null unless both are known */
+  dueDriftPaise: z.number().int().nullable(),
   updatedAt: z.string(),
 });
 export type StatementReconciliation = z.infer<typeof StatementReconciliationSchema>;

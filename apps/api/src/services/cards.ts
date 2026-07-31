@@ -1,4 +1,5 @@
 import { and, desc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
+import type { Redis } from "ioredis";
 import type {
   CardActivity,
   CardActivityTxn,
@@ -13,7 +14,7 @@ import type {
   UpsertCardIssuerSettings,
 } from "@compass/shared";
 import { formatINR, UpsertCardDetailsSchema, UpsertCardIssuerSettingsSchema } from "@compass/shared";
-import type { Db } from "../db/index.ts";
+import type { Db, DbOrTx } from "../db/index.ts";
 import {
   accounts,
   alertLedger,
@@ -26,7 +27,9 @@ import {
 } from "../db/schema.ts";
 import { HttpError } from "../lib/errors.ts";
 import { decryptSecret, encryptSecret } from "../lib/secret-box.ts";
+import { withSerializableRetry } from "../lib/serializable.ts";
 import { createNotification } from "./notifications.ts";
+import { repairSnapshots } from "./networth.ts";
 import { currentPeriodKey } from "./periods.ts";
 
 type DetailsRow = typeof cardDetails.$inferSelect;
@@ -583,7 +586,60 @@ export async function listRewards(db: Db, userId: string, accountId: string): Pr
 
 type ReconciliationRow = typeof statementReconciliations.$inferSelect;
 
-function toReconciliationDto(r: ReconciliationRow): StatementReconciliation {
+/**
+ * Drift between the issuer's stated `totalDuePaise` and what the ledger itself
+ * says was due at the statement close: `totalDue − ledgerDue`. Positive means
+ * the ledger is short (a carried-forward balance, or spend never captured
+ * this cycle); negative means the ledger shows more owed than the statement
+ * (a payment/refund not reflected in this cycle's lines). `null` unless both
+ * inputs are known — a card with no statement date, or a statement that never
+ * stated a total, has nothing to compare.
+ */
+export function dueDrift(totalDuePaise: number | null, ledgerDuePaise: number | null): number | null {
+  if (totalDuePaise === null || ledgerDuePaise === null) return null;
+  return totalDuePaise - ledgerDuePaise;
+}
+
+export interface DriftPresentation {
+  kind: "none" | "shortfall" | "surplus" | "credit";
+  /** only ever true for `shortfall` — a credit balance is never "carried forward" */
+  carryForwardHint: boolean;
+  /** true only for `shortfall`; a credit or surplus keeps the "all lines matched" badge */
+  suppressCleared: boolean;
+}
+
+/**
+ * Classifies a due-drift for display. `ledgerDuePaise < 0` (the ledger holds a
+ * credit balance on this card) is checked BEFORE the drift sign: a credit
+ * balance against a small/zero statement due still subtracts to a *positive*
+ * `dueDrift`, but that is not a shortfall — the ledger has money in hand, not
+ * a gap — so it is classified `credit` first and never folds into
+ * `shortfall`'s "more due than the ledger shows" copy or carry-forward hint.
+ */
+export function driftPresentation(
+  dueDriftPaise: number | null,
+  ledgerDuePaise: number | null,
+): DriftPresentation {
+  if (dueDriftPaise === null || ledgerDuePaise === null) {
+    return { kind: "none", carryForwardHint: false, suppressCleared: false };
+  }
+  if (ledgerDuePaise < 0) {
+    return { kind: "credit", carryForwardHint: false, suppressCleared: false };
+  }
+  if (dueDriftPaise > 0) {
+    return { kind: "shortfall", carryForwardHint: true, suppressCleared: true };
+  }
+  if (dueDriftPaise < 0) {
+    return { kind: "surplus", carryForwardHint: false, suppressCleared: false };
+  }
+  return { kind: "none", carryForwardHint: false, suppressCleared: false };
+}
+
+function toReconciliationDto(r: ReconciliationRow, ledgerDuePaise: number | null): StatementReconciliation {
+  const dueDriftPaise = dueDrift(r.totalDuePaise, ledgerDuePaise);
+  if (dueDriftPaise !== null && !Number.isSafeInteger(dueDriftPaise)) {
+    throw new HttpError(500, "Due drift aggregate exceeded a safe integer — refusing to lose paise");
+  }
   return {
     id: r.id,
     accountId: r.accountId,
@@ -598,8 +654,60 @@ function toReconciliationDto(r: ReconciliationRow): StatementReconciliation {
     matchedPaise: r.matchedPaise,
     unmatchedCount: r.unmatchedCount,
     deltaPaise: Math.max(0, r.lineDebitPaise - r.matchedPaise),
+    ledgerDuePaise,
+    dueDriftPaise,
     updatedAt: r.updatedAt.toISOString(),
   };
+}
+
+/**
+ * Signed ledger balance at close — `−(opening + Σ tx dated before that
+ * date)` — for each of `dates`, in ONE query regardless of how many distinct
+ * dates are asked for (bounded per AC6: `listReconciliations` must not issue
+ * one aggregate per row). Negative means the ledger shows this card in
+ * credit; never clamped here (see `driftPresentation` for how a negative
+ * value is presented). `date < statementDate` (strict) matches this card's
+ * documented `[start, close)` cycle convention — a transaction dated exactly
+ * on the close belongs to the *next* cycle. Scoped to `accountId` AND
+ * `userId`, and excludes soft-deleted rows.
+ */
+async function ledgerDuesAtDates(
+  db: DbOrTx,
+  userId: string,
+  accountId: string,
+  openingBalancePaise: number,
+  dates: readonly string[],
+): Promise<Map<string, number>> {
+  const result = new Map<string, number>();
+  const distinct = [...new Set(dates)];
+  if (distinct.length === 0) return result;
+  const dateList = sql.join(
+    distinct.map((d) => sql`${d}::date`),
+    sql`, `,
+  );
+  const agg = await db.execute(sql`
+    select ds.stmt_date::text as stmt_date,
+      coalesce(sum(t.amount_paise), 0)::bigint as sum_paise
+    from unnest(array[${dateList}]) as ds(stmt_date)
+    left join transactions t
+      on t.account_id = ${accountId}
+      and t.user_id = ${userId}
+      and t.deleted_at is null
+      and t.date < ds.stmt_date
+    group by ds.stmt_date
+  `);
+  for (const row of agg.rows as { stmt_date: string; sum_paise: string }[]) {
+    const sum = Number(row.sum_paise);
+    if (!Number.isSafeInteger(sum)) {
+      throw new HttpError(500, "Ledger balance aggregate exceeded a safe integer — refusing to lose paise");
+    }
+    const ledgerDuePaise = -(openingBalancePaise + sum);
+    if (!Number.isSafeInteger(ledgerDuePaise)) {
+      throw new HttpError(500, "Ledger balance aggregate exceeded a safe integer — refusing to lose paise");
+    }
+    result.set(row.stmt_date, ledgerDuePaise);
+  }
+  return result;
 }
 
 /**
@@ -607,13 +715,21 @@ function toReconciliationDto(r: ReconciliationRow): StatementReconciliation {
  * listed spend not yet cleared in the ledger — is derived here so the client
  * doesn't have to. Read-only; the extractor writes these when it processes a
  * statement (see apps/extractor: upsertReconciliation).
+ *
+ * `ledgerDuePaise`/`dueDriftPaise` compare the issuer's own total due against
+ * the ledger's own balance at that statement's close, surfacing a
+ * carried-forward balance or other ledger shortfall the statement's lines
+ * never mention (see tasks/cc-recon-01-statement-drift). Bounded to at most
+ * 3 total queries regardless of row count (AC6): ownership lookup, the
+ * reconciliations themselves, and one aggregate over their distinct
+ * statement dates.
  */
 export async function listReconciliations(
   db: Db,
   userId: string,
   accountId: string,
 ): Promise<StatementReconciliation[]> {
-  await ownedCardAccount(db, userId, accountId);
+  const acc = await ownedCardAccount(db, userId, accountId);
   const rows = await db.query.statementReconciliations.findMany({
     where: and(
       eq(statementReconciliations.userId, userId),
@@ -622,7 +738,11 @@ export async function listReconciliations(
     orderBy: [desc(statementReconciliations.period)],
     limit: 24,
   });
-  return rows.map(toReconciliationDto);
+  const dates = rows.map((r) => r.statementDate).filter((d): d is string => d !== null);
+  const ledgerDueByDate = await ledgerDuesAtDates(db, userId, accountId, acc.openingBalancePaise, dates);
+  return rows.map((r) =>
+    toReconciliationDto(r, r.statementDate !== null ? (ledgerDueByDate.get(r.statementDate) ?? null) : null),
+  );
 }
 
 export async function addRewardEntry(
@@ -868,7 +988,195 @@ export async function recomputeReconciliation(
           ),
         );
     }
-    return row!;
+
+    // Enrich with the same ledger-due arithmetic as listReconciliations, computed
+    // through this same transaction handle (not a follow-up call after commit) so
+    // the returned drift describes the identical ledger snapshot as `row`'s stats
+    // — see review-1/2 on recompute's enrichment needing one consistent instant.
+    const [acctRow] = await tx
+      .select({ openingBalancePaise: accounts.openingBalancePaise })
+      .from(accounts)
+      .where(and(eq(accounts.id, accountId), eq(accounts.userId, userId)));
+    const ledgerDuePaise =
+      row!.statementDate !== null && acctRow
+        ? ((
+            await ledgerDuesAtDates(tx, userId, accountId, acctRow.openingBalancePaise, [row!.statementDate])
+          ).get(row!.statementDate) ?? null)
+        : null;
+    return { row: row!, ledgerDuePaise };
   });
-  return toReconciliationDto(updated);
+  return toReconciliationDto(updated.row, updated.ledgerDuePaise);
+}
+
+// ---------- statement reconciliation: absorb a carried-forward balance ----------
+
+/**
+ * Test-only concurrency seam for `absorbCarryover`. Every field is optional
+ * and a no-op in every production caller — see `afterAggregate` below.
+ */
+export interface AbsorbCarryoverHooks {
+  /**
+   * Fires once per attempt, immediately after this transaction has read the
+   * ledger aggregate (`ledgerDuesAtDates`) and before it updates the account
+   * row. Exists so a test can deterministically land a concurrent write in
+   * exactly the window the SSI race depends on
+   * (tasks/cc-recon-02-carryover-seed/TASK.md P6a). Never set by a real
+   * route handler.
+   */
+  afterAggregate?: () => Promise<void>;
+}
+
+/**
+ * Absorb a statement's carried-forward balance into the card's opening
+ * balance, so the ledger-derived due at that statement's close matches what
+ * the issuer actually billed (`totalDuePaise`). See
+ * tasks/cc-recon-02-carryover-seed/TASK.md.
+ *
+ * Runs in ONE transaction at `SERIALIZABLE` isolation, wrapped by
+ * `withSerializableRetry` (one retry on SQLSTATE `40001`): a concurrent
+ * ledger write touching this card, a settings opening-balance edit, or a
+ * second absorb call (same or a different reconciliation row of the same
+ * card) either serializes cleanly against this call or forces it to retry
+ * against fresh state — it never commits an adjustment computed from a
+ * ledger snapshot that no longer held by commit time.
+ *
+ * Lock order is account (`FOR UPDATE`) then reconciliation (`FOR UPDATE`) —
+ * the same order `updateAccount` (accounts.ts) uses for its own
+ * opening-balance edits, so the two can never deadlock against each other.
+ * Every check (existence, `type = 'credit_card'`, not archived) is read from
+ * that same locked row version, not from an earlier unlocked read.
+ *
+ * Only a POSITIVE drift is absorbed (`drift <= 0` → 409 "Nothing to carry
+ * forward"): drift is evidence of a carried-forward balance, not proof of
+ * one — missing, misdated, or misassigned ledger entries can produce the
+ * same number — so an already-complete or over-complete ledger is never
+ * silently reinterpreted as history.
+ *
+ * `opening_balance_paise` carries no effective date, so this mutation
+ * reinterprets the card's liability for every historical date, not merely
+ * from today forward. That is accepted deliberately (TASK.md P4): a card
+ * onboarded mid-history should have carried this balance from account
+ * creation, so this corrects history rather than corrupting it. After
+ * commit this fires a fire-and-forget, best-effort `repairSnapshots` scoped
+ * to this user, `from` = the account's `created_at` converted to a UTC date
+ * string — errors (including `repairSnapshots`'s own 409 when a repair is
+ * already running) are logged and never fail this call's response.
+ * `recomputeSnapshotsSince` (which `repairSnapshots` wraps) clamps `from` to
+ * at most `MAX_RECOMPUTE_SINCE_DAYS` (370) days before today, and the
+ * nightly sweep only ever revisits the trailing 45 days — so for a card
+ * older than ~370 days, stored net-worth snapshots between account creation
+ * and that clamp boundary remain UNREPAIRED until a future targeted repair.
+ * This is an accepted, disclosed limitation (see the web confirm dialog),
+ * not a bug.
+ */
+export async function absorbCarryover(
+  db: Db,
+  redis: Pick<Redis, "set" | "eval">,
+  userId: string,
+  accountId: string,
+  reconciliationId: string,
+  hooks?: AbsorbCarryoverHooks,
+): Promise<StatementReconciliation> {
+  const { dto, createdAt } = await withSerializableRetry(() =>
+    db.transaction(
+      async (tx) => {
+        // Lock the account first — this is what serializes against a concurrent
+        // opening-balance edit (updateAccount locks the same row the same way
+        // before its own edit) or a second absorb on this same card.
+        const [account] = await tx
+          .select()
+          .from(accounts)
+          .where(and(eq(accounts.id, accountId), eq(accounts.userId, userId)))
+          .for("update");
+        if (!account) throw new HttpError(404, "Account not found");
+        if (account.type !== "credit_card") throw new HttpError(400, "Not a credit card account");
+        if (account.archivedAt !== null) throw new HttpError(409, "Card is archived");
+
+        const [reconciliation] = await tx
+          .select()
+          .from(statementReconciliations)
+          .where(
+            and(
+              eq(statementReconciliations.id, reconciliationId),
+              eq(statementReconciliations.accountId, accountId),
+              eq(statementReconciliations.userId, userId),
+            ),
+          )
+          .for("update");
+        if (!reconciliation) throw new HttpError(404, "Reconciliation not found");
+        if (reconciliation.totalDuePaise === null || reconciliation.statementDate === null) {
+          throw new HttpError(409, "This statement has no total due or statement date to absorb against");
+        }
+        const statementDate = reconciliation.statementDate;
+
+        // Recompute the ledger due server-side, inside this same transaction —
+        // never trust a client-sent number, and never reuse a figure read before
+        // this transaction started.
+        const beforeLedgerDueByDate = await ledgerDuesAtDates(
+          tx,
+          userId,
+          accountId,
+          account.openingBalancePaise,
+          [statementDate],
+        );
+        const ledgerDuePaise = beforeLedgerDueByDate.get(statementDate) ?? null;
+
+        // Test seam only — see AbsorbCarryoverHooks. Fires after the ledger
+        // aggregate read above and before the account UPDATE below, which is the
+        // exact window tasks/cc-recon-02-carryover-seed/TASK.md P6a's SSI
+        // dependency-cycle test depends on.
+        await hooks?.afterAggregate?.();
+
+        const drift = dueDrift(reconciliation.totalDuePaise, ledgerDuePaise);
+        if (drift === null || drift <= 0) {
+          throw new HttpError(409, "Nothing to carry forward");
+        }
+
+        // Sign proof: ledgerDue = −(opening + Σtx); want −(opening' + Σtx) =
+        // totalDue ⇒ opening' = opening − drift (see dueDrift and TASK.md P1).
+        const nextOpeningBalancePaise = account.openingBalancePaise - drift;
+        if (!Number.isSafeInteger(nextOpeningBalancePaise)) {
+          throw new HttpError(500, "Adjusted opening balance exceeded a safe integer — refusing to lose paise");
+        }
+
+        await tx
+          .update(accounts)
+          .set({ openingBalancePaise: nextOpeningBalancePaise })
+          .where(and(eq(accounts.id, accountId), eq(accounts.userId, userId)));
+
+        // Re-derive from the post-update state through this SAME tx handle (not a
+        // follow-up call after commit), mirroring recomputeReconciliation's own
+        // enrichment — the returned drift must describe the committed opening
+        // balance, not the pre-update arithmetic.
+        const afterLedgerDueByDate = await ledgerDuesAtDates(
+          tx,
+          userId,
+          accountId,
+          nextOpeningBalancePaise,
+          [statementDate],
+        );
+        const afterLedgerDuePaise = afterLedgerDueByDate.get(statementDate) ?? null;
+
+        return {
+          dto: toReconciliationDto(reconciliation, afterLedgerDuePaise),
+          createdAt: account.createdAt,
+        };
+      },
+      { isolationLevel: "serializable" },
+    ),
+  );
+
+  // Post-commit, fire-and-forget: never let a repair failure fail this
+  // response (see JSDoc above). Logged, not surfaced.
+  const from = createdAt.toISOString().slice(0, 10);
+  void repairSnapshots(db, redis, userId, from).catch((err: unknown) => {
+    console.error("absorbCarryover: post-commit net-worth snapshot repair failed", {
+      userId,
+      accountId,
+      from,
+      err,
+    });
+  });
+
+  return dto;
 }

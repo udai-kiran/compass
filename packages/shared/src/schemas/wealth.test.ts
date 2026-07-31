@@ -5,6 +5,7 @@ import {
   AssetClassSchema,
   CreateHoldingEventSchema,
   assetClassHasUnits,
+  StatementReconciliationSchema,
   UpsertGoldDetailsSchema,
   UpsertNpsDetailsSchema,
   UpsertAccountNpsDetailsSchema,
@@ -152,4 +153,54 @@ test("retirement rate is basis points, capped at 100%", () => {
   assert.equal(UpsertRetirementDetailsSchema.safeParse({ annualRateBps: -1 }).success, false);
   // 7.1 would be a percent — silently truncating it to 7bps would understate by 100x.
   assert.equal(UpsertRetirementDetailsSchema.safeParse({ annualRateBps: 7.1 }).success, false);
+});
+
+// cc-recon-01-statement-drift: ledgerDuePaise/dueDriftPaise on StatementReconciliationSchema.
+const reconciliationFixture = (overrides: Record<string, unknown> = {}) => ({
+  id: "b3fc96d0-0000-4000-8000-000000000001",
+  accountId: "b3fc96d0-0000-4000-8000-000000000002",
+  period: "2026-07",
+  statementDate: "2026-07-20",
+  totalDuePaise: 7099600,
+  minDuePaise: 354980,
+  rewardClosing: 1200,
+  lineCount: 16,
+  lineDebitPaise: 6500000,
+  matchedCount: 16,
+  matchedPaise: 6500000,
+  unmatchedCount: 0,
+  deltaPaise: 0,
+  ledgerDuePaise: 2540475,
+  dueDriftPaise: 4559125,
+  updatedAt: "2026-07-21T00:00:00.000Z",
+  ...overrides,
+});
+
+test("StatementReconciliationSchema parses the Diners-shaped fixture, signed ledgerDuePaise verbatim", () => {
+  const result = StatementReconciliationSchema.safeParse(reconciliationFixture());
+  assert.equal(result.success, true);
+  assert.deepEqual(result.data, reconciliationFixture());
+});
+
+test("StatementReconciliationSchema accepts a negative (credit) ledgerDuePaise, never clamped", () => {
+  const fixture = reconciliationFixture({ totalDuePaise: 0, ledgerDuePaise: -100000, dueDriftPaise: 100000 });
+  const result = StatementReconciliationSchema.safeParse(fixture);
+  assert.equal(result.success, true);
+  assert.equal(result.data?.ledgerDuePaise, -100000);
+});
+
+test("StatementReconciliationSchema accepts both ledger fields null (no statement date/total due)", () => {
+  const fixture = reconciliationFixture({
+    statementDate: null,
+    totalDuePaise: null,
+    ledgerDuePaise: null,
+    dueDriftPaise: null,
+  });
+  assert.equal(StatementReconciliationSchema.safeParse(fixture).success, true);
+});
+
+test("StatementReconciliationSchema rejects a response missing ledgerDuePaise/dueDriftPaise (required, not optional)", () => {
+  const { ledgerDuePaise: _ledgerDuePaise, dueDriftPaise: _dueDriftPaise, ...withoutNewFields } =
+    reconciliationFixture();
+  assert.equal(StatementReconciliationSchema.safeParse(withoutNewFields).success, false);
 });
