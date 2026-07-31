@@ -1147,6 +1147,24 @@ export const emiDetails = pgTable("emi_details", {
   totalInstallments: integer("total_installments").notNull(),
   /** first installment date */
   startDate: date("start_date").notNull(),
+  /**
+   * The loan itself, modelled as an account (loan/home_loan_od/overdraft) —
+   * see tasks/emi-loan-destination-account. Optional: an EMI with no
+   * destination account materializes exactly as before this feature, one
+   * source-account transaction per due date, nothing else.
+   */
+  loanAccountId: uuid("loan_account_id").references(() => accounts.id, { onDelete: "set null" }),
+  /**
+   * Running principal balance for the loan-account posting path only —
+   * advanced by exactly one amortization step (see stepAmortization) each
+   * time materializeDue posts a destination-account leg for this EMI. Null
+   * means "not yet initialized", treated as principalPaise by every reader.
+   * NOT the display/report value — listEmis's outstandingPaise stays the
+   * pure amortize() schedule projection regardless of whether a destination
+   * account is configured; this column is internal bookkeeping for
+   * materializeDue's own write path, not exposed on the API.
+   */
+  outstandingPrincipalPaise: bigint("outstanding_principal_paise", { mode: "number" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

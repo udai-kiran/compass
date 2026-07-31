@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { Link } from "react-router";
 import {
+  EMI_DESTINATION_TYPES,
   formatDisplayDate,
   formatINR,
   standardEmiPaise,
@@ -47,6 +48,7 @@ function EmiRow({ emi, accounts }: { emi: EmiSummary; accounts: AccountWithBalan
   const [historyOpen, setHistoryOpen] = useState(false);
   const pct = Math.round((emi.paidInstallments / emi.totalInstallments) * 100);
   const account = accounts?.find((a) => a.id === emi.accountId);
+  const loanAccount = accounts?.find((a) => a.id === emi.loanAccountId);
 
   return (
     <section className="rounded-lg border border-slate-200 bg-white p-4">
@@ -73,6 +75,14 @@ function EmiRow({ emi, accounts }: { emi: EmiSummary; accounts: AccountWithBalan
             </Link>
           ) : (
             <p className="mt-0.5 text-xs text-slate-400">Account unavailable</p>
+          )}
+          {loanAccount && (
+            <Link
+              to={`/accounts/${loanAccount.id}`}
+              className="mt-0.5 block text-xs text-slate-500 underline"
+            >
+              Loan account: {loanAccount.name}
+            </Link>
           )}
         </div>
         <div className="flex shrink-0 gap-2">
@@ -184,6 +194,7 @@ function NewEmiForm() {
   const [rate, setRate] = useState("");
   const [tenure, setTenure] = useState("");
   const [startDate, setStartDate] = useState(new Date().toISOString().slice(0, 10));
+  const [loanAccountId, setLoanAccountId] = useState("");
 
   const principalPaise = Math.round((parseFloat(principal) || 0) * 100);
   const annualRateBps = Math.round((parseFloat(rate) || 0) * 100);
@@ -205,6 +216,7 @@ function NewEmiForm() {
         annualRateBps,
         totalInstallments: months,
         startDate,
+        loanAccountId: loanAccountId || null,
       },
       {
         onSuccess: () => {
@@ -212,6 +224,7 @@ function NewEmiForm() {
           setPrincipal("");
           setRate("");
           setTenure("");
+          setLoanAccountId("");
           toast("EMI created", "success");
         },
       },
@@ -227,7 +240,15 @@ function NewEmiForm() {
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
         <label className="flex flex-col gap-1 text-xs text-slate-500">
           Account
-          <select value={accountId} onChange={(e) => setAccountId(e.target.value)} className="input">
+          <select
+            value={accountId}
+            onChange={(e) => {
+              const next = e.target.value;
+              setAccountId(next);
+              if (next && next === loanAccountId) setLoanAccountId("");
+            }}
+            className="input"
+          >
             <option value="">Select…</option>
             {accounts?.filter((a) => !a.archivedAt).map((a) => (
               <option key={a.id} value={a.id}>{a.name}</option>
@@ -262,6 +283,22 @@ function NewEmiForm() {
         <label className="flex flex-col gap-1 text-xs text-slate-500">
           First installment
           <DateField value={startDate} onChange={(iso) => setStartDate(iso)} className="w-full" aria-label="First installment date" />
+        </label>
+        <label className="flex flex-col gap-1 text-xs text-slate-500">
+          Loan account (optional)
+          <select value={loanAccountId} onChange={(e) => setLoanAccountId(e.target.value)} className="input">
+            <option value="">None</option>
+            {accounts
+              ?.filter(
+                (a) =>
+                  !a.archivedAt &&
+                  (EMI_DESTINATION_TYPES as readonly string[]).includes(a.type) &&
+                  a.id !== accountId,
+              )
+              .map((a) => (
+                <option key={a.id} value={a.id}>{a.name}</option>
+              ))}
+          </select>
         </label>
       </div>
       <div className="mt-3 flex items-center gap-4">

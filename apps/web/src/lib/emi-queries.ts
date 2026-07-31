@@ -40,7 +40,13 @@ export function useEmiMutations() {
   };
   const create = useMutation({
     mutationFn: (body: CreateEmi) => apiPost("/api/emis", EmiSummarySchema, body),
-    onSuccess: invalidate,
+    onSuccess: () => {
+      invalidate();
+      // POST /api/emis immediately calls materializeDue, which can now post
+      // a destination-account (loan) leg in the same request — the accounts
+      // list must refresh too, not just emis/transactions/recurring.
+      void qc.invalidateQueries({ queryKey: ["accounts"] });
+    },
   });
   const remove = useMutation({
     mutationFn: (templateId: string) => send("DELETE", `/api/emis/${templateId}`, OkSchema),
