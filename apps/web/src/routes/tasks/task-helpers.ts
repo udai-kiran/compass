@@ -25,3 +25,43 @@ export interface OverdueTaskLike {
 export function isOverdue(task: OverdueTaskLike, today: string): boolean {
   return !task.completedAt && task.dueDate !== null && task.dueDate < today;
 }
+
+/** Shape of the PATCH body the link panel sends — a subset of UpdateUserTask. */
+export interface LinkPanelPatch {
+  completed?: boolean;
+  transactionId?: string | null;
+}
+
+/**
+ * Which primary action the row's link panel is performing:
+ * - `"complete"`: ticking an incomplete task — the PATCH completes it.
+ * - `"link-only"`: adding a link to an already-completed task — the PATCH
+ *   must not touch `completed`.
+ */
+export type LinkPanelMode = "complete" | "link-only";
+
+/**
+ * PATCH body for the panel's primary button ("Mark done" / "Save link"), or
+ * null when the action is not currently valid (link-only mode with nothing
+ * picked — the caller disables the button in that case).
+ *
+ * In "complete" mode with nothing picked the body is `{ completed: true }`
+ * with NO transactionId key, so an existing link is left untouched; clearing
+ * a link is the explicit "Done without a link" path below.
+ */
+export function linkPanelPrimaryPatch(
+  mode: LinkPanelMode,
+  pickedId: string | null,
+): LinkPanelPatch | null {
+  if (mode === "complete") {
+    return pickedId === null
+      ? { completed: true }
+      : { completed: true, transactionId: pickedId };
+  }
+  return pickedId === null ? null : { transactionId: pickedId };
+}
+
+/** PATCH body for "Done without a link": complete and explicitly clear the link. */
+export function doneWithoutLinkPatch(): LinkPanelPatch {
+  return { completed: true, transactionId: null };
+}

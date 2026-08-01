@@ -117,11 +117,49 @@ test("UserTaskSchema embeds a nullable transaction projection alongside transact
       merchant: "Cafe",
       amountPaise: -50000,
     },
+    source: "user",
+    sourceKey: null,
     createdAt: "2026-01-05T10:00:00.000Z",
     updatedAt: "2026-01-05T10:00:00.000Z",
   });
   assert.equal(parsed.transactionId, "3f6b1e2a-0000-4000-8000-000000000003");
   assert.equal(parsed.transaction?.merchant, "Cafe");
+});
+
+test("UserTaskSchema accepts source='card-due' with a sourceKey", () => {
+  const parsed = UserTaskSchema.parse({
+    id: "3f6b1e2a-0000-4000-8000-000000000007",
+    title: "Pay Test Bank Card bill",
+    notes: "",
+    dueDate: "2026-01-10",
+    completedAt: null,
+    transactionId: null,
+    transaction: null,
+    source: "card-due",
+    sourceKey: "3f6b1e2a-0000-4000-8000-000000000008:2026-01-10",
+    createdAt: "2026-01-05T10:00:00.000Z",
+    updatedAt: "2026-01-05T10:00:00.000Z",
+  });
+  assert.equal(parsed.source, "card-due");
+  assert.equal(parsed.sourceKey, "3f6b1e2a-0000-4000-8000-000000000008:2026-01-10");
+});
+
+test("UserTaskSchema rejects a source value outside the enum", () => {
+  assert.throws(() =>
+    UserTaskSchema.parse({
+      id: "3f6b1e2a-0000-4000-8000-000000000009",
+      title: "Follow up",
+      notes: "",
+      dueDate: null,
+      completedAt: null,
+      transactionId: null,
+      transaction: null,
+      source: "bogus",
+      sourceKey: null,
+      createdAt: "2026-01-05T10:00:00.000Z",
+      updatedAt: "2026-01-05T10:00:00.000Z",
+    }),
+  );
 });
 
 test("UserTaskSchema: a retained transactionId with a null transaction (soft-deleted link) parses fine", () => {
@@ -133,6 +171,8 @@ test("UserTaskSchema: a retained transactionId with a null transaction (soft-del
     completedAt: null,
     transactionId: "3f6b1e2a-0000-4000-8000-000000000006",
     transaction: null,
+    source: "user",
+    sourceKey: null,
     createdAt: "2026-01-05T10:00:00.000Z",
     updatedAt: "2026-01-05T10:00:00.000Z",
   });

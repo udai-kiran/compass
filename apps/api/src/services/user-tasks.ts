@@ -34,6 +34,8 @@ function toUserTask(row: TaskJoinRow): UserTask {
             amountPaise: row.txnAmountPaise!,
           }
         : null,
+    source: task.source as UserTask["source"],
+    sourceKey: task.sourceKey,
     createdAt: task.createdAt.toISOString(),
     updatedAt: task.updatedAt.toISOString(),
   };
@@ -111,9 +113,21 @@ export async function createUserTask(
   input: CreateUserTask,
 ): Promise<UserTask> {
   await assertOwnedActiveTransaction(db, userId, input.transactionId);
+  // Explicit column whitelist, not `{ ...input, userId }` — TypeScript is not a
+  // runtime boundary, and this is the one place that could otherwise let an
+  // internal caller, future route, or unsafe cast smuggle `source`/`sourceKey`
+  // (e.g. `source: 'card-due'`) past the Zod-stripped HTTP body. `source` and
+  // `sourceKey` are deliberately absent here, so every task created through
+  // this path gets the column defaults (`source: 'user'`, `sourceKey: null`).
   const rows = await db
     .insert(userTasks)
-    .values({ ...input, userId })
+    .values({
+      userId,
+      title: input.title,
+      notes: input.notes,
+      dueDate: input.dueDate,
+      transactionId: input.transactionId,
+    })
     .returning();
   // A second lookup (not the insert's own returning row) so the response's
   // transaction projection is hydrated identically to list/get — creation is

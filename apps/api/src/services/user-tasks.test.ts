@@ -2,6 +2,7 @@ import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
+import type { CreateUserTask } from "@compass/shared";
 import { createDb } from "../db/index.ts";
 import { createPool } from "../infra/db.ts";
 import { accounts, transactions, userTasks, users } from "../db/schema.ts";
@@ -424,4 +425,79 @@ test("AC10: list ordering is (completed_at is not null) asc, due_date asc nulls 
     list.map((t2) => t2.title),
     ["D", "E", "C", "B", "A", "F", "G"],
   );
+});
+
+// ---------- misc-05 AC8 (direct-service half), AC11, AC12: source/sourceKey ----------
+
+test("AC8 (direct-service half): a hostile direct call to createUserTask with forged source/sourceKey properties is ignored — the exported type excludes them, so this requires a deliberate cast", async (t) => {
+  const userId = await createUser();
+  t.after(() => cleanupUser(userId));
+
+  const hostileInput = {
+    title: "Forged",
+    notes: "",
+    dueDate: null,
+    transactionId: null,
+    source: "card-due",
+    sourceKey: "forged-key",
+  } as unknown as CreateUserTask;
+
+  const created = await createUserTask(db, userId, hostileInput);
+  assert.equal(created.source, "user");
+  assert.equal(created.sourceKey, null);
+});
+
+/** drizzle-orm wraps the underlying pg error as `DrizzleQueryError`, whose own
+ * `.message` is just the query text — the Postgres constraint name lives on
+ * `.cause.message`, which this checks instead of matching against the whole
+ * error's `.message` (which would never contain it). */
+const causeMatches = (pattern: RegExp) => (e: unknown) =>
+  e instanceof Error && pattern.test(String((e as { cause?: unknown }).cause ?? e));
+
+test("AC11: the check constraint rejects an invalid source value", async (t) => {
+  const userId = await createUser();
+  t.after(() => cleanupUser(userId));
+  await assert.rejects(
+    db.insert(userTasks).values({ userId, title: "Bad", source: "bogus" }),
+    causeMatches(/user_tasks_source_check/),
+  );
+});
+
+test("AC11: the partial unique index permits many null source_key rows per user but rejects a duplicate non-null (user_id, source_key)", async (t) => {
+  const userId = await createUser();
+  t.after(() => cleanupUser(userId));
+  await db.insert(userTasks).values({ userId, title: "A" });
+  await db.insert(userTasks).values({ userId, title: "B" });
+  const nullRows = await db.select().from(userTasks).where(eq(userTasks.userId, userId));
+  assert.equal(nullRows.filter((r) => r.sourceKey === null).length, 2);
+
+  const key = `acc-${randomUUID()}:2026-01-01`;
+  await db.insert(userTasks).values({ userId, title: "C", source: "card-due", sourceKey: key });
+
+  await assert.rejects(
+    db.insert(userTasks).values({ userId, title: "D", source: "card-due", sourceKey: key }),
+    causeMatches(/user_tasks_source_key_idx/),
+  );
+});
+
+// FIX 3 (misc-05 iteration 2, after review-4): this test inserts a row *after*
+// migration 0065 and observes the DEFAULT, which proves the DEFAULT mechanism,
+// not migration backfill. Review-4 asked for it to instead query genuinely
+// pre-existing rows (created before 0065 ran) and assert they migrated to
+// source='user'/sourceKey=null. Checked the dev DB directly against migration
+// 0065's actual apply time (`select * from drizzle.__drizzle_migrations` —
+// 0065's row has `created_at = 1785606367204` = 2026-08-01T17:46:07.204Z):
+// `select count(*) from user_tasks where created_at < '2026-08-01T17:46:07.204Z'`
+// returns 0. In fact `select count(*) from user_tasks` returns 0 — this dev DB
+// has no user_tasks rows at all, pre- or post-migration, so there is no
+// genuine pre-migration data available here to assert backfill against. Per
+// instruction, AC12 is left as-is (inspection-only, insert-then-observe-
+// DEFAULT) rather than fabricating a fixture that would just re-prove the
+// same DEFAULT under a "migration coverage" label.
+test("AC12: a row inserted without specifying source/sourceKey defaults to source='user', sourceKey=null — the same DEFAULT mechanism the migration's ADD COLUMN backfilled every pre-existing row with", async (t) => {
+  const userId = await createUser();
+  t.after(() => cleanupUser(userId));
+  const [row] = await db.insert(userTasks).values({ userId, title: "Legacy row" }).returning();
+  assert.equal(row!.source, "user");
+  assert.equal(row!.sourceKey, null);
 });

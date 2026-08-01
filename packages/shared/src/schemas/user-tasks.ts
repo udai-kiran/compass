@@ -17,6 +17,10 @@ export const UserTaskSchema = z.object({
   completedAt: z.iso.datetime().nullable(),
   transactionId: z.uuid().nullable(),
   transaction: UserTaskTransactionSchema.nullable(),
+  /** `'user'` for ordinary tasks, `'card-due'` for card-due-materialised ones. */
+  source: z.enum(["user", "card-due"]),
+  /** Opaque provenance key for a generated task; null for ordinary user tasks. */
+  sourceKey: z.string().nullable(),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
 });

@@ -203,6 +203,43 @@ test("comment stripping removes commented-out registrations but keeps real ones"
   assert.ok(!stripped.includes("trailing"), "a trailing comment must be removed");
 });
 
+// ---------- AC13: cards.remind's two job paths are independent in both directions ----------
+
+/**
+ * Extract the brace-matched body of a `case "<label>": { ... }` block from the
+ * (comment-stripped) source. Brace-depth-matched rather than a lazy regex, so
+ * a nested `{}` inside the case (an `if` block, an object literal) can't cut
+ * the match short.
+ */
+function extractCaseBody(caseLabel: string): string {
+  const marker = `case "${caseLabel}": {`;
+  const start = SOURCE_TEXT.indexOf(marker);
+  assert.ok(start !== -1, `case "${caseLabel}" not found`);
+  const bodyStart = start + marker.length - 1; // the opening brace itself
+  let depth = 0;
+  let i = bodyStart;
+  do {
+    if (SOURCE_TEXT[i] === "{") depth++;
+    else if (SOURCE_TEXT[i] === "}") depth--;
+    i++;
+  } while (depth > 0 && i < SOURCE_TEXT.length);
+  return SOURCE_TEXT.slice(bodyStart, i);
+}
+
+test("AC13: cards.remind wraps evaluateCardDueReminders and materializeCardDueTasks in separate try/catch blocks, so neither can suppress the other", () => {
+  const body = extractCaseBody("cards.remind");
+  const tryBlocks = body.match(/try\s*\{[\s\S]*?\}\s*catch[\s\S]*?\{[\s\S]*?\}/g) ?? [];
+  assert.equal(tryBlocks.length, 2, `expected exactly 2 try/catch blocks in cards.remind, found ${tryBlocks.length}: ${JSON.stringify(tryBlocks)}`);
+
+  const reminderBlock = tryBlocks.find((b) => b.includes("evaluateCardDueReminders"));
+  const materializeBlock = tryBlocks.find((b) => b.includes("materializeCardDueTasks"));
+  assert.ok(reminderBlock, "no try/catch block found calling evaluateCardDueReminders");
+  assert.ok(materializeBlock, "no try/catch block found calling materializeCardDueTasks");
+  assert.notEqual(reminderBlock, materializeBlock, "the two calls must be in separate try/catch blocks, not sharing one");
+  assert.ok(!reminderBlock!.includes("materializeCardDueTasks"), "materializeCardDueTasks must not be inside the reminders' try block");
+  assert.ok(!materializeBlock!.includes("evaluateCardDueReminders"), "evaluateCardDueReminders must not be inside the materializer's try block");
+});
+
 test("comment stripping does not corrupt string literals", () => {
   // A comment-only regex cannot tell a comment from its own syntax inside a
   // string. The naive version truncated `"https://x"` at the `//`, taking the rest

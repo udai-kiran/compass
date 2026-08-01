@@ -257,6 +257,33 @@ test("AC7 (route-level): a second user's GET /api/user-tasks/:id 404s on the fir
   );
 });
 
+// ---------- misc-05 AC8 (route half): source/sourceKey cannot be forged via the HTTP body ----------
+
+test("AC8 (route half): POST /api/user-tasks with source/sourceKey in the body is ignored — the created row is source='user', sourceKey=null", async (t) => {
+  const userId = await createUser();
+  const sessionId = await createSession(app.redis, userId);
+  t.after(async () => {
+    await destroySession(app.redis, sessionId);
+    await cleanupUser(userId);
+  });
+
+  const res = await app.inject({
+    method: "POST",
+    url: "/api/user-tasks",
+    cookies: sessionCookie(sessionId),
+    payload: { title: "Forged via HTTP", source: "card-due", sourceKey: "forged-key" },
+  });
+  assert.equal(res.statusCode, 201);
+  const body = res.json() as { source: string; sourceKey: string | null };
+  assert.equal(body.source, "user");
+  assert.equal(body.sourceKey, null);
+
+  const rows = await app.db.select().from(userTasks).where(eq(userTasks.userId, userId));
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]!.source, "user");
+  assert.equal(rows[0]!.sourceKey, null);
+});
+
 // ---------- AC12: demo-mode mutating requests are rejected, with no DB effect ----------
 
 test("AC12: a demo session's mutating request is rejected 403, and no database row is created or changed", async (t) => {

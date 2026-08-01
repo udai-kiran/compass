@@ -411,12 +411,33 @@ export const userTasks = pgTable(
     transactionId: uuid("transaction_id").references(() => transactions.id, {
       onDelete: "set null",
     }),
+    /**
+     * Who/what created the row. `'user'` for ordinary user-authored tasks;
+     * `'card-due'` for tasks materialised from a credit-card due date (see
+     * services/card-due-tasks.ts). The check constraint is a storage-level
+     * guarantee — a strict Zod enum on the response schema combined with
+     * unconstrained DB text would otherwise turn one bad row into a 500 during
+     * serialization, including via the backup-restore path, which bypasses
+     * services entirely.
+     */
+    source: text("source").notNull().default("user"),
+    /**
+     * Opaque provenance key for a generated task (e.g. `<accountId>:<dueDate>`
+     * for a card-due task), null for ordinary user tasks. The partial unique
+     * index prevents a generator from double-inserting for the same key while
+     * placing no constraint at all on ordinary tasks (many nulls allowed).
+     */
+    sourceKey: text("source_key"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     index("user_tasks_user_idx").on(t.userId),
     index("user_tasks_transaction_idx").on(t.transactionId),
+    check("user_tasks_source_check", sql`${t.source} in ('user', 'card-due')`),
+    uniqueIndex("user_tasks_source_key_idx")
+      .on(t.userId, t.sourceKey)
+      .where(sql`${t.sourceKey} is not null`),
   ],
 );
 
@@ -704,7 +725,14 @@ export const goals = pgTable(
   (t) => [index("goals_user_idx").on(t.userId)],
 );
 
-/** Generic once-only ledger for milestone/reminder/threshold notifications. */
+/**
+ * Generic once-only ledger for milestone/reminder/threshold notifications.
+ *
+ * Also gates card-due *task* creation (`kind: 'card-due-task'`,
+ * `services/card-due-tasks.ts`), not only notifications — a claimed row here
+ * stops a user-deleted generated task from being resurrected by a later pass,
+ * since the materialiser never re-checks `user_tasks` itself before inserting.
+ */
 export const alertLedger = pgTable(
   "alert_ledger",
   {

@@ -9,7 +9,7 @@ import {
 import { toast } from "../../lib/toast.tsx";
 import { useUserTaskMutations, useUserTasks } from "../../lib/user-task-queries.ts";
 import { DateField } from "../../components/DateField.tsx";
-import { isOverdue } from "./task-helpers.ts";
+import { doneWithoutLinkPatch, isOverdue, linkPanelPrimaryPatch } from "./task-helpers.ts";
 import { TransactionPicker } from "./TransactionPicker.tsx";
 
 export function TasksPage() {
@@ -37,6 +37,14 @@ export function TasksPage() {
   // exposes the MOST RECENT call's variables/isPending, so it cannot scope
   // "row A still busy" once row B's mutation starts. This Set does.
   const [pendingIds, setPendingIds] = useState<Set<string>>(new Set());
+  // The row whose inline link panel is open, or null. A single id (not a set)
+  // is what enforces "one panel at a time": opening another row's panel
+  // replaces this and closes the first. Ordinary local state — it is NOT
+  // part of pendingIds, which tracks in-flight requests only.
+  const [linkPanelTaskId, setLinkPanelTaskId] = useState<string | null>(null);
+  // The transaction picked inside the open panel (prefilled from the task's
+  // existing link). Reset by openLinkPanel each time the panel (re)opens.
+  const [panelTxn, setPanelTxn] = useState<UserTaskTransaction | null>(null);
   // mutateAsync (not .mutate + per-call onSettled) because one shared
   // useMutation observer DISPLACES a previous call's per-call callbacks when
   // a second .mutate() fires before the first settles — A's onSettled would
@@ -119,11 +127,67 @@ export function TasksPage() {
   }
 
   function toggleComplete(task: UserTask) {
+    if (task.completedAt === null) {
+      // Ticking an incomplete task issues NO request — it opens the row's
+      // link panel, and a panel button decides the PATCH. The checkbox is
+      // controlled by `completed`, so it stays visually unticked meanwhile.
+      openLinkPanel(task);
+      return;
+    }
+    // Un-ticking is immediate and panel-less. `completed: false` alone —
+    // transactionId is deliberately omitted so the historical link survives.
     void withPending(task.id, async () => {
       try {
-        await update.mutateAsync({ id: task.id, completed: !task.completedAt });
+        await update.mutateAsync({ id: task.id, completed: false });
         if (editingIdRef.current === task.id) resetForm();
-        toast(task.completedAt ? "Task reopened" : "Task completed", "success");
+        toast("Task reopened", "success");
+      } catch {
+        toast("Couldn't update the task — try again.", "error");
+      }
+    });
+  }
+
+  function openLinkPanel(task: UserTask) {
+    setLinkPanelTaskId(task.id);
+    setPanelTxn(task.transaction);
+  }
+
+  // Functional close: a late-settling PATCH for row A must not close a panel
+  // the user has since opened on row B.
+  function closeLinkPanel(taskId: string) {
+    setLinkPanelTaskId((prev) => (prev === taskId ? null : prev));
+  }
+
+  // Primary panel action: "Mark done" when completing, "Save link" when the
+  // task is already completed (transactionId only, never `completed`).
+  function submitLinkPanel(task: UserTask) {
+    const patch = linkPanelPrimaryPatch(
+      task.completedAt === null ? "complete" : "link-only",
+      panelTxn?.id ?? null,
+    );
+    if (patch === null) return; // button is disabled in this state
+    const taskId = task.id;
+    const completing = task.completedAt === null;
+    void withPending(taskId, async () => {
+      try {
+        await update.mutateAsync({ id: taskId, ...patch });
+        closeLinkPanel(taskId);
+        if (editingIdRef.current === taskId) resetForm();
+        toast(completing ? "Task completed" : "Transaction linked", "success");
+      } catch {
+        toast("Couldn't update the task — try again.", "error");
+      }
+    });
+  }
+
+  function doneWithoutLink(task: UserTask) {
+    const taskId = task.id;
+    void withPending(taskId, async () => {
+      try {
+        await update.mutateAsync({ id: taskId, ...doneWithoutLinkPatch() });
+        closeLinkPanel(taskId);
+        if (editingIdRef.current === taskId) resetForm();
+        toast("Task completed", "success");
       } catch {
         toast("Couldn't update the task — try again.", "error");
       }
@@ -251,10 +315,20 @@ export function TasksPage() {
                     {task.transaction !== null && (
                       <span className="text-slate-500">
                         {task.transaction.merchant} · {formatINR(task.transaction.amountPaise)}
+                        {completed && <> · {formatDisplayDate(task.transaction.date)}</>}
                       </span>
                     )}
                     {task.transactionId !== null && task.transaction === null && (
                       <span className="italic text-amber-700">Transaction unavailable</span>
+                    )}
+                    {completed && task.transactionId === null && (
+                      <button
+                        className="text-slate-500 underline disabled:opacity-50"
+                        disabled={busy}
+                        onClick={() => openLinkPanel(task)}
+                      >
+                        Link transaction
+                      </button>
                     )}
                   </div>
                 </div>
@@ -287,6 +361,46 @@ export function TasksPage() {
                   </button>
                 </div>
               </div>
+              {linkPanelTaskId === task.id && (
+                <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <h4 className="text-sm font-medium text-slate-700">
+                    Link a related transaction?
+                  </h4>
+                  <div className="mt-2">
+                    <TransactionPicker
+                      selected={panelTxn}
+                      disabled={busy}
+                      onSelect={setPanelTxn}
+                      onClear={() => setPanelTxn(null)}
+                    />
+                  </div>
+                  <div className="mt-3 flex items-center gap-2 text-xs">
+                    <button
+                      className="rounded-md bg-brand-600 px-3 py-1.5 font-medium text-white disabled:opacity-50"
+                      disabled={busy || (completed && panelTxn === null)}
+                      onClick={() => submitLinkPanel(task)}
+                    >
+                      {completed ? "Save link" : "Mark done"}
+                    </button>
+                    {!completed && (
+                      <button
+                        className="rounded-md border border-slate-300 px-3 py-1.5 font-medium text-slate-600 disabled:opacity-50"
+                        disabled={busy}
+                        onClick={() => doneWithoutLink(task)}
+                      >
+                        Done without a link
+                      </button>
+                    )}
+                    <button
+                      className="px-2 py-1.5 text-slate-500 underline disabled:opacity-50"
+                      disabled={busy}
+                      onClick={() => closeLinkPanel(task.id)}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
             </article>
           );
         })}

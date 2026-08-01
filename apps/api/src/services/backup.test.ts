@@ -5,6 +5,7 @@ import { createWriteStream } from "node:fs";
 import { unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { eq, getTableColumns, getTableName, is, Table } from "drizzle-orm";
 import * as schema from "../db/schema.ts";
@@ -22,6 +23,7 @@ import type pg from "pg";
 import { DEFERRED_RESTORE_COLUMNS, firstPassRow, restoreDump } from "../db/restore.ts";
 import { restorableTables, restoreUserBackup } from "./restore-user.ts";
 import { decryptBackupV2File } from "../lib/crypto-backup.ts";
+import { writeArchive, type ArchiveHeader } from "../lib/backup-archive.ts";
 import type { Storage } from "../lib/storage.ts";
 import { createDb } from "../db/index.ts";
 import { createPool } from "../infra/db.ts";
@@ -184,6 +186,45 @@ test("restoreDump's second pass issues an update for every column in DEFERRED_RE
   assert.deepEqual(sipUpdate?.params, ["sip1", "txn1"]);
 });
 
+test("misc-05 AC14: restoreDump's first pass carries user_tasks.source/source_key through untouched when present, and omits them (falling back to the column DEFAULT) when the dump predates the migration", async () => {
+  const calls: { sql: string; params: unknown[] }[] = [];
+  const client = {
+    query: async (sql: string, params: unknown[] = []) => {
+      calls.push({ sql, params });
+      if (sql.includes("count(*)::bigint as count from users")) return { rows: [{ count: "0" }] };
+      return { rows: [] };
+    },
+    release: () => {},
+  };
+  const pool = { connect: async () => client } as unknown as pg.Pool;
+
+  const dump: Record<string, Array<Record<string, unknown>>> = Object.fromEntries(ALL_TABLES.map((t) => [t, []]));
+  dump.user_tasks = [
+    { id: "t1", user_id: "u1", title: "New-format row", source: "card-due", source_key: "acc1:2026-01-01" },
+    { id: "t2", user_id: "u1", title: "Old-format row" }, // no source/source_key at all — a pre-migration archive
+  ];
+
+  await restoreDump(pool, dump);
+
+  const insertCalls = calls.filter((c) => c.sql.startsWith('insert into "user_tasks"'));
+  assert.equal(insertCalls.length, 2);
+
+  const newRowInsert = insertCalls.find((c) => c.params.includes("t1"));
+  assert.ok(newRowInsert, "expected an insert for the new-format row");
+  assert.ok(newRowInsert!.sql.includes('"source"'), "source must round-trip through the insert column list");
+  assert.ok(newRowInsert!.sql.includes('"source_key"'), "source_key must round-trip through the insert column list");
+  assert.ok(newRowInsert!.params.includes("card-due"));
+  assert.ok(newRowInsert!.params.includes("acc1:2026-01-01"));
+
+  const oldRowInsert = insertCalls.find((c) => c.params.includes("t2"));
+  assert.ok(oldRowInsert, "expected an insert for the old-format row");
+  assert.ok(
+    !oldRowInsert!.sql.includes('"source"'),
+    "an old-format row must not force a source column into the insert — the column DEFAULT must apply instead",
+  );
+  assert.ok(!oldRowInsert!.sql.includes('"source_key"'));
+});
+
 // ---------- AC11: user_tasks round-trips through the per-user encrypted archive ----------
 //
 // These need a real Postgres connection (DATABASE_URL) — this repo has no
@@ -339,4 +380,90 @@ test("AC11: a task linked to an owned transaction, and an unlinked task, round-t
   });
   assert.ok(restoredTxn, "the linked transaction itself also survived the round trip");
   assert.equal(restoredTxn!.userId, destUserId);
+});
+
+// ---------- misc-05 AC14: source/sourceKey through both restore paths ----------
+
+test("misc-05 AC14: the per-user archive round-trips a card-due task's source/sourceKey through restoreUserBackup, alongside an ordinary task", async (t) => {
+  const passphrase = "correct horse battery staple";
+  const sourceUserId = await createUser();
+  const destUserId = await createUser();
+  t.after(async () => {
+    await cleanupUser(sourceUserId);
+    await cleanupUser(destUserId);
+  });
+
+  const sourceKey = `${randomUUID()}:2026-01-10`;
+  await db.insert(userTasks).values({
+    userId: sourceUserId,
+    title: "Pay Test Card bill",
+    source: "card-due",
+    sourceKey,
+  });
+  await db.insert(userTasks).values({ userId: sourceUserId, title: "Plain task" });
+
+  const encryptedPath = join(tmpdir(), `user-tasks-ac14-${randomUUID()}.cmpb`);
+  const plaintextPath = `${encryptedPath}.plain`;
+  t.after(async () => {
+    await unlink(encryptedPath).catch(() => {});
+    await unlink(plaintextPath).catch(() => {});
+  });
+
+  const stream = await buildUserBackupStream(db, stubStorage, sourceUserId, passphrase);
+  await pipeline(stream, createWriteStream(encryptedPath));
+  await decryptBackupV2File(encryptedPath, plaintextPath, passphrase);
+
+  await cleanupUser(sourceUserId);
+
+  await restoreUserBackup(pool, stubStorage, destUserId, plaintextPath);
+
+  const restoredTasks = await db.select().from(userTasks).where(eq(userTasks.userId, destUserId));
+  const cardDue = restoredTasks.find((r) => r.title === "Pay Test Card bill");
+  const plain = restoredTasks.find((r) => r.title === "Plain task");
+  assert.ok(cardDue, "the card-due task survived the round trip");
+  assert.equal(cardDue!.source, "card-due");
+  assert.equal(cardDue!.sourceKey, sourceKey);
+  assert.ok(plain, "the ordinary task survived the round trip");
+  assert.equal(plain!.source, "user");
+  assert.equal(plain!.sourceKey, null);
+});
+
+test("misc-05 AC14: a per-user archive predating source/sourceKey (missing both keys entirely) restores via restoreUserBackup by falling back to the column DEFAULTs", async (t) => {
+  const destUserId = await createUser();
+  t.after(() => cleanupUser(destUserId));
+
+  const header: ArchiveHeader = {
+    version: 2,
+    exportedAt: new Date().toISOString(),
+    userId: "irrelevant-pre-migration-export",
+    tables: Object.fromEntries(restorableTables().map((t) => [t, []])) as ArchiveHeader["tables"],
+    files: [],
+  };
+  // A pre-migration `select *` dump of user_tasks would simply not have had
+  // these two columns at all — not `null`, absent.
+  header.tables.user_tasks = [
+    {
+      id: randomUUID(),
+      user_id: "irrelevant-pre-migration-export",
+      title: "Pre-migration task",
+      notes: "",
+      due_date: null,
+      completed_at: null,
+      transaction_id: null,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    },
+  ];
+
+  const plaintextPath = join(tmpdir(), `user-tasks-ac14-legacy-${randomUUID()}.archive`);
+  t.after(() => unlink(plaintextPath).catch(() => {}));
+  await pipeline(Readable.from(writeArchive(header, async () => null)), createWriteStream(plaintextPath));
+
+  await restoreUserBackup(pool, stubStorage, destUserId, plaintextPath);
+
+  const restored = await db.query.userTasks.findFirst({ where: eq(userTasks.userId, destUserId) });
+  assert.ok(restored, "the pre-migration row still restores");
+  assert.equal(restored!.title, "Pre-migration task");
+  assert.equal(restored!.source, "user", "falls back to the column DEFAULT when the archive predates this column");
+  assert.equal(restored!.sourceKey, null, "falls back to the column DEFAULT (NULL) when the archive predates this column");
 });

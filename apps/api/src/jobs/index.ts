@@ -4,6 +4,7 @@ import { INGESTOR_QUEUE } from "@compass/shared";
 import { evaluateBudgetAlerts } from "../services/notifications.ts";
 import { evaluateBillReminders } from "../services/bills.ts";
 import { evaluateCardDueReminders, evaluateCardUtilization } from "../services/cards.ts";
+import { materializeCardDueTasks } from "../services/card-due-tasks.ts";
 import { evaluateAnomalies } from "../services/anomaly.ts";
 import { runAutopilotReview, runGoalReview } from "../services/autopilot.ts";
 import {
@@ -258,8 +259,22 @@ export async function startJobs(app: FastifyInstance): Promise<void> {
           return;
         }
         case "cards.remind": {
-          const sent = await evaluateCardDueReminders(app.db);
-          if (sent > 0) app.log.info({ sent }, "card due reminders sent");
+          // Notification evaluation and task materialisation get their own
+          // try/catch, in both directions: a materialisation failure must not
+          // suppress the existing due-date notification, and a notification
+          // failure must not prevent materialisation from being attempted.
+          try {
+            const sent = await evaluateCardDueReminders(app.db);
+            if (sent > 0) app.log.info({ sent }, "card due reminders sent");
+          } catch (err) {
+            app.log.error({ err }, "card due reminders failed");
+          }
+          try {
+            const materialized = await materializeCardDueTasks(app.db);
+            if (materialized > 0) app.log.info({ materialized }, "card due tasks materialized");
+          } catch (err) {
+            app.log.error({ err }, "card due task materialization failed");
+          }
           return;
         }
         case "networth.snapshot": {
@@ -367,6 +382,20 @@ export async function startJobs(app: FastifyInstance): Promise<void> {
   await evaluateBillReminders(app.db).catch((err: unknown) => {
     app.log.error({ err }, "boot bill reminders failed");
   });
+  // catch up on card-due task materialization too — NOT a historical-due
+  // recovery (a card whose whole remind window elapsed while the server was
+  // down stays unmaterialized for that cycle either way, see
+  // card-due-tasks.ts), but it does let an instance that reboots while the
+  // window is still open materialize on this pass instead of waiting for the
+  // next 00:25 tick. Separately caught so it can't suppress, or be suppressed
+  // by, any other boot pass.
+  await materializeCardDueTasks(app.db)
+    .then((materialized) => {
+      if (materialized > 0) app.log.info({ materialized }, "boot: materialized card due tasks");
+    })
+    .catch((err: unknown) => {
+      app.log.error({ err }, "boot card due task materialization failed");
+    });
   // ensure today's net-worth snapshot exists
   // Boot must never be blocked by this, so an all-failed pass is logged, not thrown.
   await snapshotAllUsers(app.db)
