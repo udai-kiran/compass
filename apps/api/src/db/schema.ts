@@ -399,6 +399,27 @@ export const transactions = pgTable(
   ],
 );
 
+export const userTasks = pgTable(
+  "user_tasks",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id").notNull().references(() => users.id),
+    title: text("title").notNull(),
+    notes: text("notes").notNull().default(""),
+    dueDate: date("due_date"),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    transactionId: uuid("transaction_id").references(() => transactions.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("user_tasks_user_idx").on(t.userId),
+    index("user_tasks_transaction_idx").on(t.transactionId),
+  ],
+);
+
 export const transactionSplits = pgTable(
   "transaction_splits",
   {

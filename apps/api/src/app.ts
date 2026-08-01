@@ -53,6 +53,7 @@ import { profileRoutes } from "./routes/profile.ts";
 import { inboxRoutes } from "./routes/inbox.ts";
 import { mailboxRoutes } from "./routes/mailboxes.ts";
 import { resourceRoutes } from "./routes/resources.ts";
+import { userTaskRoutes } from "./routes/user-tasks.ts";
 import { invalidateUserCache } from "./services/cache.ts";
 import { enqueueBudgetEvaluation } from "./jobs/index.ts";
 import { createStorage, type Storage } from "./lib/storage.ts";
@@ -179,6 +180,7 @@ export async function buildApp(config: Config): Promise<FastifyInstance> {
   await app.register(inboxRoutes);
   await app.register(mailboxRoutes);
   await app.register(resourceRoutes);
+  await app.register(userTaskRoutes);
 
   // write-through invalidation: any successful ledger write refreshes cached
   // aggregates and queues a (debounced) budget evaluation

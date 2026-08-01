@@ -1,9 +1,17 @@
-import { test } from "node:test";
+import { test, after } from "node:test";
 import assert from "node:assert/strict";
-import { getTableColumns, getTableName, is, Table } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
+import { createWriteStream } from "node:fs";
+import { unlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { pipeline } from "node:stream/promises";
+import { eq, getTableColumns, getTableName, is, Table } from "drizzle-orm";
 import * as schema from "../db/schema.ts";
+import { accounts, transactions, userTasks, users } from "../db/schema.ts";
 import {
   ALL_TABLES,
+  buildUserBackupStream,
   collectFileRefs,
   exportGaps,
   FILE_COLUMNS,
@@ -12,7 +20,11 @@ import {
 } from "./backup.ts";
 import type pg from "pg";
 import { DEFERRED_RESTORE_COLUMNS, firstPassRow, restoreDump } from "../db/restore.ts";
-import { restorableTables } from "./restore-user.ts";
+import { restorableTables, restoreUserBackup } from "./restore-user.ts";
+import { decryptBackupV2File } from "../lib/crypto-backup.ts";
+import type { Storage } from "../lib/storage.ts";
+import { createDb } from "../db/index.ts";
+import { createPool } from "../infra/db.ts";
 
 /** Every pgTable defined in the schema, by its SQL name. */
 function schemaTableNames(): string[] {
@@ -97,6 +109,7 @@ test("the per-user restore covers exactly the exported tables, in parent-first o
   // Spot-check FK ordering the insert pass depends on.
   const at = (t: string) => tables.indexOf(t);
   assert.ok(at("accounts") < at("transactions"));
+  assert.ok(at("transactions") < at("user_tasks"));
   assert.ok(at("transactions") < at("attachments"));
   assert.ok(at("accounts") < at("card_statements"));
   assert.ok(at("insurance_policies") < at("insurance_health_cards"));
@@ -169,4 +182,161 @@ test("restoreDump's second pass issues an update for every column in DEFERRED_RE
   // sip_id specifically — this is the column the hard-coded blocks used to miss.
   const sipUpdate = updateCalls.find((c) => c.sql === 'update "transactions" set "sip_id" = $1 where id = $2');
   assert.deepEqual(sipUpdate?.params, ["sip1", "txn1"]);
+});
+
+// ---------- AC11: user_tasks round-trips through the per-user encrypted archive ----------
+//
+// These need a real Postgres connection (DATABASE_URL) — this repo has no
+// DB-mocking infrastructure (see emis.test.ts's identical DB-backed section).
+// Export it before running `npm run test -w apps/api`.
+//
+// Only the per-user path (buildUserBackupStream -> decryptBackupV2File ->
+// restoreUserBackup) is exercised here, against a pair of disposable
+// throwaway users, cleaned up via t.after(). The *full*-database path
+// (dumpDatabase -> restoreDump) is deliberately NOT exercised against this
+// shared dev database: restoreDump() hard-requires the target's `users`
+// table to be empty (db/restore.ts:62-65) before it will insert anything, so
+// running it here would either fail immediately (this DB already has real
+// rows) or, if the DB were wiped first, destroy existing dev data — neither
+// of which this test does. The mocked-pool test above (`restoreDump's second
+// pass issues an update for every column in DEFERRED_RESTORE_COLUMNS`)
+// initializes every `ALL_TABLES` entry, including `user_tasks`, to an empty
+// array and only populates rows for `accounts`, `categories`, and
+// `transactions` — so for `user_tasks` specifically it only exercises
+// `restoreDump`'s table iteration/ordering (that looping over `user_tasks`
+// doesn't crash and its position in `ALL_TABLES` is respected), not its
+// generic insert mechanics; no `user_tasks` row is ever actually inserted by
+// that test. The deferred-column update mechanics it does verify apply only
+// to the populated tables above, none of which is `user_tasks` (it has no
+// `DEFERRED_RESTORE_COLUMNS` entry).
+
+function requireDatabaseUrl(): string {
+  const url = process.env.DATABASE_URL;
+  if (!url) {
+    throw new Error(
+      "backup.test.ts's DB-backed tests need DATABASE_URL set (a real Postgres connection) — " +
+        "this repo has no DB-mocking infrastructure. Export it (see apps/api/.env) before " +
+        "running `npm run test -w apps/api`.",
+    );
+  }
+  return url;
+}
+
+const pool = createPool(requireDatabaseUrl());
+const db = createDb(pool);
+after(async () => {
+  await pool.end();
+});
+
+/** Storage is never actually touched by this fixture (no attachments/policy
+ * documents/card statements for these throwaway users), so a stub satisfying
+ * the interface is enough — no disk or S3 needed. */
+const stubStorage: Storage = {
+  put: async () => {
+    throw new Error("not used by this fixture");
+  },
+  get: async () => {
+    throw new Error("not used by this fixture");
+  },
+  delete: async () => {},
+  list: async () => [],
+  ensureReady: async () => {},
+};
+
+async function createUser(): Promise<string> {
+  const [u] = await db
+    .insert(users)
+    .values({
+      email: `backup-test-${randomUUID()}@example.invalid`,
+      passwordHash: "x",
+      displayName: "backup.test.ts user",
+    })
+    .returning({ id: users.id });
+  return u!.id;
+}
+
+async function cleanupUser(userId: string): Promise<void> {
+  await db.delete(userTasks).where(eq(userTasks.userId, userId));
+  await db.delete(transactions).where(eq(transactions.userId, userId));
+  await db.delete(accounts).where(eq(accounts.userId, userId));
+  await db.delete(users).where(eq(users.id, userId));
+}
+
+test("AC11: a task linked to an owned transaction, and an unlinked task, round-trip through per-user backup/restore", async (t) => {
+  const passphrase = "correct horse battery staple";
+  const sourceUserId = await createUser();
+  const destUserId = await createUser();
+  t.after(async () => {
+    await cleanupUser(sourceUserId);
+    await cleanupUser(destUserId);
+  });
+
+  const [account] = await db
+    .insert(accounts)
+    .values({ userId: sourceUserId, name: "Test bank", type: "bank" })
+    .returning({ id: accounts.id });
+  const [txn] = await db
+    .insert(transactions)
+    .values({
+      userId: sourceUserId,
+      accountId: account!.id,
+      date: "2026-01-05",
+      amountPaise: -50000,
+      merchant: "Coffee shop",
+    })
+    .returning({ id: transactions.id });
+
+  await db.insert(userTasks).values({
+    userId: sourceUserId,
+    title: "Follow up on coffee receipt",
+    transactionId: txn!.id,
+  });
+  await db.insert(userTasks).values({
+    userId: sourceUserId,
+    title: "Buy groceries",
+  });
+
+  const encryptedPath = join(tmpdir(), `user-tasks-ac11-${randomUUID()}.cmpb`);
+  const plaintextPath = `${encryptedPath}.plain`;
+  t.after(async () => {
+    await unlink(encryptedPath).catch(() => {});
+    await unlink(plaintextPath).catch(() => {});
+  });
+
+  const stream = await buildUserBackupStream(db, stubStorage, sourceUserId, passphrase);
+  await pipeline(stream, createWriteStream(encryptedPath));
+  await decryptBackupV2File(encryptedPath, plaintextPath, passphrase);
+
+  // Row ids are preserved verbatim by the restore (only user_id is
+  // rewritten — see restore-user.ts's insertRow), and those ids are globally
+  // unique (accounts_pkey, transactions_pkey, ...), not per-user. This
+  // mirrors the real disaster-recovery flow the archive is built for
+  // (restoring into a fresh account after the original is gone), not a
+  // "clone into a second, still-live user" flow — so the source user's rows
+  // are removed before the restore, freeing their ids.
+  await cleanupUser(sourceUserId);
+
+  await restoreUserBackup(pool, stubStorage, destUserId, plaintextPath);
+
+  const restoredTasks = await db
+    .select()
+    .from(userTasks)
+    .where(eq(userTasks.userId, destUserId))
+    .orderBy(userTasks.title);
+  assert.equal(restoredTasks.length, 2);
+
+  const restoredLinked = restoredTasks.find((r) => r.title === "Follow up on coffee receipt");
+  const restoredUnlinked = restoredTasks.find((r) => r.title === "Buy groceries");
+  assert.ok(restoredLinked, "linked task survived the round trip");
+  assert.ok(restoredUnlinked, "unlinked task survived the round trip");
+  assert.equal(restoredUnlinked!.transactionId, null);
+  // ids are preserved by the restore's insert (only user_id is rewritten), so
+  // the link should point at the very same transaction id as before the trip.
+  assert.equal(restoredLinked!.transactionId, txn!.id);
+
+  const restoredTxn = await db.query.transactions.findFirst({
+    where: eq(transactions.id, txn!.id),
+  });
+  assert.ok(restoredTxn, "the linked transaction itself also survived the round trip");
+  assert.equal(restoredTxn!.userId, destUserId);
 });
