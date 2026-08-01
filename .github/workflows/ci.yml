@@ -22,6 +22,15 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      redis:
+        image: redis:7
+        ports:
+          - 6379/tcp
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v5
       # No `cache: npm` — these runners are persistent, so ~/.npm survives
@@ -39,6 +48,8 @@ jobs:
       - run: npm test
         env:
           DATABASE_URL: postgres://compass:compass-ci@localhost:${{ job.services.postgres.ports['5432'] }}/compass_ci
+          REDIS_URL: redis://localhost:${{ job.services.redis.ports['6379'] }}
+          SESSION_SECRET: ci-only-session-secret-not-a-real-value-0123456789
       - run: npm run build -w apps/web
       - run: npm run build -w apps/docs
 

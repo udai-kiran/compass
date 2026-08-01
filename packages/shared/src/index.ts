@@ -18,3 +18,4 @@ export * from "./schemas/ai.ts";
 export * from "./schemas/ai-events.ts";
 export * from "./schemas/email.ts";
 export * from "./schemas/family.ts";
+export * from "./schemas/user-tasks.ts";
