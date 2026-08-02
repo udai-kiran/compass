@@ -619,3 +619,20 @@ export const AttachmentSchema = z.object({
   sizeBytes: z.number().int(),
 });
 export type Attachment = z.infer<typeof AttachmentSchema>;
+
+// ---------- Transaction Links ----------
+
+export const TransactionLinkSchema = z.object({
+  id: z.uuid(),
+  transactionId: z.uuid(),
+  url: z.string(),
+  title: z.string(),
+  createdAt: z.iso.datetime(),
+});
+export type TransactionLink = z.infer<typeof TransactionLinkSchema>;
+
+export const CreateTransactionLinkSchema = z.object({
+  url: z.string().url().max(2048).refine((u) => /^https?:\/\//i.test(u), "Only HTTP and HTTPS URLs are allowed"),
+  title: z.string().max(200).default(""),
+});
+export type CreateTransactionLinkInput = z.input<typeof CreateTransactionLinkSchema>;

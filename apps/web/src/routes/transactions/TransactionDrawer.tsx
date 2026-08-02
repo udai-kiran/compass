@@ -15,6 +15,8 @@ import {
   useAttachmentMutations,
   useAttachments,
   useCategories,
+  useTransactionLinkMutations,
+  useTransactionLinks,
   useTransactionMutations,
   useTransferMutations,
   useTransferSuggestions,
@@ -42,6 +44,8 @@ export function TransactionDrawer({
   const { data: suggestions } = useTransferSuggestions();
   const { data: attachments } = useAttachments(id);
   const attMut = useAttachmentMutations(id);
+  const { data: links } = useTransactionLinks(id);
+  const linkMut = useTransactionLinkMutations(id);
   const { data: resources } = useResources();
   const { data: recurring } = useRecurring();
 
@@ -49,6 +53,8 @@ export function TransactionDrawer({
   const [notes, setNotes] = useState("");
   const [resourceId, setResourceId] = useState<string | null>(null);
   const [recurringTemplateId, setRecurringTemplateId] = useState<string | null>(null);
+  const [linkUrl, setLinkUrl] = useState("");
+  const [linkTitle, setLinkTitle] = useState("");
 
   useEffect(() => {
     if (tx) {
@@ -323,6 +329,84 @@ export function TransactionDrawer({
               e.target.value = "";
             }}
           />
+        </section>
+
+        {/* Links */}
+        <section className="mt-5">
+          <h3 className="text-sm font-semibold text-slate-700">Links</h3>
+          <div className="mt-2 space-y-1">
+            {links?.map((link) => {
+              const hostname = (() => {
+                try {
+                  return new URL(link.url).hostname;
+                } catch {
+                  return link.url;
+                }
+              })();
+              const displayText = link.title || hostname;
+              return (
+                <div key={link.id} className="flex items-center gap-2 rounded border border-slate-200 bg-slate-50 px-2 py-1.5">
+                  <a
+                    href={link.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex-1 truncate text-sm text-sky-600 hover:underline"
+                    title={link.url}
+                  >
+                    {displayText}
+                  </a>
+                  <button
+                    className="text-slate-400 hover:text-red-600"
+                    onClick={() => linkMut.remove.mutate(link.id, {
+                      onError: (error) => {
+                        toast(error instanceof Error ? error.message : "Failed to remove link", "error");
+                      },
+                    })}
+                  >
+                    ✕
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+          <div className="mt-2 space-y-2">
+            <input
+              type="url"
+              placeholder="https://..."
+              value={linkUrl}
+              onChange={(e) => setLinkUrl(e.target.value)}
+              className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+              required
+            />
+            <input
+              type="text"
+              placeholder="Label (optional)"
+              value={linkTitle}
+              onChange={(e) => setLinkTitle(e.target.value)}
+              className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+            />
+            <button
+              disabled={linkMut.add.isPending || !linkUrl}
+              onClick={() => {
+                linkMut.add.mutate(
+                  { url: linkUrl, title: linkTitle || undefined },
+                  {
+                    onSuccess: () => {
+                      setLinkUrl("");
+                      setLinkTitle("");
+                      toast("Link added", "success");
+                    },
+                    onError: (error) => {
+                      toast(error instanceof Error ? error.message : "Failed to add link", "error");
+                    },
+                  },
+                );
+              }}
+              className="rounded-md bg-brand-600 px-3 py-1.5 text-sm text-white disabled:opacity-40"
+            >
+              Add link
+            </button>
+          </div>
         </section>
 
         <button

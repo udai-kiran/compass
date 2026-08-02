@@ -14,6 +14,7 @@ import {
   BulkResultSchema,
   CategorySchema,
   EpfContributionResultSchema,
+  TransactionLinkSchema,
   TransactionPageSchema,
   TransactionSchema,
   TransferResultSchema,
@@ -290,4 +291,30 @@ export function useAttachmentMutations(transactionId: string) {
     onSuccess: invalidate,
   });
   return { upload, remove };
+}
+
+// ---------- transaction links ----------
+
+export function useTransactionLinks(transactionId: string | null) {
+  return useQuery({
+    queryKey: ["transaction-links", transactionId],
+    queryFn: () =>
+      apiGet(`/api/transactions/${transactionId}/links`, z.array(TransactionLinkSchema)),
+    enabled: transactionId !== null,
+  });
+}
+
+export function useTransactionLinkMutations(transactionId: string) {
+  const qc = useQueryClient();
+  const invalidate = () => qc.invalidateQueries({ queryKey: ["transaction-links", transactionId] });
+  const add = useMutation({
+    mutationFn: (input: { url: string; title?: string }) =>
+      apiPost(`/api/transactions/${transactionId}/links`, TransactionLinkSchema, input),
+    onSuccess: invalidate,
+  });
+  const remove = useMutation({
+    mutationFn: (id: string) => apiDelete(`/api/transaction-links/${id}`, OkSchema),
+    onSuccess: invalidate,
+  });
+  return { add, remove };
 }

@@ -23,6 +23,7 @@ import { categoryRoutes } from "./routes/categories.ts";
 import { transactionRoutes } from "./routes/transactions.ts";
 import { transferRoutes } from "./routes/transfers.ts";
 import { attachmentRoutes } from "./routes/attachments.ts";
+import { transactionLinkRoutes } from "./routes/transaction-links.ts";
 import { importRoutes } from "./routes/imports.ts";
 import { ruleRoutes } from "./routes/rules.ts";
 import { budgetRoutes } from "./routes/budgets.ts";
@@ -150,6 +151,7 @@ export async function buildApp(config: Config): Promise<FastifyInstance> {
   await app.register(transactionRoutes);
   await app.register(transferRoutes);
   await app.register(attachmentRoutes);
+  await app.register(transactionLinkRoutes);
   await app.register(importRoutes);
   await app.register(ruleRoutes);
   await app.register(budgetRoutes);
