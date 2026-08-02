@@ -92,6 +92,19 @@ export interface ChatRequest {
   timeoutMs?: number;
   /** override the default retry count — fewer for a long, expensive call */
   retries?: number;
+  /** Force the model to answer via exactly this named tool (which must also
+   * appear in `tools`). Forces tool *selection*, not schema conformance —
+   * downstream Zod validation remains required. Absent = today's free "auto"
+   * choice, unchanged, used by the assistant's multi-turn loop. */
+  toolChoice?: string;
+}
+
+/** Throws if `toolChoice` names a tool not present in `tools` — a programmer-facing
+ * misconfiguration that must never reach the provider's HTTP endpoint. */
+export function assertToolChoiceValid(request: ChatRequest): void {
+  if (request.toolChoice && !request.tools.some((t) => t.name === request.toolChoice)) {
+    throw new Error(`toolChoice "${request.toolChoice}" is not present in tools`);
+  }
 }
 
 /** One assistant turn: free text plus any tool calls the model wants run. */

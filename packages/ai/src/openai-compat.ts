@@ -2,6 +2,7 @@ import { extractJson, postJson } from "./http.ts";
 import { categorizationPrompt, summaryPrompt, SUMMARY_SYSTEM } from "./prompts.ts";
 import {
   AiUnavailableError,
+  assertToolChoiceValid,
   CategorySuggestionsSchema,
   type AiObserver,
   type AiProvider,
@@ -103,6 +104,7 @@ export function createOpenAiCompatProvider(config: OpenAiCompatConfig): AiProvid
     },
 
     async chat(request: ChatRequest): Promise<ChatTurn> {
+      assertToolChoiceValid(request);
       const res = await call(
         {
           max_tokens: request.maxTokens ?? 1024,
@@ -113,6 +115,9 @@ export function createOpenAiCompatProvider(config: OpenAiCompatConfig): AiProvid
                 function: { name: t.name, description: t.description, parameters: t.inputSchema },
               }))
             : undefined,
+          ...(request.toolChoice
+            ? { tool_choice: { type: "function", function: { name: request.toolChoice } } }
+            : {}),
         },
         { timeoutMs: request.timeoutMs, retries: request.retries },
       );

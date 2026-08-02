@@ -2,6 +2,7 @@ import { extractJson, postJson } from "./http.ts";
 import { categorizationPrompt, summaryPrompt, SUMMARY_SYSTEM } from "./prompts.ts";
 import {
   AiUnavailableError,
+  assertToolChoiceValid,
   CategorySuggestionsSchema,
   type AiObserver,
   type AiProvider,
@@ -41,9 +42,14 @@ export function createAnthropicProvider(config: AnthropicConfig): AiProvider {
     "anthropic-version": API_VERSION,
   };
 
-  async function call(body: Record<string, unknown>): Promise<AnthropicResponse> {
+  async function call(
+    body: Record<string, unknown>,
+    opts: { timeoutMs?: number; retries?: number } = {},
+  ): Promise<AnthropicResponse> {
     return (await postJson(ENDPOINT, { model: config.model, ...body }, {
       headers,
+      timeoutMs: opts.timeoutMs,
+      retries: opts.retries,
       observe: config.observe,
     })) as AnthropicResponse;
   }
@@ -86,16 +92,23 @@ export function createAnthropicProvider(config: AnthropicConfig): AiProvider {
     },
 
     async chat(request: ChatRequest): Promise<ChatTurn> {
-      const res = await call({
-        max_tokens: request.maxTokens ?? 1024,
-        system: request.system,
-        tools: request.tools.map((t) => ({
-          name: t.name,
-          description: t.description,
-          input_schema: t.inputSchema,
-        })),
-        messages: toAnthropicMessages(request),
-      });
+      assertToolChoiceValid(request);
+      const res = await call(
+        {
+          max_tokens: request.maxTokens ?? 1024,
+          system: request.system,
+          tools: request.tools.map((t) => ({
+            name: t.name,
+            description: t.description,
+            input_schema: t.inputSchema,
+          })),
+          messages: toAnthropicMessages(request),
+          ...(request.toolChoice
+            ? { tool_choice: { type: "tool", name: request.toolChoice } }
+            : {}),
+        },
+        { timeoutMs: request.timeoutMs, retries: request.retries },
+      );
       const toolCalls: ToolCall[] = (res.content ?? [])
         .filter((b) => b.type === "tool_use" && b.id && b.name)
         .map((b) => ({ id: b.id!, name: b.name!, input: b.input }));
