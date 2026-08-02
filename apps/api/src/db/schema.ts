@@ -796,6 +796,22 @@ export const attachments = pgTable(
   (t) => [index("attachments_tx_idx").on(t.transactionId)],
 );
 
+export const transactionLinks = pgTable(
+  "transaction_links",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    transactionId: uuid("transaction_id")
+      .notNull()
+      .references(() => transactions.id, { onDelete: "cascade" }),
+    url: text("url").notNull(),
+    title: text("title").notNull().default(""),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [index("transaction_links_tx_idx").on(t.transactionId)],
+);
+
 // ---------- Phase 5: cards, EMIs, holdings, net worth ----------
 
 export const cardNetwork = pgEnum("card_network", [

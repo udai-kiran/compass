@@ -27,7 +27,7 @@ import type { Storage } from "../lib/storage.ts";
  */
 export const ALL_TABLES = [
   "users", "accounts", "categories", "resources", "transactions", "user_tasks", "transaction_splits", "transfer_links",
-  "attachments", "imports", "import_rows", "import_presets", "merchant_rules",
+  "attachments", "transaction_links", "imports", "import_rows", "import_presets", "merchant_rules",
   "budgets", "budget_lines", "budget_alerts", "notifications", "recurring_templates",
   "goals", "alert_ledger", "subscription_dismissals", "notification_prefs", "projection_settings",
   "user_profiles", "family_members",
@@ -66,6 +66,7 @@ export const USER_TABLES: Record<string, string> = {
 export const LINKED_TABLES: Record<string, { fk: string; parent: string }> = {
   transaction_splits: { fk: "transaction_id", parent: "transactions" },
   attachments: { fk: "transaction_id", parent: "transactions" },
+  transaction_links: { fk: "transaction_id", parent: "transactions" },
   import_rows: { fk: "import_id", parent: "imports" },
   budget_lines: { fk: "budget_id", parent: "budgets" },
   holding_valuations: { fk: "holding_id", parent: "holdings" },
