@@ -58,6 +58,7 @@ import { userTaskRoutes } from "./routes/user-tasks.ts";
 import { invalidateUserCache } from "./services/cache.ts";
 import { enqueueBudgetEvaluation } from "./jobs/index.ts";
 import { createStorage, type Storage } from "./lib/storage.ts";
+import { EventBus } from "./lib/event-bus.ts";
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -67,6 +68,7 @@ declare module "fastify" {
     redis: Redis;
     queues: Queues;
     storage: Storage;
+    eventBus: EventBus;
   }
 }
 
@@ -91,6 +93,12 @@ export async function buildApp(config: Config): Promise<FastifyInstance> {
   await app.storage.ensureReady();
   // AI is per-user now (Settings → AI), resolved per request from ai_settings —
   // there is no global provider. See services/ai-settings.ts.
+
+  const eventBus = new EventBus({
+    error: (msg, ctx) => app.log.error(ctx ?? {}, msg),
+  });
+  app.decorate("eventBus", eventBus);
+
   await startJobs(app);
   await setupAuth(app);
   await setupSecurity(app);
@@ -192,6 +200,11 @@ export async function buildApp(config: Config): Promise<FastifyInstance> {
       await invalidateUserCache(app.redis, req.session.userId);
       await enqueueBudgetEvaluation(app, req.session.userId);
     }
+  });
+
+  // Best-effort cleanup; in-flight microtask handlers may still reference closed resources.
+  app.addHook("onClose", () => {
+    app.eventBus.removeAll();
   });
 
   return app;
