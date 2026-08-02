@@ -14,3 +14,8 @@ data/
 # Logs & OS noise
 *.log
 .DS_Store
+
+tasks/
+.claude/
+
+.idea/
