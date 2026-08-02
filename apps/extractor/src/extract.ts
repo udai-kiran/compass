@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import { extractJson, type AiProvider } from "@compass/ai";
+import { extractJson, type AiProvider, type ToolSpec } from "@compass/ai";
 import {
   EmailClassSchema,
   redactPii,
@@ -43,6 +43,90 @@ const ModelResultSchema = z.object({
   classification: EmailClassSchema,
   transactions: z.array(ModelTxnSchema).default([]),
 });
+
+/**
+ * Validation schema for the statement-transactions path — transactions only, no
+ * `classification` (`extractStatementTxns` never reads one). Accepts a
+ * tool-input reply shaped `{"transactions":[...]}` AND the legacy/unchanged
+ * fallback-text shape `{"classification":"card_statement","transactions":[...]}`,
+ * since Zod objects silently ignore unrecognized keys by default.
+ */
+const StatementTxnResultSchema = z.object({
+  transactions: z.array(ModelTxnSchema).default([]),
+});
+
+// ---------------------------------------------------------------------------
+// Forced-tool-call structured output (additive to the prose-JSON shape above).
+// Hand-written JSON Schemas (no zod-to-json-schema dependency), matching the
+// convention in apps/api/src/services/ai/tools.ts. `additionalProperties` is
+// deliberately left UNSET (permissive) on every object schema below — matches
+// that existing convention, not an oversight.
+//
+// Nullable-field encoding, applied uniformly: a plain nullable scalar is
+// `{ type: [<base>, "null"] }`; a nullable enum includes `null` directly in its
+// `enum` array (a plain `type` union does not work for an `enum` field).
+// ---------------------------------------------------------------------------
+
+/**
+ * Per-transaction item shape shared by the email and statement transaction
+ * tools. `required: ["amount", "direction"]` mirrors Zod's true required
+ * fields — every other field has a Zod `.default()`/`.nullable().default()`
+ * and is correspondingly OPTIONAL here. `accountHint`'s description differs
+ * between the email and statement tools (the caller supplies it, or omits it
+ * entirely for the email tool, which has no fixed guidance for that field).
+ */
+function txnItemSchema(accountHintDescription?: string): Record<string, unknown> {
+  return {
+    type: "object",
+    properties: {
+      // "positive rupee value" is guidance only — no minimum/exclusiveMinimum;
+      // toInboxRow already takes Math.abs() of whatever the model returns.
+      amount: { type: "number", description: "positive rupee value" },
+      direction: { type: "string", enum: ["debit", "credit"] },
+      date: { type: ["string", "null"] },
+      time: {
+        type: ["string", "null"],
+        description: "24-hour HH:MM if the mail states a transaction time, else null",
+      },
+      counterparty: { type: "string" },
+      accountHint: accountHintDescription
+        ? { type: "string", description: accountHintDescription }
+        : { type: "string" },
+      category: {
+        type: "string",
+        description:
+          'must be chosen verbatim from the Categories list in the user message, or "" if none fits',
+      },
+      bankRef: { type: ["string", "null"], description: "UTR / reference / transaction id" },
+      sourceQuote: { type: "string", description: "verbatim snippet the amount came from" },
+      confidence: { type: "number", minimum: 0, maximum: 1 },
+      intent: { enum: ["repayment", "refund", "cashback", null] },
+    },
+    required: ["amount", "direction"],
+  };
+}
+
+/**
+ * Forces the model to record the email's classification + transactions in one
+ * structured call. Top-level `required` deliberately tightens Zod's own
+ * permissiveness (Zod defaults `transactions` to `[]` if absent) — this just
+ * forces the model to be explicit that it checked.
+ */
+const RECORD_TXNS_TOOL: ToolSpec = {
+  name: "record_transactions",
+  description: "Record the email's classification and every transaction it contains.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      classification: {
+        type: "string",
+        enum: ["transaction_alert", "card_statement", "bill", "otp", "promo", "other"],
+      },
+      transactions: { type: "array", items: txnItemSchema() },
+    },
+    required: ["classification", "transactions"],
+  },
+};
 
 export const EXTRACT_SYSTEM = [
   "You extract transactions from a personal-finance email (bank/card alerts, bills, statements).",
@@ -303,16 +387,35 @@ export async function classifyAndExtract(
   categories: CategoryRef[],
   identity: RedactionIdentity,
 ): Promise<z.infer<typeof ModelResultSchema>> {
+  // Ollama never gets a forced tool call — only the prompt (unchanged either
+  // way). The gate relies on AiProvider.name === "ollama" being the real Ollama
+  // provider's contract (factory.ts's createOllamaProvider); brittle only for a
+  // hypothetical future provider that wraps Ollama under a different name.
+  const structured = ai.name !== "ollama";
   const turn = await ai.chat({
     system: EXTRACT_SYSTEM,
     messages: [{ role: "user", content: userPrompt(email, categories, identity) }],
-    tools: [],
+    tools: structured ? [RECORD_TXNS_TOOL] : [],
+    toolChoice: structured ? RECORD_TXNS_TOOL.name : undefined,
     maxTokens: 2048,
     // A statement email's HTML body is bigger than an alert's; a slow reasoning
     // model can exceed the default 30s, so allow more before giving up.
     timeoutMs: 90_000,
   });
-  const parsed = ModelResultSchema.safeParse(extractJson(turn.text));
+  // Fail-closed, exact-name selection: a tool call is never taken by position.
+  // Exactly one matching-named call → use its input; zero → fall back to the
+  // prose-JSON text (covers Ollama and any provider that ignores toolChoice);
+  // two-or-more → fail closed with NO fallback to text at all (an arbitrary
+  // pick among conflicting tool calls would be unsafe).
+  const matches = turn.toolCalls.filter((c) => c.name === RECORD_TXNS_TOOL.name);
+  let parsed: ReturnType<typeof ModelResultSchema.safeParse>;
+  if (matches.length === 1) {
+    parsed = ModelResultSchema.safeParse(matches[0]!.input);
+  } else if (matches.length === 0) {
+    parsed = ModelResultSchema.safeParse(extractJson(turn.text));
+  } else {
+    parsed = ModelResultSchema.safeParse(undefined); // 2+ matches: fail closed, never touches turn.text
+  }
   // Unparseable output is treated as "nothing to see here" rather than a crash;
   // the raw email is retained so it can be replayed after a prompt fix.
   if (!parsed.success) return { classification: "other", transactions: [] };
@@ -376,6 +479,26 @@ export const STATEMENT_SYSTEM = [
 ].join("\n");
 
 /**
+ * Forces the model to record every statement transaction in one structured
+ * call. No `classification` property at all — `extractStatementTxns` never
+ * reads one, only `.transactions` (see `StatementTxnResultSchema`).
+ */
+const RECORD_STATEMENT_TXNS_TOOL: ToolSpec = {
+  name: "record_statement_transactions",
+  description: "Record every transaction found in the credit-card statement text.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      transactions: {
+        type: "array",
+        items: txnItemSchema('always "" for a statement line — the card is already known'),
+      },
+    },
+    required: ["transactions"],
+  },
+};
+
+/**
  * Extract every transaction from a decrypted statement's text. The card is
  * already known — its stored password opened the PDF — so every row is suggested
  * against that account. Reuses the same normalization as email extraction.
@@ -386,12 +509,14 @@ export async function extractStatementTxns(
   ctx: { receivedDate: string | null; categories: CategoryRef[]; accountId: string | null },
 ): Promise<InboxRow[]> {
   const cats = categoryLines(ctx.categories);
+  const structured = ai.name !== "ollama";
   const turn = await ai.chat({
     system: STATEMENT_SYSTEM,
     messages: [
       { role: "user", content: `${cats ? `${cats}\n\n` : ""}STATEMENT:\n${text.slice(0, MAX_STATEMENT_CHARS)}` },
     ],
-    tools: [],
+    tools: structured ? [RECORD_STATEMENT_TXNS_TOOL] : [],
+    toolChoice: structured ? RECORD_STATEMENT_TXNS_TOOL.name : undefined,
     maxTokens: 4096,
     // A whole statement is a big prompt; a slow reasoning model needs well over
     // the default 30s. Give it up to 3 minutes — but only one retry, so a
@@ -399,7 +524,15 @@ export async function extractStatementTxns(
     timeoutMs: 180_000,
     retries: 1,
   });
-  const parsed = ModelResultSchema.safeParse(extractJson(turn.text));
+  const matches = turn.toolCalls.filter((c) => c.name === RECORD_STATEMENT_TXNS_TOOL.name);
+  let parsed: ReturnType<typeof StatementTxnResultSchema.safeParse>;
+  if (matches.length === 1) {
+    parsed = StatementTxnResultSchema.safeParse(matches[0]!.input);
+  } else if (matches.length === 0) {
+    parsed = StatementTxnResultSchema.safeParse(extractJson(turn.text));
+  } else {
+    parsed = StatementTxnResultSchema.safeParse(undefined); // 2+ matches: fail closed, never touches turn.text
+  }
   if (!parsed.success) return [];
   const rows: InboxRow[] = [];
   for (const t of parsed.data.transactions) {
@@ -445,7 +578,7 @@ export interface StatementSummary {
   rewards: StatementRewards;
 }
 
-const STATEMENT_SUMMARY_SYSTEM = [
+export const STATEMENT_SUMMARY_SYSTEM = [
   "From a CREDIT-CARD STATEMENT's summary (not the transaction rows), extract only:",
   'Return ONLY JSON, no prose: {"totalAmountDue": number|null, "minimumAmountDue": number|null,',
   ' "statementDate": "YYYY-MM-DD"|null (the statement/closing date),',
@@ -457,6 +590,49 @@ const STATEMENT_SUMMARY_SYSTEM = [
   "date (labels vary: 'Total/Net Reward Points', 'Points Balance', 'Closing'). Use",
   "null for any field the statement doesn't state. Never invent numbers.",
 ].join("\n");
+
+/**
+ * Forces the model to record the statement summary in one structured call.
+ * Top-level `required: []` — every field of `StatementSummarySchema`,
+ * INCLUDING `rewardPoints` itself, has a Zod `.default()`, so nothing is
+ * required, fully mirroring that permissiveness: the summary pass is
+ * explicitly best-effort and must never be pressured into fabricating a value
+ * it doesn't have — "never invent numbers" stays governing, unchanged, in the
+ * prompt. Reward-point fields are typed `integer` here — deliberately
+ * stricter than the current Zod `z.number()` — matching the prompt's existing
+ * "reward points are whole numbers" instruction and the runtime's
+ * `Math.round`, not a literal mirror of the Zod type.
+ */
+const RECORD_STATEMENT_SUMMARY_TOOL: ToolSpec = {
+  name: "record_statement_summary",
+  description:
+    "Record the statement's total/minimum amount due, statement date, and reward-points summary.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      totalAmountDue: { type: ["number", "null"] },
+      minimumAmountDue: { type: ["number", "null"] },
+      statementDate: { type: ["string", "null"] },
+      rewardPoints: {
+        type: "object",
+        properties: {
+          opening: { type: ["integer", "null"] },
+          earned: { type: ["integer", "null"] },
+          redeemed: {
+            type: ["integer", "null"],
+            description: "a POSITIVE count of points redeemed/adjusted-down this cycle",
+          },
+          closing: {
+            type: ["integer", "null"],
+            description: "the reward-points balance AS ON the statement date",
+          },
+        },
+        required: [],
+      },
+    },
+    required: [],
+  },
+};
 
 /** Round rupees to integer paise; null passes through. */
 function rupeesToPaise(v: number | null): number | null {
@@ -472,15 +648,25 @@ export async function extractStatementSummary(
   text: string,
   ai: AiProvider,
 ): Promise<StatementSummary | null> {
+  const structured = ai.name !== "ollama";
   const turn = await ai.chat({
     system: STATEMENT_SUMMARY_SYSTEM,
     messages: [{ role: "user", content: `STATEMENT:\n${text.slice(0, MAX_STATEMENT_CHARS)}` }],
-    tools: [],
+    tools: structured ? [RECORD_STATEMENT_SUMMARY_TOOL] : [],
+    toolChoice: structured ? RECORD_STATEMENT_SUMMARY_TOOL.name : undefined,
     maxTokens: 512,
     timeoutMs: 120_000,
     retries: 1,
   });
-  const parsed = StatementSummarySchema.safeParse(extractJson(turn.text));
+  const matches = turn.toolCalls.filter((c) => c.name === RECORD_STATEMENT_SUMMARY_TOOL.name);
+  let parsed: ReturnType<typeof StatementSummarySchema.safeParse>;
+  if (matches.length === 1) {
+    parsed = StatementSummarySchema.safeParse(matches[0]!.input);
+  } else if (matches.length === 0) {
+    parsed = StatementSummarySchema.safeParse(extractJson(turn.text));
+  } else {
+    parsed = StatementSummarySchema.safeParse(undefined); // 2+ matches: fail closed, never touches turn.text
+  }
   if (!parsed.success) return null;
   const d = parsed.data;
   const asInt = (v: number | null) => (v === null ? null : Math.round(v));

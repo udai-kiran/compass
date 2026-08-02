@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import type { AiProvider } from "@compass/ai";
+import type { AiProvider, ChatRequest, ChatTurn } from "@compass/ai";
 import {
   classifyAndExtract,
   computeStatementRewardEntries,
@@ -16,6 +16,7 @@ import {
   matchLinesToLedger,
   merchantSimilarity,
   runExtraction,
+  STATEMENT_SUMMARY_SYSTEM,
   STATEMENT_SYSTEM,
   statementPeriodKey,
   summarizeMatches,
@@ -56,6 +57,35 @@ function fakeAi(reply: string): AiProvider {
     async chat() {
       return { text: reply, toolCalls: [] };
     },
+  };
+}
+
+/**
+ * A recording-fake AiProvider: replays a canned `ChatTurn` (text + tool calls)
+ * while capturing every `ChatRequest` passed to `chat()`, so a test can assert
+ * on exactly what the extractor's three call sites send (tools, toolChoice,
+ * system prompt, maxTokens/timeoutMs/retries) — not just what they receive
+ * back. `name` defaults to a non-Ollama provider label; pass "ollama" to
+ * exercise the P5 gate.
+ */
+function recordingAi(turn: ChatTurn, name = "fake"): { ai: AiProvider; calls: ChatRequest[] } {
+  const calls: ChatRequest[] = [];
+  return {
+    ai: {
+      name,
+      enabled: true,
+      async suggestCategories() {
+        return [];
+      },
+      async generateSummary() {
+        return "";
+      },
+      async chat(request: ChatRequest) {
+        calls.push(request);
+        return turn;
+      },
+    },
+    calls,
   };
 }
 
@@ -564,4 +594,343 @@ test("STATEMENT_SYSTEM includes day-first date guidance for Indian statements", 
   assert.ok(/2-digit year.*20YY/i.test(STATEMENT_SYSTEM), "missing 2-digit year expansion");
   assert.ok(/already.*ISO YYYY-MM-DD.*unchanged/i.test(STATEMENT_SYSTEM), "missing ISO passthrough guidance");
   assert.ok(/textual date with a month name/i.test(STATEMENT_SYSTEM), "missing textual date guidance");
+});
+
+// ---------------------------------------------------------------------------
+// Forced named tool-call structured output (extractor-structured-output task)
+// ---------------------------------------------------------------------------
+
+const identity = { names: [], emails: [], upiIds: [] };
+
+// ---- request wiring: exactly one named tool + matching toolChoice per call site ----
+
+test("classifyAndExtract: request wiring — record_transactions tool, matching toolChoice, unchanged system/maxTokens/timeoutMs", async () => {
+  const { ai, calls } = recordingAi({
+    text: JSON.stringify({ classification: "transaction_alert", transactions: [] }),
+    toolCalls: [],
+  });
+  await classifyAndExtract(email("..."), ai, [{ id: "shop", name: "Shopping", kind: "expense" }], identity);
+  assert.equal(calls.length, 1);
+  const req = calls[0]!;
+  assert.equal(req.tools.length, 1);
+  assert.equal(req.tools[0]!.name, "record_transactions");
+  assert.equal(req.toolChoice, "record_transactions");
+  assert.equal(req.system, EXTRACT_SYSTEM);
+  assert.equal(req.maxTokens, 2048);
+  assert.equal(req.timeoutMs, 90_000);
+  assert.equal(req.retries, undefined);
+});
+
+test("extractStatementTxns: request wiring — record_statement_transactions tool, matching toolChoice, unchanged system/maxTokens/timeoutMs/retries", async () => {
+  const { ai, calls } = recordingAi({ text: JSON.stringify({ transactions: [] }), toolCalls: [] });
+  await extractStatementTxns("<statement>", ai, {
+    receivedDate: "2026-06-24",
+    categories: [{ id: "food", name: "Food", kind: "expense" }],
+    accountId: "card-1",
+  });
+  assert.equal(calls.length, 1);
+  const req = calls[0]!;
+  assert.equal(req.tools.length, 1);
+  assert.equal(req.tools[0]!.name, "record_statement_transactions");
+  assert.equal(req.toolChoice, "record_statement_transactions");
+  assert.equal(req.system, STATEMENT_SYSTEM);
+  assert.equal(req.maxTokens, 4096);
+  assert.equal(req.timeoutMs, 180_000);
+  assert.equal(req.retries, 1);
+  // Category-list behavior is unchanged — the user message still carries it.
+  const userMsg = req.messages[0]!;
+  assert.equal(userMsg.role, "user");
+  assert.match(userMsg.content, /Food/);
+});
+
+test("extractStatementSummary: request wiring — record_statement_summary tool, matching toolChoice, unchanged system/maxTokens/timeoutMs/retries", async () => {
+  const { ai, calls } = recordingAi({ text: "{}", toolCalls: [] });
+  await extractStatementSummary("<statement>", ai);
+  assert.equal(calls.length, 1);
+  const req = calls[0]!;
+  assert.equal(req.tools.length, 1);
+  assert.equal(req.tools[0]!.name, "record_statement_summary");
+  assert.equal(req.toolChoice, "record_statement_summary");
+  assert.equal(req.system, STATEMENT_SUMMARY_SYSTEM);
+  assert.equal(req.maxTokens, 512);
+  assert.equal(req.timeoutMs, 120_000);
+  assert.equal(req.retries, 1);
+});
+
+// ---- Ollama gate: no tools/toolChoice; prompt still unchanged ----
+
+test("Ollama gate: classifyAndExtract hands Ollama an empty tools array, no toolChoice, unchanged system prompt", async () => {
+  const { ai, calls } = recordingAi(
+    { text: JSON.stringify({ classification: "other", transactions: [] }), toolCalls: [] },
+    "ollama",
+  );
+  await classifyAndExtract(email("..."), ai, [], identity);
+  const req = calls[0]!;
+  assert.deepEqual(req.tools, []);
+  assert.equal(req.toolChoice, undefined);
+  assert.equal(req.system, EXTRACT_SYSTEM);
+});
+
+test("Ollama gate: extractStatementTxns hands Ollama an empty tools array, no toolChoice, unchanged system prompt", async () => {
+  const { ai, calls } = recordingAi({ text: JSON.stringify({ transactions: [] }), toolCalls: [] }, "ollama");
+  await extractStatementTxns("<statement>", ai, { receivedDate: null, categories: [], accountId: "card-1" });
+  const req = calls[0]!;
+  assert.deepEqual(req.tools, []);
+  assert.equal(req.toolChoice, undefined);
+  assert.equal(req.system, STATEMENT_SYSTEM);
+});
+
+test("Ollama gate: extractStatementSummary hands Ollama an empty tools array, no toolChoice, unchanged system prompt", async () => {
+  const { ai, calls } = recordingAi({ text: "no json here", toolCalls: [] }, "ollama");
+  await extractStatementSummary("<statement>", ai);
+  const req = calls[0]!;
+  assert.deepEqual(req.tools, []);
+  assert.equal(req.toolChoice, undefined);
+  assert.equal(req.system, STATEMENT_SUMMARY_SYSTEM);
+});
+
+// ---- Tool-call-present success path (per call site) ----
+
+test("classifyAndExtract: a correctly-named tool call with valid input is parsed directly, not the fallback text", async () => {
+  const { ai } = recordingAi({
+    text: "not JSON at all — this would fail extractJson if mistakenly read",
+    toolCalls: [
+      {
+        id: "1",
+        name: "record_transactions",
+        input: { classification: "transaction_alert", transactions: [{ amount: 500, direction: "debit" }] },
+      },
+    ],
+  });
+  const result = await classifyAndExtract(email("..."), ai, [], identity);
+  assert.equal(result.classification, "transaction_alert");
+  assert.equal(result.transactions.length, 1);
+  assert.equal(result.transactions[0]!.amount, 500);
+});
+
+test("extractStatementTxns: a correctly-named tool call with valid input is parsed directly, not the fallback text", async () => {
+  const { ai } = recordingAi({
+    text: "not JSON at all — this would fail extractJson if mistakenly read",
+    toolCalls: [
+      { id: "1", name: "record_statement_transactions", input: { transactions: [{ amount: 450, direction: "debit" }] } },
+    ],
+  });
+  const rows = await extractStatementTxns("<statement>", ai, {
+    receivedDate: "2026-06-24",
+    categories: [],
+    accountId: "card-1",
+  });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]!.amountPaise, 45000);
+  assert.equal(rows[0]!.suggestedAccountId, "card-1");
+});
+
+test("extractStatementSummary: a correctly-named tool call with valid input is parsed directly, not the fallback text", async () => {
+  const { ai } = recordingAi({
+    text: "not JSON at all — this would fail extractJson if mistakenly read",
+    toolCalls: [
+      {
+        id: "1",
+        name: "record_statement_summary",
+        input: {
+          totalAmountDue: 15230.5,
+          minimumAmountDue: 763,
+          statementDate: "2026-07-20",
+          rewardPoints: { opening: 400, earned: 250, redeemed: 100, closing: 550 },
+        },
+      },
+    ],
+  });
+  const s = await extractStatementSummary("<statement>", ai);
+  assert.equal(s?.totalDuePaise, 1523050);
+  assert.equal(s?.minDuePaise, 76300);
+  assert.equal(s?.statementDate, "2026-07-20");
+  assert.deepEqual(s?.rewards, { opening: 400, earned: 250, redeemed: 100, closing: 550 });
+});
+
+// ---- Fail-closed, exact-name selection policy (classifyAndExtract as the representative site — identical branch shape at all three) ----
+
+test("classifyAndExtract: a wrong-name-only tool call falls back to extractJson(text)", async () => {
+  const { ai } = recordingAi({
+    text: JSON.stringify({ classification: "bill", transactions: [{ amount: 200, direction: "debit" }] }),
+    toolCalls: [{ id: "1", name: "wrong_tool", input: { classification: "other", transactions: [] } }],
+  });
+  const result = await classifyAndExtract(email("..."), ai, [], identity);
+  assert.equal(result.classification, "bill");
+  assert.equal(result.transactions.length, 1);
+  assert.equal(result.transactions[0]!.amount, 200);
+});
+
+test("classifyAndExtract: wrong-name-first, correct-name-second — the correct-named call is found by filter, not index-0", async () => {
+  const { ai } = recordingAi({
+    text: "not JSON — invalid fallback text",
+    toolCalls: [
+      { id: "1", name: "wrong_tool", input: { classification: "other", transactions: [] } },
+      {
+        id: "2",
+        name: "record_transactions",
+        input: { classification: "bill", transactions: [{ amount: 300, direction: "credit" }] },
+      },
+    ],
+  });
+  const result = await classifyAndExtract(email("..."), ai, [], identity);
+  assert.equal(result.classification, "bill");
+  assert.equal(result.transactions.length, 1);
+  assert.equal(result.transactions[0]!.amount, 300);
+});
+
+test("classifyAndExtract: duplicate matching-named tool calls fail closed — no text fallback, no arbitrary pick", async () => {
+  const { ai } = recordingAi({
+    // Valid fallback text present — must NOT be used.
+    text: JSON.stringify({ classification: "bill", transactions: [{ amount: 1, direction: "debit" }] }),
+    toolCalls: [
+      {
+        id: "1",
+        name: "record_transactions",
+        input: { classification: "bill", transactions: [{ amount: 100, direction: "debit" }] },
+      },
+      {
+        id: "2",
+        name: "record_transactions",
+        input: { classification: "transaction_alert", transactions: [{ amount: 200, direction: "credit" }] },
+      },
+    ],
+  });
+  const result = await classifyAndExtract(email("..."), ai, [], identity);
+  assert.equal(result.classification, "other");
+  assert.equal(result.transactions.length, 0);
+});
+
+test("classifyAndExtract: a correctly-named call with Zod-invalid input fails closed even with valid fallback text present", async () => {
+  const { ai } = recordingAi({
+    // Valid fallback text present — must NOT be used.
+    text: JSON.stringify({ classification: "bill", transactions: [{ amount: 1, direction: "debit" }] }),
+    toolCalls: [
+      { id: "1", name: "record_transactions", input: { classification: "not_a_real_class", transactions: [] } },
+    ],
+  });
+  const result = await classifyAndExtract(email("..."), ai, [], identity);
+  assert.equal(result.classification, "other");
+  assert.equal(result.transactions.length, 0);
+});
+
+test("classifyAndExtract: extractJson fallback handles prose-wrapped/fenced JSON, not just JSON.stringify output", async () => {
+  const { ai } = recordingAi({
+    text: [
+      "Here you go:",
+      "```json",
+      JSON.stringify({ classification: "transaction_alert", transactions: [{ amount: 50, direction: "debit" }] }),
+      "```",
+      "Hope that helps!",
+    ].join("\n"),
+    toolCalls: [],
+  });
+  const result = await classifyAndExtract(email("..."), ai, [], identity);
+  assert.equal(result.classification, "transaction_alert");
+  assert.equal(result.transactions.length, 1);
+  assert.equal(result.transactions[0]!.amount, 50);
+});
+
+test("classifyAndExtract: malformed intent normalizes to null through the tool-input path", async () => {
+  const { ai } = recordingAi({
+    text: "not json",
+    toolCalls: [
+      {
+        id: "1",
+        name: "record_transactions",
+        input: { classification: "transaction_alert", transactions: [{ ...baseTxn, intent: "bogus" }] },
+      },
+    ],
+  });
+  const result = await classifyAndExtract(email("..."), ai, [], identity);
+  assert.equal(result.transactions.length, 1);
+  assert.equal(result.transactions[0]!.intent, null);
+});
+
+test("classifyAndExtract: malformed intent normalizes to null through the fallback-text path", async () => {
+  const { ai } = recordingAi({
+    text: JSON.stringify({
+      classification: "transaction_alert",
+      transactions: [{ ...baseTxn, intent: "bogus" }],
+    }),
+    toolCalls: [],
+  });
+  const result = await classifyAndExtract(email("..."), ai, [], identity);
+  assert.equal(result.transactions.length, 1);
+  assert.equal(result.transactions[0]!.intent, null);
+});
+
+// ---- extractStatementTxns-specific: RECORD_STATEMENT_TXNS_TOOL, no classification property, both shapes ----
+
+test("extractStatementTxns: supplies record_statement_transactions (not record_transactions), whose schema has no classification property", async () => {
+  const { ai, calls } = recordingAi({ text: "", toolCalls: [] });
+  await extractStatementTxns("<statement>", ai, { receivedDate: null, categories: [], accountId: "card-1" });
+  const req = calls[0]!;
+  assert.equal(req.tools.length, 1);
+  assert.equal(req.tools[0]!.name, "record_statement_transactions");
+  const schema = req.tools[0]!.inputSchema as { properties: Record<string, unknown> };
+  assert.equal("classification" in schema.properties, false);
+});
+
+test("extractStatementTxns: both a tool-input {transactions:[...]} reply and a fallback-text legacy {classification,transactions} reply parse via StatementTxnResultSchema", async () => {
+  const { ai: aiTool } = recordingAi({
+    text: "not used — the tool call wins",
+    toolCalls: [
+      { id: "1", name: "record_statement_transactions", input: { transactions: [{ amount: 10, direction: "debit" }] } },
+    ],
+  });
+  const rowsTool = await extractStatementTxns("<statement>", aiTool, {
+    receivedDate: "2026-06-24",
+    categories: [],
+    accountId: "card-1",
+  });
+  assert.equal(rowsTool.length, 1);
+
+  const { ai: aiFallback } = recordingAi({
+    text: JSON.stringify({ classification: "card_statement", transactions: [{ amount: 20, direction: "credit" }] }),
+    toolCalls: [],
+  });
+  const rowsFallback = await extractStatementTxns("<statement>", aiFallback, {
+    receivedDate: "2026-06-24",
+    categories: [],
+    accountId: "card-1",
+  });
+  assert.equal(rowsFallback.length, 1);
+});
+
+test("extractStatementTxns: a correctly-named call with Zod-invalid input (missing amount) fails closed even with valid fallback text present", async () => {
+  const { ai } = recordingAi({
+    // Valid fallback text present — must NOT be used.
+    text: JSON.stringify({ transactions: [{ amount: 1, direction: "debit" }] }),
+    toolCalls: [{ id: "1", name: "record_statement_transactions", input: { transactions: [{ direction: "debit" }] } }],
+  });
+  const rows = await extractStatementTxns("<statement>", ai, {
+    receivedDate: "2026-06-24",
+    categories: [],
+    accountId: "card-1",
+  });
+  assert.equal(rows.length, 0);
+});
+
+// ---- extractStatementSummary: duplicate matching-named calls fail closed to null ----
+
+test("extractStatementSummary: duplicate matching-named tool calls fail closed to null — no text fallback, no arbitrary pick", async () => {
+  const { ai } = recordingAi({
+    // Valid fallback text present — must NOT be used.
+    text: JSON.stringify({ totalAmountDue: 100, minimumAmountDue: 10, statementDate: "2026-07-20", rewardPoints: {} }),
+    toolCalls: [
+      {
+        id: "1",
+        name: "record_statement_summary",
+        input: { totalAmountDue: 200, minimumAmountDue: 20, statementDate: "2026-07-01", rewardPoints: {} },
+      },
+      {
+        id: "2",
+        name: "record_statement_summary",
+        input: { totalAmountDue: 300, minimumAmountDue: 30, statementDate: "2026-07-02", rewardPoints: {} },
+      },
+    ],
+  });
+  const s = await extractStatementSummary("<statement>", ai);
+  assert.equal(s, null);
 });
