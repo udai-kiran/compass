@@ -23,7 +23,7 @@ import { CategoryPicker } from "../../components/CategoryPicker.tsx";
 import { DateField } from "../../components/DateField.tsx";
 import { TransactionDrawer } from "./TransactionDrawer.tsx";
 import { AiCategorizePanel } from "./AiCategorizePanel.tsx";
-import { PayslipModal } from "./PayslipModal.tsx";
+import { RecordEpfModal } from "./RecordEpfModal.tsx";
 import { useCapabilities } from "../../lib/settings-queries.ts";
 
 const FILTER_KEYS = [
@@ -57,7 +57,7 @@ export function TransactionsPage() {
   const [allMatching, setAllMatching] = useState(false);
   const [drawerTx, setDrawerTx] = useState<string | null>(null);
   const [aiCategorize, setAiCategorize] = useState(false);
-  const [showPayslip, setShowPayslip] = useState(false);
+  const [showRecordEpf, setShowRecordEpf] = useState(false);
   const { data: capabilities } = useCapabilities();
 
   const items = useMemo(() => query.data?.pages.flatMap((p) => p.items) ?? [], [query.data]);
@@ -136,10 +136,10 @@ export function TransactionsPage() {
         <h1 className="text-2xl font-semibold text-slate-800">Transactions</h1>
         <div className="flex items-center gap-3">
           <button
-            onClick={() => setShowPayslip(true)}
+            onClick={() => setShowRecordEpf(true)}
             className="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
           >
-            + Add payslip
+            + Record EPF
           </button>
           {capabilities?.features.categorization && (
             <button
@@ -327,7 +327,7 @@ export function TransactionsPage() {
           onApply={(id, categoryId) => mutations.update.mutate({ id, categoryId })}
         />
       )}
-      {showPayslip && <PayslipModal onClose={() => setShowPayslip(false)} />}
+      {showRecordEpf && <RecordEpfModal onClose={() => setShowRecordEpf(false)} />}
     </div>
   );
 }

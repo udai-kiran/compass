@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Compass (PennyPilot) — a self-hosted personal-finance app for the **Indian context** (INR, TDS/EPF payslips, MF folios). npm-workspaces monorepo on **Node 24 + TypeScript ~5.9**, ESM throughout. There is no build/transpile step for the backend — Node runs the `.ts` files directly (native type stripping), so **relative imports include the `.ts` extension** (e.g. `import { postJson } from "./http.ts"`).
+Compass (PennyPilot) — a self-hosted personal-finance app for the **Indian context** (INR, TDS, EPF contributions from payslips, MF folios). npm-workspaces monorepo on **Node 24 + TypeScript ~5.9**, ESM throughout. There is no build/transpile step for the backend — Node runs the `.ts` files directly (native type stripping), so **relative imports include the `.ts` extension** (e.g. `import { postJson } from "./http.ts"`).
 
 Postgres and Redis are **external services** (not in the compose stack); endpoints come from `DATABASE_URL` / `REDIS_URL`. See `PRD.md` for the spec and `tasks/` for the phased build plan (`status:` frontmatter is the source of truth; `tasks/README.md` is the index).
 

@@ -4,10 +4,10 @@ import { z } from "zod";
 import {
   BulkActionSchema,
   BulkResultSchema,
-  CreatePayslipSchema,
+  CreateEpfContributionSchema,
   CreateTransactionSchema,
+  EpfContributionResultSchema,
   ListTransactionsQuerySchema,
-  PayslipResultSchema,
   SetSplitsSchema,
   TransactionPageSchema,
   TransactionSchema,
@@ -22,7 +22,7 @@ import {
   softDeleteTransaction,
   updateTransaction,
 } from "../services/transactions.ts";
-import { createPayslip } from "../services/payroll.ts";
+import { recordEpfContribution } from "../services/epf-contributions.ts";
 
 const IdParams = z.object({ id: z.uuid() });
 
@@ -48,13 +48,13 @@ export async function transactionRoutes(app: FastifyInstance) {
       reply.code(201).send(await createTransaction(app.db, req.session!.userId, req.body)),
   );
 
-  // A payslip fans out into several linked transactions (gross income, taxes,
-  // EPF transfer); see services/payroll.ts.
+  // Records one plain income transaction directly on the chosen retirement
+  // account — no bank leg; see services/epf-contributions.ts.
   r.post(
-    "/api/payslips",
-    { schema: { body: CreatePayslipSchema, response: { 201: PayslipResultSchema } } },
+    "/api/epf-contributions",
+    { schema: { body: CreateEpfContributionSchema, response: { 201: EpfContributionResultSchema } } },
     async (req, reply) =>
-      reply.code(201).send(await createPayslip(app.db, req.session!.userId, req.body)),
+      reply.code(201).send(await recordEpfContribution(app.db, req.session!.userId, req.body)),
   );
 
   r.patch(

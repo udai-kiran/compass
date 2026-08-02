@@ -68,8 +68,9 @@ export async function createCategory(
 
 /**
  * Return the user's category with this name+kind, creating it if absent. Used by
- * flows that must land in a well-known bucket (e.g. a payslip's TDS → "Taxes")
- * without forcing the user to have set it up first. Matches on exact name.
+ * flows that must land in a well-known bucket (e.g. an EPF contribution →
+ * "EPF Contribution") without forcing the user to have set it up first.
+ * Matches on exact name.
  */
 export async function findOrCreateCategory(
   db: DbOrTx,

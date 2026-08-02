@@ -13,7 +13,7 @@ import {
   AttachmentSchema,
   BulkResultSchema,
   CategorySchema,
-  PayslipResultSchema,
+  EpfContributionResultSchema,
   TransactionPageSchema,
   TransactionSchema,
   TransferResultSchema,
@@ -21,7 +21,7 @@ import {
   type BulkAction,
   type CreateAccount,
   type CreateCategory,
-  type CreatePayslipInput,
+  type CreateEpfContributionInput,
   type CreateTransaction,
   type CreateTransfer,
   type Transaction,
@@ -204,15 +204,15 @@ export function useTransactionMutations(filter: TransactionFilter) {
   return { create, update, remove, bulk, setSplits };
 }
 
-// ---------- payslips ----------
+// ---------- EPF contributions ----------
 
-export function usePayslipMutation() {
+export function useRecordEpfMutation() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: CreatePayslipInput) =>
-      apiPost("/api/payslips", PayslipResultSchema, body),
-    // A payslip creates several linked entries and moves EPF into a retirement
-    // account, so refresh transactions and account balances together.
+    mutationFn: (body: CreateEpfContributionInput) =>
+      apiPost("/api/epf-contributions", EpfContributionResultSchema, body),
+    // Records a real credit to a retirement account, so refresh transactions
+    // and account balances together.
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["transactions"] });
       void qc.invalidateQueries({ queryKey: ["accounts"] });
