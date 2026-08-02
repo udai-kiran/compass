@@ -721,7 +721,7 @@ test("dueInstallmentDate: an account-target SIP now prompts — it records by li
   assert.equal(dueInstallmentDate(sip, null, "2026-07-23"), "2026-07-05");
 });
 
-test("dueInstallmentDate: a payroll-funded SIP never prompts — the payslip books it and stamps no sip_id", () => {
+test("dueInstallmentDate: a payroll-funded SIP never prompts — the payslip records it directly and stamps no sip_id", () => {
   const sip = {
     dayOfMonth: 5,
     startDate: "2026-01-01",

@@ -585,66 +585,29 @@ export const TransferResultSchema = z.object({
 });
 export type TransferResult = z.infer<typeof TransferResultSchema>;
 
-// ---------- Payslips ----------
+// ---------- EPF contributions ----------
 //
-// A payslip records gross salary and the deductions withheld at source (the
-// Indian norm): the employer credits only the *net* to your bank, but the gross
-// is your income, TDS/professional-tax are real tax expenses, and EPF is your
-// money moving into a retirement asset. Rather than logging one net "Salary"
-// credit (which hides all of that), a payslip fans out into linked entries —
-// gross as bank income, each tax as a bank expense, and EPF as a transfer into
-// the chosen retirement account — so income, tax paid, and EPF growth are all
-// captured. The bank balance still nets to take-home.
+// The employer pays EPF straight to EPFO — it never touches the user's bank,
+// so there is no bank-statement/email transaction to import it from. The
+// payslip is the only record. Recording an EPF contribution books one plain
+// income transaction directly on the chosen retirement account (no bank leg
+// at all): employer, date, amount, destination account.
 
-export const PayslipDeductionKindSchema = z.enum([
-  "tds", // income tax deducted at source → expense
-  "professional_tax", // state professional tax → expense
-  "epf", // employee provident fund → transfer into a retirement account (asset)
-  "other", // any other withholding (e.g. group insurance) → expense
-]);
-export type PayslipDeductionKind = z.infer<typeof PayslipDeductionKindSchema>;
-
-export const PayslipDeductionSchema = z.object({
-  kind: PayslipDeductionKindSchema,
-  /** Free-text label, shown for "other" deductions. */
-  label: z.string().default(""),
+export const CreateEpfContributionSchema = z.object({
+  toAccountId: z.uuid(),
+  date: z.iso.date(),
+  employer: z.string().default(""),
   amountPaise: z.number().int().positive(),
-  /** Destination retirement account — required when kind === "epf". */
-  toAccountId: z.uuid().nullable().default(null),
+  notes: z.string().default(""),
 });
-export type PayslipDeduction = z.infer<typeof PayslipDeductionSchema>;
+export type CreateEpfContribution = z.infer<typeof CreateEpfContributionSchema>;
+export type CreateEpfContributionInput = z.input<typeof CreateEpfContributionSchema>;
 
-export const CreatePayslipSchema = z
-  .object({
-    bankAccountId: z.uuid(),
-    date: z.iso.date(),
-    employer: z.string().default(""),
-    grossPaise: z.number().int().positive(),
-    /** Income category for the gross credit; defaults to the user's Salary category. */
-    categoryId: z.uuid().nullable().default(null),
-    deductions: z.array(PayslipDeductionSchema).max(20).default([]),
-    notes: z.string().default(""),
-  })
-  .refine(
-    (p) => p.deductions.reduce((s, d) => s + d.amountPaise, 0) < p.grossPaise,
-    { message: "Deductions must be less than gross (take-home must be positive)", path: ["deductions"] },
-  )
-  .refine((p) => p.deductions.every((d) => d.kind !== "epf" || d.toAccountId !== null), {
-    message: "EPF deduction needs a destination account",
-    path: ["deductions"],
-  });
-export type CreatePayslip = z.infer<typeof CreatePayslipSchema>;
-export type CreatePayslipInput = z.input<typeof CreatePayslipSchema>;
-
-export const PayslipResultSchema = z.object({
-  grossPaise: z.number().int(),
-  netPaise: z.number().int(),
-  taxPaise: z.number().int(),
-  epfPaise: z.number().int(),
-  otherPaise: z.number().int(),
-  transactionIds: z.array(z.uuid()),
+export const EpfContributionResultSchema = z.object({
+  transactionId: z.uuid(),
+  amountPaise: z.number().int(),
 });
-export type PayslipResult = z.infer<typeof PayslipResultSchema>;
+export type EpfContributionResult = z.infer<typeof EpfContributionResultSchema>;
 
 // ---------- Attachments ----------
 

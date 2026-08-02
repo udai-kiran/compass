@@ -1465,9 +1465,9 @@ export const sips = pgTable(
     frequency: sipFrequency("frequency").notNull().default("monthly"),
     status: sipStatus("status").notNull().default("active"),
     /**
-     * `payroll` means the contribution is deducted from salary (EPF) and
-     * already reaches the ledger via `createPayslip`'s bank→retirement
-     * transfer — so it counts toward a goal's committed funding but must
+     * `payroll` means the contribution is deducted from salary (EPF) and is
+     * recorded directly to the retirement account from the payslip, with no
+     * bank leg — so it counts toward a goal's committed funding but must
      * never be subtracted again by the cash forecast, and is never manually
      * recorded.
      */

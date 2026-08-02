@@ -16,9 +16,9 @@ export type SipStatus = z.infer<typeof SipStatusSchema>;
 
 /**
  * Where the SIP's money comes from. `bank_debit` is the default auto-debit
- * SIP; `payroll` (EPF) is a salary deduction already booked as a real
- * bank→retirement transfer by `createPayslip` — it must never be subtracted
- * again by the cash forecast, and is never manually recorded.
+ * SIP; `payroll` (EPF) is a salary deduction recorded directly to the
+ * retirement account from the payslip, with no bank leg — it must never be
+ * subtracted again by the cash forecast, and is never manually recorded.
  */
 export const SipFundingSourceSchema = z.enum(["bank_debit", "payroll"]);
 export type SipFundingSource = z.infer<typeof SipFundingSourceSchema>;
@@ -93,9 +93,9 @@ function sipTargetIssue(
 
 /**
  * A payroll-funded SIP only makes sense for an account target (EPF/PPF/SSY):
- * `payroll` means the contribution is deducted from salary and already reaches
- * the ledger via `createPayslip`'s bank→retirement transfer, so it's
- * meaningless for an MF-folio target and would silently drop a real debit
+ * `payroll` means the contribution is deducted from salary and recorded
+ * directly to the retirement account from the payslip, with no bank leg, so
+ * it's meaningless for an MF-folio target and would silently drop a real debit
  * from the 90-day cash forecast if allowed. Pure (no zod types), following
  * `sipTargetIssue`, so both the create schema's `.check()` and the update
  * service's resolved-pair validation (services/sips.ts) can share the rule.

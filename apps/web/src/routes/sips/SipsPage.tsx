@@ -551,10 +551,11 @@ function SipForm({ onDone }: { onDone: () => void }) {
         </label>
       )}
       {/* Only offered for an account target: a payroll-funded SIP is a salary
-          deduction the payslip already books as a bank→retirement transfer, so
-          pairing it with an MF folio is rejected (see sipFundingSourceIssue).
-          A `payroll` SIP is also excluded from the 90-day cash forecast, since
-          its debit is already in the ledger. */}
+          deduction recorded directly to the retirement account from the
+          payslip (no bank leg), so pairing it with an MF folio is rejected
+          (see sipFundingSourceIssue). A `payroll` SIP is also excluded from
+          the 90-day cash forecast, since there's nothing on the bank side for
+          it to double-count. */}
       {targetKind === "account" && (
         <label className="block">
           <span className="text-slate-600">Funded by</span>

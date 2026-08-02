@@ -101,9 +101,9 @@ export async function getForecast(db: Db, redis: Redis, userId: string): Promise
 
     // Upcoming goal-SIP debits — the same predictable outflow as a recurring
     // template, so they count toward the trough/runway just like a bill.
-    // A payroll-funded SIP (EPF) is already booked as a real bank→retirement
-    // transfer by `createPayslip`, so projecting it again here would subtract
-    // the same money from the forecast twice.
+    // A payroll-funded SIP (EPF) is recorded directly to the retirement
+    // account from the payslip, with no bank leg — so there's nothing for
+    // this forecast to double-count by projecting it again here.
     const activeSips = await db
       .select({
         amountPaise: sips.amountPaise,

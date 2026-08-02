@@ -1236,8 +1236,8 @@ function occurrenceMonthStart(due: string): string {
  * Gated on `fundingSource`, not `targetKind`: an account-target SIP (PPF/SSY)
  * *does* prompt, because it can now record by linking the ledger transaction
  * that funded it (see `linkSipInstallment`). What must never prompt is a
- * `payroll` SIP — its contribution reaches the ledger through
- * `createPayslip`'s bank→retirement transfer, which stamps no `sip_id`, so it
+ * `payroll` SIP — its contribution is recorded directly to the retirement
+ * account from the payslip, with no bank leg, and stamps no `sip_id`, so it
  * would otherwise report the same installment as due forever.
  */
 export function dueInstallmentDate(

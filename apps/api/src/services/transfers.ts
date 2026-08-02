@@ -142,7 +142,7 @@ export async function unlinkTransfer(db: Db, userId: string, id: string): Promis
 /**
  * Pure: split a transfer request into its two ledger legs. Signs are derived here
  * rather than trusted from the caller, and the guards are duplicated from the Zod
- * schema so a direct service call (payslips, imports) can't book a nonsense pair.
+ * schema so a direct service call (imports, etc.) can't book a nonsense pair.
  * Transfer legs are deliberately uncategorized — they are excluded from
  * income/expense once linked.
  */
