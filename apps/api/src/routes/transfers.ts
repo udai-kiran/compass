@@ -21,17 +21,16 @@ export async function transferRoutes(app: FastifyInstance) {
   r.post(
     "/api/transfers",
     { schema: { body: CreateTransferLinkSchema, response: { 201: z.object({ id: z.uuid() }) } } },
-    async (req, reply) =>
-      reply
-        .code(201)
-        .send(
-          await linkTransfer(
-            app.db,
-            req.session!.userId,
-            req.body.outTransactionId,
-            req.body.inTransactionId,
-          ),
-        ),
+    async (req, reply) => {
+      const result = await linkTransfer(
+        app.db,
+        req.session!.userId,
+        req.body.outTransactionId,
+        req.body.inTransactionId,
+      );
+      app.eventBus.emit("ledger.mutated", { userId: req.session!.userId });
+      return reply.code(201).send(result);
+    },
   );
 
   // Distinct from POST /api/transfers, which links two transactions that already
@@ -39,8 +38,11 @@ export async function transferRoutes(app: FastifyInstance) {
   r.post(
     "/api/transfers/record",
     { schema: { body: CreateTransferSchema, response: { 201: TransferResultSchema } } },
-    async (req, reply) =>
-      reply.code(201).send(await createTransfer(app.db, req.session!.userId, req.body)),
+    async (req, reply) => {
+      const result = await createTransfer(app.db, req.session!.userId, req.body);
+      app.eventBus.emit("ledger.mutated", { userId: req.session!.userId });
+      return reply.code(201).send(result);
+    },
   );
 
   r.delete(
@@ -53,6 +55,7 @@ export async function transferRoutes(app: FastifyInstance) {
     },
     async (req) => {
       await unlinkTransfer(app.db, req.session!.userId, req.params.id);
+      app.eventBus.emit("ledger.mutated", { userId: req.session!.userId });
       return { ok: true };
     },
   );

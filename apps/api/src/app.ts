@@ -72,6 +72,22 @@ declare module "fastify" {
   }
 }
 
+/**
+ * Write-through invalidation: any successful ledger mutation refreshes cached
+ * aggregates and queues a (debounced) budget evaluation. Replaces the old
+ * URL-regex request hook — callers now emit `ledger.mutated` explicitly from
+ * the route/job layer instead of this being inferred from `req.url`.
+ *
+ * Must be registered before `startJobs(app)` — boot-catchup emits during
+ * `startJobs`, and a subscriber registered after that would silently miss them.
+ */
+export function registerLedgerCacheSubscriber(app: FastifyInstance): void {
+  app.eventBus.on("ledger.mutated", async ({ userId }) => {
+    await invalidateUserCache(app.redis, userId);
+    await enqueueBudgetEvaluation(app, userId);
+  });
+}
+
 export async function buildApp(config: Config): Promise<FastifyInstance> {
   const app = Fastify({
     logger: {
@@ -98,6 +114,10 @@ export async function buildApp(config: Config): Promise<FastifyInstance> {
     error: (msg, ctx) => app.log.error(ctx ?? {}, msg),
   });
   app.decorate("eventBus", eventBus);
+  // Every ledger-writing route/job emits "ledger.mutated" explicitly now that
+  // there's no URL-based catch-all — new ledger-writing call sites must emit
+  // it themselves (see EventMap in lib/event-bus.ts).
+  registerLedgerCacheSubscriber(app);
 
   await startJobs(app);
   await setupAuth(app);
@@ -191,16 +211,6 @@ export async function buildApp(config: Config): Promise<FastifyInstance> {
   await app.register(mailboxRoutes);
   await app.register(resourceRoutes);
   await app.register(userTaskRoutes);
-
-  // write-through invalidation: any successful ledger write refreshes cached
-  // aggregates and queues a (debounced) budget evaluation
-  app.addHook("onResponse", async (req, reply) => {
-    if (req.method === "GET" || reply.statusCode >= 400 || !req.session) return;
-    if (/^\/api\/(transactions|transfers|imports|recurring|inbox)/.test(req.url)) {
-      await invalidateUserCache(app.redis, req.session.userId);
-      await enqueueBudgetEvaluation(app, req.session.userId);
-    }
-  });
 
   // Best-effort cleanup; in-flight microtask handlers may still reference closed resources.
   app.addHook("onClose", () => {

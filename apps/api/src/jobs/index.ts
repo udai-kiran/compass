@@ -16,7 +16,6 @@ import {
 import { createEncryptedBackup } from "../services/backup.ts";
 import { evaluateLargeTransactions, evaluateLowBalance, prefEnabled } from "../services/prefs.ts";
 import { materializeDue } from "../services/recurring.ts";
-import { invalidateUserCache } from "../services/cache.ts";
 
 export interface Queues {
   system: Queue;
@@ -247,8 +246,7 @@ export async function startJobs(app: FastifyInstance): Promise<void> {
           if (res.created > 0) {
             app.log.info(res, "materialized recurring transactions");
             for (const userId of res.userIds) {
-              await invalidateUserCache(app.redis, userId);
-              await enqueueBudgetEvaluation(app, userId);
+              app.eventBus.emit("ledger.mutated", { userId });
             }
           }
           return;
@@ -374,8 +372,7 @@ export async function startJobs(app: FastifyInstance): Promise<void> {
   if (boot.created > 0) {
     app.log.info(boot, "boot: materialized recurring transactions");
     for (const userId of boot.userIds) {
-      await invalidateUserCache(app.redis, userId);
-      await enqueueBudgetEvaluation(app, userId);
+      app.eventBus.emit("ledger.mutated", { userId });
     }
   }
   // catch up on bill reminders too (server may have been down at 00:20)

@@ -44,8 +44,11 @@ export async function transactionRoutes(app: FastifyInstance) {
   r.post(
     "/api/transactions",
     { schema: { body: CreateTransactionSchema, response: { 201: TransactionSchema } } },
-    async (req, reply) =>
-      reply.code(201).send(await createTransaction(app.db, req.session!.userId, req.body)),
+    async (req, reply) => {
+      const txn = await createTransaction(app.db, req.session!.userId, req.body);
+      app.eventBus.emit("ledger.mutated", { userId: req.session!.userId });
+      return reply.code(201).send(txn);
+    },
   );
 
   // Records one plain income transaction directly on the chosen retirement
@@ -62,7 +65,11 @@ export async function transactionRoutes(app: FastifyInstance) {
     {
       schema: { params: IdParams, body: UpdateTransactionSchema, response: { 200: TransactionSchema } },
     },
-    async (req) => updateTransaction(app.db, req.session!.userId, req.params.id, req.body),
+    async (req) => {
+      const txn = await updateTransaction(app.db, req.session!.userId, req.params.id, req.body);
+      app.eventBus.emit("ledger.mutated", { userId: req.session!.userId });
+      return txn;
+    },
   );
 
   r.delete(
@@ -70,6 +77,7 @@ export async function transactionRoutes(app: FastifyInstance) {
     { schema: { params: IdParams, response: { 200: z.object({ ok: z.boolean() }) } } },
     async (req) => {
       await softDeleteTransaction(app.db, req.session!.userId, req.params.id);
+      app.eventBus.emit("ledger.mutated", { userId: req.session!.userId });
       return { ok: true };
     },
   );
@@ -77,12 +85,20 @@ export async function transactionRoutes(app: FastifyInstance) {
   r.put(
     "/api/transactions/:id/splits",
     { schema: { params: IdParams, body: SetSplitsSchema, response: { 200: TransactionSchema } } },
-    async (req) => setSplits(app.db, req.session!.userId, req.params.id, req.body.splits),
+    async (req) => {
+      const txn = await setSplits(app.db, req.session!.userId, req.params.id, req.body.splits);
+      app.eventBus.emit("ledger.mutated", { userId: req.session!.userId });
+      return txn;
+    },
   );
 
   r.post(
     "/api/transactions/bulk",
     { schema: { body: BulkActionSchema, response: { 200: BulkResultSchema } } },
-    async (req) => bulkAction(app.db, req.session!.userId, req.body),
+    async (req) => {
+      const result = await bulkAction(app.db, req.session!.userId, req.body);
+      app.eventBus.emit("ledger.mutated", { userId: req.session!.userId });
+      return result;
+    },
   );
 }

@@ -59,7 +59,11 @@ export async function inboxRoutes(app: FastifyInstance) {
         response: { 200: ExtractedTransactionSchema },
       },
     },
-    async (req) => acceptExtracted(app.db, req.session!.userId, req.params.id, req.body),
+    async (req) => {
+      const result = await acceptExtracted(app.db, req.session!.userId, req.params.id, req.body);
+      app.eventBus.emit("ledger.mutated", { userId: req.session!.userId });
+      return result;
+    },
   );
 
   r.post(
@@ -71,7 +75,11 @@ export async function inboxRoutes(app: FastifyInstance) {
         response: { 200: ExtractedTransactionSchema },
       },
     },
-    async (req) => acceptRepayment(app.db, req.session!.userId, req.params.id, req.body),
+    async (req) => {
+      const result = await acceptRepayment(app.db, req.session!.userId, req.params.id, req.body);
+      app.eventBus.emit("ledger.mutated", { userId: req.session!.userId });
+      return result;
+    },
   );
 
   r.post(
@@ -82,7 +90,11 @@ export async function inboxRoutes(app: FastifyInstance) {
         response: { 200: z.array(ExtractedTransactionSchema) },
       },
     },
-    async (req) => acceptTransfer(app.db, req.session!.userId, req.body),
+    async (req) => {
+      const result = await acceptTransfer(app.db, req.session!.userId, req.body);
+      app.eventBus.emit("ledger.mutated", { userId: req.session!.userId });
+      return result;
+    },
   );
 
   r.post(

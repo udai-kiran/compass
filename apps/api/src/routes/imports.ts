@@ -107,13 +107,21 @@ export async function importRoutes(app: FastifyInstance) {
   r.post(
     "/api/imports/:id/commit",
     { schema: { params: IdParams, response: { 200: CommitResultSchema } } },
-    async (req) => commitImport(app.db, req.session!.userId, req.params.id),
+    async (req) => {
+      const result = await commitImport(app.db, req.session!.userId, req.params.id);
+      app.eventBus.emit("ledger.mutated", { userId: req.session!.userId });
+      return result;
+    },
   );
 
   r.post(
     "/api/imports/:id/rollback",
     { schema: { params: IdParams, response: { 200: z.object({ removed: z.number().int() }) } } },
-    async (req) => rollbackImport(app.db, req.session!.userId, req.params.id),
+    async (req) => {
+      const result = await rollbackImport(app.db, req.session!.userId, req.params.id);
+      app.eventBus.emit("ledger.mutated", { userId: req.session!.userId });
+      return result;
+    },
   );
 
   r.delete(

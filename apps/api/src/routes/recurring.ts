@@ -13,8 +13,6 @@ import {
   materializeDue,
   updateTemplate,
 } from "../services/recurring.ts";
-import { invalidateUserCache } from "../services/cache.ts";
-import { enqueueBudgetEvaluation } from "../jobs/index.ts";
 
 const IdParams = z.object({ id: z.uuid() });
 
@@ -26,11 +24,10 @@ export async function recurringRoutes(app: FastifyInstance) {
     const res = await materializeDue(app.db);
     if (res.userIds.length > 0) {
       for (const uid of res.userIds) {
-        await invalidateUserCache(app.redis, uid);
-        await enqueueBudgetEvaluation(app, uid);
+        app.eventBus.emit("ledger.mutated", { userId: uid });
       }
     } else {
-      await invalidateUserCache(app.redis, userId);
+      app.eventBus.emit("ledger.mutated", { userId });
     }
   };
 
@@ -71,6 +68,9 @@ export async function recurringRoutes(app: FastifyInstance) {
     { schema: { params: IdParams, response: { 200: z.object({ ok: z.boolean() }) } } },
     async (req) => {
       await deleteTemplate(app.db, req.session!.userId, req.params.id);
+      // template deletion changes getForecast()'s cached() output (cashflow.ts
+      // reads recurringTemplates directly), so this must still invalidate.
+      app.eventBus.emit("ledger.mutated", { userId: req.session!.userId });
       return { ok: true };
     },
   );

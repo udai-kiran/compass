@@ -11,7 +11,7 @@
     "db:seed": "node --env-file-if-exists=../../.env src/db/seed.ts",
     "db:bootstrap": "node --env-file-if-exists=../../.env src/db/bootstrap.ts",
     "db:restore": "node --env-file-if-exists=../../.env src/db/restore.ts",
-    "test": "node --test \"src/**/*.test.ts\"",
+    "test": "node --env-file-if-exists=../../.env --test \"src/**/*.test.ts\"",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
