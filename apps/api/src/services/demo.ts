@@ -30,21 +30,25 @@ import { findUserByEmail } from "../repositories/users.ts";
 /** ₹ → paise. Amounts throughout the seed are written in rupees for readability. */
 const r = (rupees: number): number => Math.round(rupees * 100);
 
-/** YYYY-MM-DD for a date `monthsAgo` months back, on day `day`. */
+/** YYYY-MM-DD for a date `monthsAgo` months back, on day `day`. Uses UTC
+ * calendar fields throughout (matching this app's LEDGER_DAY_TZ=UTC
+ * convention, e.g. services/recurring.ts's todayIso()) so the result is
+ * deterministic regardless of the server's local wall-clock time-of-day or
+ * timezone — a local-time/UTC-serialization mismatch here previously
+ * produced the wrong date in positive-UTC-offset timezones near midnight. */
 function monthDay(monthsAgo: number, day: number): string {
-  const d = new Date();
-  d.setDate(1);
-  d.setMonth(d.getMonth() - monthsAgo);
-  d.setDate(day);
-  return d.toISOString().slice(0, 10);
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - monthsAgo, day))
+    .toISOString()
+    .slice(0, 10);
 }
 
-/** "YYYY-MM" period key for `monthsAgo` months back. */
+/** "YYYY-MM" period key for `monthsAgo` months back. Same UTC-based approach as monthDay. */
 function monthKey(monthsAgo: number): string {
-  const d = new Date();
-  d.setDate(1);
-  d.setMonth(d.getMonth() - monthsAgo);
-  return d.toISOString().slice(0, 7);
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - monthsAgo, 1))
+    .toISOString()
+    .slice(0, 7);
 }
 
 const MONTHS = 6; // how much history to generate

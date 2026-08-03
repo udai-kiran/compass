@@ -22,12 +22,13 @@ test("monthDay produces a valid YYYY-MM-DD for the requested day", () => {
 });
 
 test("monthDay steps whole months back without day overflow", () => {
-  // Anchoring to day 1 before shifting the month avoids e.g. Mar-31 → Mar-03.
+  // Compares against a UTC-based expectation so this doesn't itself become a
+  // rarer local-vs-UTC flake source now that monthDay is UTC-based.
   const now = new Date();
-  const back3 = new Date(monthDay(3, 15));
-  const expected = new Date(now.getFullYear(), now.getMonth() - 3, 15);
-  assert.equal(back3.getFullYear(), expected.getFullYear());
-  assert.equal(back3.getMonth(), expected.getMonth());
+  const expected = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 3, 15))
+    .toISOString()
+    .slice(0, 10);
+  assert.equal(monthDay(3, 15), expected);
 });
 
 test("monthKey is the YYYY-MM prefix and negative args go to the future", () => {
