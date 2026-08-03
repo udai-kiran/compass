@@ -49,7 +49,7 @@ import { searchRoutes } from "./routes/search.ts";
 import { backupRoutes } from "./routes/backup.ts";
 import { aiRoutes } from "./routes/ai.ts";
 import { aiEventRoutes } from "./routes/ai-events.ts";
-import { projectionSettingsRoutes } from "./routes/projection-settings.ts";
+import { planningRoutes } from "./modules/planning/plugin.ts";
 import { profileRoutes } from "./routes/profile.ts";
 import { inboxRoutes } from "./routes/inbox.ts";
 import { mailboxRoutes } from "./routes/mailboxes.ts";
@@ -86,6 +86,56 @@ export function registerLedgerCacheSubscriber(app: FastifyInstance): void {
     await invalidateUserCache(app.redis, userId);
     await enqueueBudgetEvaluation(app, userId);
   });
+}
+
+/**
+ * Registers every application route module (not the HTTP-level `multipart`/
+ * `compress` plugins, which stay in `buildApp()` since they aren't routes).
+ * Same 39 registrations, same order, as `buildApp()` always had — extracted so
+ * a hermetic test (`app.route-snapshot.test.ts`) can build a minimal Fastify
+ * instance around just this function and snapshot the resulting route table
+ * without booting Postgres/Redis/storage/jobs/auth/security.
+ */
+export async function registerRoutes(app: FastifyInstance): Promise<void> {
+  await app.register(healthRoutes);
+  await app.register(authRoutes);
+  await app.register(accountRoutes);
+  await app.register(categoryRoutes);
+  await app.register(transactionRoutes);
+  await app.register(transferRoutes);
+  await app.register(attachmentRoutes);
+  await app.register(transactionLinkRoutes);
+  await app.register(importRoutes);
+  await app.register(ruleRoutes);
+  await app.register(budgetRoutes);
+  await app.register(dashboardRoutes);
+  await app.register(notificationRoutes);
+  await app.register(recurringRoutes);
+  await app.register(goalRoutes);
+  await app.register(sipRoutes);
+  await app.register(cashflowRoutes);
+  await app.register(billRoutes);
+  await app.register(cardRoutes);
+  await app.register(emiRoutes);
+  await app.register(retirementRoutes);
+  await app.register(accountNpsRoutes);
+  await app.register(bankDetailsRoutes);
+  await app.register(overdraftDetailsRoutes);
+  await app.register(insuranceRoutes);
+  await app.register(holdingRoutes);
+  await app.register(netWorthRoutes);
+  await app.register(insightRoutes);
+  await app.register(reportRoutes);
+  await app.register(searchRoutes);
+  await app.register(backupRoutes);
+  await app.register(aiRoutes);
+  await app.register(aiEventRoutes);
+  await app.register(planningRoutes);
+  await app.register(profileRoutes);
+  await app.register(inboxRoutes);
+  await app.register(mailboxRoutes);
+  await app.register(resourceRoutes);
+  await app.register(userTaskRoutes);
 }
 
 export async function buildApp(config: Config): Promise<FastifyInstance> {
@@ -172,45 +222,7 @@ export async function buildApp(config: Config): Promise<FastifyInstance> {
   // gzip/brotli JSON responses above ~1KB (transaction pages, reports, aggregates).
   // Skips small bodies where compression overhead isn't worth it.
   await app.register(compress, { global: true, threshold: 1024 });
-  await app.register(healthRoutes);
-  await app.register(authRoutes);
-  await app.register(accountRoutes);
-  await app.register(categoryRoutes);
-  await app.register(transactionRoutes);
-  await app.register(transferRoutes);
-  await app.register(attachmentRoutes);
-  await app.register(transactionLinkRoutes);
-  await app.register(importRoutes);
-  await app.register(ruleRoutes);
-  await app.register(budgetRoutes);
-  await app.register(dashboardRoutes);
-  await app.register(notificationRoutes);
-  await app.register(recurringRoutes);
-  await app.register(goalRoutes);
-  await app.register(sipRoutes);
-  await app.register(cashflowRoutes);
-  await app.register(billRoutes);
-  await app.register(cardRoutes);
-  await app.register(emiRoutes);
-  await app.register(retirementRoutes);
-  await app.register(accountNpsRoutes);
-  await app.register(bankDetailsRoutes);
-  await app.register(overdraftDetailsRoutes);
-  await app.register(insuranceRoutes);
-  await app.register(holdingRoutes);
-  await app.register(netWorthRoutes);
-  await app.register(insightRoutes);
-  await app.register(reportRoutes);
-  await app.register(searchRoutes);
-  await app.register(backupRoutes);
-  await app.register(aiRoutes);
-  await app.register(aiEventRoutes);
-  await app.register(projectionSettingsRoutes);
-  await app.register(profileRoutes);
-  await app.register(inboxRoutes);
-  await app.register(mailboxRoutes);
-  await app.register(resourceRoutes);
-  await app.register(userTaskRoutes);
+  await registerRoutes(app);
 
   // Best-effort cleanup; in-flight microtask handlers may still reference closed resources.
   app.addHook("onClose", () => {

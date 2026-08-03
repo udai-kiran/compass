@@ -1,9 +1,9 @@
 import { eq } from "drizzle-orm";
 import type { ProjectionSettings, UpdateProjectionSettings } from "@compass/shared";
 import { UpdateProjectionSettingsSchema } from "@compass/shared";
-import type { Db } from "../db/index.ts";
-import { projectionSettings } from "../db/schema.ts";
-import { DEFAULT_EQUITY_RETURN_BPS } from "./goal-returns.ts";
+import type { Db } from "../../../db/index.ts";
+import { projectionSettings } from "../schema.ts";
+import { DEFAULT_EQUITY_RETURN_BPS } from "../../../services/goal-returns.ts";
 
 export async function getProjectionSettings(db: Db, userId: string): Promise<ProjectionSettings> {
   const row = await db.query.projectionSettings.findFirst({

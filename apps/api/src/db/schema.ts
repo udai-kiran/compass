@@ -17,6 +17,9 @@ import {
   uuid,
   type AnyPgColumn,
 } from "drizzle-orm/pg-core";
+import { users } from "./core-schema.ts";
+export { users } from "./core-schema.ts";
+export * from "../modules/planning/schema.ts";
 
 /**
  * Schema conventions:
@@ -25,29 +28,12 @@ import {
  *   sign convention: negative = outflow (expense), positive = inflow (income)
  * - timestamps: timestamptz, created_at/updated_at on every table
  * - soft delete / archive: *_at nullable timestamptz
+ *
+ * `users` lives in `./core-schema.ts` (a cycle-free leaf) and `projectionSettings`
+ * lives in `../modules/planning/schema.ts` — both re-exported from this barrel.
+ * See `modules/<domain>/` for the emerging module-scaffold convention that
+ * later Phase-1 tasks will extend to the rest of these tables.
  */
-
-export const users = pgTable("users", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  email: text("email").notNull().unique(),
-  passwordHash: text("password_hash").notNull(),
-  displayName: text("display_name").notNull(),
-  /** the seeded, read-only demo account; excluded from the owner-bootstrap count */
-  isDemo: boolean("is_demo").notNull().default(false),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
-
-/** Per-user assumptions used only for forward-looking goal projections. */
-export const projectionSettings = pgTable("projection_settings", {
-  userId: uuid("user_id")
-    .primaryKey()
-    .references(() => users.id, { onDelete: "cascade" }),
-  /** Broad-equity annual return assumption (1200 = 12%). */
-  equityReturnBps: integer("equity_return_bps").notNull().default(1200),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
 
 /** Per-user profile information. */
 export const userProfiles = pgTable("user_profiles", {

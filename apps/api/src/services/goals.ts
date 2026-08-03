@@ -19,7 +19,7 @@ import { buildGoalPlan } from "./goal-plan.ts";
 import { createNotification } from "./notifications.ts";
 import { incomeExpense, periodRange, prevPeriodKey, currentPeriodKey } from "./periods.ts";
 import { prefEnabled } from "./prefs.ts";
-import { getProjectionSettings } from "./projection-settings.ts";
+import { getProjectionSettings } from "../modules/planning/services/projection-settings.ts";
 import { committedForGoal } from "./sips.ts";
 import {
   accountAllocationClass,
