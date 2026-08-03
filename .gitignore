@@ -15,7 +15,6 @@ data/
 *.log
 .DS_Store
 
-tasks/
 .claude/
 
 .idea/
