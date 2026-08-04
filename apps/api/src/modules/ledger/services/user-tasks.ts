@@ -1,0 +1,182 @@
+import { and, eq, isNull, sql } from "drizzle-orm";
+import type { CreateUserTask, UpdateUserTask, UserTask } from "@compass/shared";
+import type { DbOrTx } from "../../../db/index.ts";
+import { transactions, userTasks } from "../schema.ts";
+import { HttpError } from "../../../lib/errors.ts";
+
+type UserTaskRow = typeof userTasks.$inferSelect;
+
+type TaskJoinRow = {
+  task: UserTaskRow;
+  txnId: string | null;
+  txnAccountId: string | null;
+  txnDate: string | null;
+  txnMerchant: string | null;
+  txnAmountPaise: number | null;
+};
+
+function toUserTask(row: TaskJoinRow): UserTask {
+  const { task } = row;
+  return {
+    id: task.id,
+    title: task.title,
+    notes: task.notes,
+    dueDate: task.dueDate,
+    completedAt: task.completedAt ? task.completedAt.toISOString() : null,
+    transactionId: task.transactionId,
+    transaction:
+      row.txnId !== null
+        ? {
+            id: row.txnId,
+            accountId: row.txnAccountId!,
+            date: row.txnDate!,
+            merchant: row.txnMerchant!,
+            amountPaise: row.txnAmountPaise!,
+          }
+        : null,
+    source: task.source as UserTask["source"],
+    sourceKey: task.sourceKey,
+    createdAt: task.createdAt.toISOString(),
+    updatedAt: task.updatedAt.toISOString(),
+  };
+}
+
+/**
+ * List/get ordering: incomplete before completed, then soonest due date first
+ * (nulls last), then most-recently-created first, with the id as a total
+ * tiebreak. `.orderBy(t.completedAt, ...)` can't express the boolean-cast
+ * completion grouping or an explicit `NULLS LAST`, so this is a raw `sql`
+ * expression — same style as `sql\`${goals.sortOrder} desc\`` in
+ * services/goals.ts.
+ */
+const TASK_ORDER = sql`(${userTasks.completedAt} is not null) asc, ${userTasks.dueDate} asc nulls last, ${userTasks.createdAt} desc, ${userTasks.id} asc`;
+
+/**
+ * Ownership predicate applied both at write time (create/update) and to the
+ * response-hydration join (see `taskQuery`) — a task's linked transaction must
+ * be active (not soft-deleted) and owned by the same user, or the link is
+ * rejected/hidden rather than exposed as usable. No-op if `transactionId` is
+ * null/undefined (an unlinked task).
+ */
+export async function assertOwnedActiveTransaction(
+  db: DbOrTx,
+  userId: string,
+  transactionId: string | null | undefined,
+): Promise<void> {
+  if (transactionId == null) return;
+  const row = await db.query.transactions.findFirst({
+    where: and(
+      eq(transactions.id, transactionId),
+      eq(transactions.userId, userId),
+      isNull(transactions.deletedAt),
+    ),
+    columns: { id: true },
+  });
+  if (!row) throw new HttpError(404, "Transaction not found");
+}
+
+function taskQuery(db: DbOrTx) {
+  return db
+    .select({
+      task: userTasks,
+      txnId: transactions.id,
+      txnAccountId: transactions.accountId,
+      txnDate: transactions.date,
+      txnMerchant: transactions.merchant,
+      txnAmountPaise: transactions.amountPaise,
+    })
+    .from(userTasks)
+    .leftJoin(
+      transactions,
+      and(
+        eq(transactions.id, userTasks.transactionId),
+        eq(transactions.userId, userTasks.userId),
+        isNull(transactions.deletedAt),
+      ),
+    );
+}
+
+export async function listUserTasks(db: DbOrTx, userId: string): Promise<UserTask[]> {
+  const rows = await taskQuery(db).where(eq(userTasks.userId, userId)).orderBy(TASK_ORDER);
+  return rows.map(toUserTask);
+}
+
+export async function getUserTask(db: DbOrTx, userId: string, id: string): Promise<UserTask> {
+  const rows = await taskQuery(db).where(and(eq(userTasks.id, id), eq(userTasks.userId, userId)));
+  if (rows.length === 0) throw new HttpError(404, "Task not found");
+  return toUserTask(rows[0]!);
+}
+
+export async function createUserTask(
+  db: DbOrTx,
+  userId: string,
+  input: CreateUserTask,
+): Promise<UserTask> {
+  await assertOwnedActiveTransaction(db, userId, input.transactionId);
+  // Explicit column whitelist, not `{ ...input, userId }` — TypeScript is not a
+  // runtime boundary, and this is the one place that could otherwise let an
+  // internal caller, future route, or unsafe cast smuggle `source`/`sourceKey`
+  // (e.g. `source: 'card-due'`) past the Zod-stripped HTTP body. `source` and
+  // `sourceKey` are deliberately absent here, so every task created through
+  // this path gets the column defaults (`source: 'user'`, `sourceKey: null`).
+  const rows = await db
+    .insert(userTasks)
+    .values({
+      userId,
+      title: input.title,
+      notes: input.notes,
+      dueDate: input.dueDate,
+      transactionId: input.transactionId,
+    })
+    .returning();
+  // A second lookup (not the insert's own returning row) so the response's
+  // transaction projection is hydrated identically to list/get — creation is
+  // not a hot path.
+  return getUserTask(db, userId, rows[0]!.id);
+}
+
+export async function updateUserTask(
+  db: DbOrTx,
+  userId: string,
+  id: string,
+  input: UpdateUserTask,
+): Promise<UserTask> {
+  const { completed, transactionId, title, notes, dueDate } = input;
+  if (transactionId !== undefined) await assertOwnedActiveTransaction(db, userId, transactionId);
+
+  const values: Partial<UserTaskRow> = {};
+  if (title !== undefined) values.title = title;
+  if (notes !== undefined) values.notes = notes;
+  if (dueDate !== undefined) values.dueDate = dueDate;
+  if (transactionId !== undefined) values.transactionId = transactionId;
+  // Completion is a command, not a raw timestamp — the server, never the
+  // client, sets completedAt to its own current time.
+  if (completed !== undefined) values.completedAt = completed ? new Date() : null;
+
+  if (Object.keys(values).length > 0) {
+    // updatedAt is only bumped when something actually changed.
+    const rows = await db
+      .update(userTasks)
+      .set({ ...values, updatedAt: new Date() })
+      .where(and(eq(userTasks.id, id), eq(userTasks.userId, userId)))
+      .returning({ id: userTasks.id });
+    if (rows.length === 0) throw new HttpError(404, "Task not found");
+  } else {
+    // Empty-object PATCH: a no-op, but still 404s if the task isn't owned.
+    const existing = await db.query.userTasks.findFirst({
+      where: and(eq(userTasks.id, id), eq(userTasks.userId, userId)),
+      columns: { id: true },
+    });
+    if (!existing) throw new HttpError(404, "Task not found");
+  }
+
+  return getUserTask(db, userId, id);
+}
+
+export async function deleteUserTask(db: DbOrTx, userId: string, id: string): Promise<void> {
+  const rows = await db
+    .delete(userTasks)
+    .where(and(eq(userTasks.id, id), eq(userTasks.userId, userId)))
+    .returning({ id: userTasks.id });
+  if (rows.length === 0) throw new HttpError(404, "Task not found");
+}

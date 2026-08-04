@@ -16,9 +16,9 @@ import type { Db } from "../db/index.ts";
 import { insuranceHealthCards, insurancePolicies, transactions } from "../db/schema.ts";
 import { HttpError } from "../lib/errors.ts";
 import type { Storage } from "../lib/storage.ts";
-import { assertUploadable } from "./attachments.ts";
-import { createTransaction } from "./transactions.ts";
-import { assertOwnedResource } from "./resources.ts";
+import { assertUploadable } from "../modules/ledger/services/attachments.ts";
+import { createTransaction } from "../modules/ledger/services/transactions.ts";
+import { assertOwnedResource } from "../modules/ledger/services/resources.ts";
 
 type PolicyRow = typeof insurancePolicies.$inferSelect;
 type HealthCardRow = typeof insuranceHealthCards.$inferSelect;

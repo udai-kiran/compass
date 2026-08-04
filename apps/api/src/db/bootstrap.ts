@@ -13,7 +13,7 @@ import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { loadConfig } from "../config.ts";
 import { createPool } from "../infra/db.ts";
 import { createUser, findUserByEmail } from "../repositories/users.ts";
-import { seedDefaultCategories } from "../services/categories.ts";
+import { seedDefaultCategories } from "../modules/ledger/services/categories.ts";
 import { createDb, type Db } from "./index.ts";
 
 const MIN_PASSWORD_LENGTH = 8;

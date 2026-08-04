@@ -17,8 +17,8 @@ import {
 } from "../db/schema.ts";
 import { HttpError } from "../lib/errors.ts";
 import { incomeExpense } from "./periods.ts";
-import { createTransaction } from "./transactions.ts";
-import { linkTransfer, TRANSFER_WINDOW_DAYS } from "./transfers.ts";
+import { createTransaction } from "../modules/ledger/services/transactions.ts";
+import { linkTransfer, TRANSFER_WINDOW_DAYS } from "../modules/ledger/services/transfers.ts";
 import {
   acceptExtracted,
   acceptRepayment,

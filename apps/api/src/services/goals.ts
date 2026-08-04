@@ -11,8 +11,8 @@ import { CreateGoalSchema, isRetirementAccount, ReorderGoalsSchema } from "@comp
 import type { Db } from "../db/index.ts";
 import { alertLedger, goals, holdingEvents, retirementDetails, transactions } from "../db/schema.ts";
 import { HttpError } from "../lib/errors.ts";
-import { listAccounts } from "./accounts.ts";
-import { getPortfolio } from "./holdings.ts";
+import { listAccounts } from "../modules/ledger/services/accounts.ts";
+import { getPortfolio } from "../modules/investments/services/holdings.ts";
 import { accountReturnBps, holdingReturnBps } from "./goal-returns.ts";
 import { projectGoal } from "./goal-projection.ts";
 import { buildGoalPlan } from "./goal-plan.ts";
@@ -20,7 +20,7 @@ import { createNotification } from "./notifications.ts";
 import { incomeExpense, periodRange, prevPeriodKey, currentPeriodKey } from "./periods.ts";
 import { prefEnabled } from "./prefs.ts";
 import { getProjectionSettings } from "../modules/planning/services/projection-settings.ts";
-import { committedForGoal } from "./sips.ts";
+import { committedForGoal } from "../modules/investments/services/sip-commitments.ts";
 import {
   accountAllocationClass,
   allocationPercentages,

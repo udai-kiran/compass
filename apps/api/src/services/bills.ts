@@ -5,7 +5,7 @@ import type { Db } from "../db/index.ts";
 import { recurringTemplates, subscriptionDismissals, alertLedger } from "../db/schema.ts";
 import { createNotification } from "./notifications.ts";
 import { prefEnabled } from "./prefs.ts";
-import { advanceDate } from "./recurring.ts";
+import { advanceDate } from "../modules/ledger/services/recurring.ts";
 
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);

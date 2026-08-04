@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { currentPeriodKey, periodRange, prevPeriodKey } from "./periods.ts";
-import { advanceDate } from "./recurring.ts";
+import { advanceDate } from "../modules/ledger/services/recurring.ts";
 
 test("periodRange handles month lengths and years", () => {
   assert.deepEqual(periodRange("monthly", "2026-07"), { from: "2026-07-01", to: "2026-07-31" });

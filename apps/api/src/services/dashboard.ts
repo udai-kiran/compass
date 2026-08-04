@@ -12,7 +12,7 @@ import {
   periodRange,
   spentByCategory,
 } from "./periods.ts";
-import { listTransactions } from "./transactions.ts";
+import { listTransactions } from "../modules/ledger/services/transactions.ts";
 
 const TTL = 300;
 

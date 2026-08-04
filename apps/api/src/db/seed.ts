@@ -1,7 +1,7 @@
 import argon2 from "argon2";
 import { eq } from "drizzle-orm";
 import { loadConfig } from "../config.ts";
-import { seedDefaultCategories } from "../services/categories.ts";
+import { seedDefaultCategories } from "../modules/ledger/services/categories.ts";
 import { createPool } from "../infra/db.ts";
 import { createDb } from "./index.ts";
 import { users } from "./schema.ts";

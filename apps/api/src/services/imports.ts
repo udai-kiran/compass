@@ -22,9 +22,9 @@ import {
 import { parseAmountCell, parseCsv, parseDateCell } from "../lib/csv.ts";
 import { HttpError } from "../lib/errors.ts";
 import { parseHdfcStatement } from "../lib/hdfc-statement.ts";
-import { getMerchantRules, normalizeMerchant } from "./merchants.ts";
+import { getMerchantRules, normalizeMerchant } from "../modules/ledger/services/merchants.ts";
 import { reconcileStatementTransactions } from "./import-reconciliation.ts";
-import { autoLinkTransfers } from "./transfers.ts";
+import { autoLinkTransfers } from "../modules/ledger/services/transfers.ts";
 
 export const MAX_IMPORT_BYTES = 25 * 1024 * 1024;
 const BATCH = 1000;
