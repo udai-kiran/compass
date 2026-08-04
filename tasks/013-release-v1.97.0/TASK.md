@@ -1,7 +1,56 @@
 # Task: v1.97.0 release — commit, PR, merge, tag
 
 ## Status
-IMPLEMENTING
+COMPLETE — v1.97.0 shipped
+
+## Outcome
+- Commits `02964b5` (protection migration, 22 files, +2529/-51) and `b4cc143` (task records, 55 files,
+  +11013) on branch `refactor/module-migration-phase1-protection`.
+- PR #160 merged as merge commit **`d3155a6`**, matching repo history style. All 6 checks green:
+  `audit` 48s, `check` 3m16s, `publish` api/web/ingestor/extractor.
+- The `check` job passing again confirms the `apps/extractor` `DATABASE_URL` failure is **local-only** —
+  CI provisions a DB — exactly as task 012 predicted.
+- Tag `v1.97.0` created after merge and pushed; `git describe --tags` reports `v1.97.0` clean, no
+  `-N-g` suffix. Duplicate-tag guard checked local and remote first, both empty.
+- Publish run `30905463054` succeeded: api 50s, web 1m50s, ingestor 50s, extractor 55s.
+- **AC2 held:** `tasks/001-engineer-routing-memory/` was never staged and remains untracked. Both
+  pre-commit greps for `.pdf|data/|.env|Pasted image|001-engineer-routing-memory` returned no matches.
+
+### Loose end (cosmetic, not a defect)
+`ci-1.md`, `commit-pr-1.md` and `release-1.md` under this directory are untracked: commit 2 staged
+`tasks/013-release-v1.97.0` *before* those files existed. The release record is therefore on disk but
+not in git. Harmless — committing them now would put `main` one commit ahead of the `v1.97.0` tag.
+
+### Contrast with task 012
+Both blockers that stopped the previous release were gone this time: `gh auth` valid (exit 0), and the
+`npm audit --omit=dev --audit-level=high` hard gate clean at 0 vulnerabilities. No `audit fix` needed.
+
+## Coordinator error, recorded
+Excluding `tasks/001-engineer-routing-memory/` did **not** keep the credential out of history. Two
+files that *documented* the finding quoted the offending strings verbatim, and both were committed in
+`b4cc143` (merged `d3155a6`, inside tag `v1.97.0`):
+- `tasks/013-release-v1.97.0/secret-scan-1.md` — the scan report quoted every matching line.
+- `tasks/013-release-v1.97.0/TASK.md` — this file's own secret-scan section did the same.
+
+Both are now redacted, but **the strings remain in git history and in the `v1.97.0` tag.**
+
+Lesson: a secret-scan report is itself a secret-bearing artefact. Redact at the point of writing, cite
+`file:line` and classification without reproducing the value, and scan the *report* before committing
+it. Excluding the source file is not sufficient when the finding is documented elsewhere.
+
+Corrected assessment of what was actually newly disclosed:
+- credential pair + MinIO host IP — genuinely new to history
+- `192.168.2.196` — already in committed `.env.example:18,20`
+- bucket name — already in committed `apps/api/src/config.ts:21` as the `S3_BUCKET` default
+
+History rewrite was **not** chosen: the repo is private, and rewriting would break the published
+`v1.97.0` tag and the merged PR. The durable mitigation is credential rotation, which is the user's
+call and is host-side.
+
+## Remaining (operator, outside this repo)
+- Bump `COMPASS_VERSION` on the host and run `make update`.
+- **Recommended:** rotate the dev Postgres password. The exposed pair is a weak default regardless of
+  this incident, and rotation neutralises the history exposure without a rewrite.
 
 ## Objective
 Bank the completed roadmap 1.4 (protection module migration) plus the accumulated task records as
@@ -28,15 +77,16 @@ Not applicable — a release, not a fix.
 Scanning the 66 candidate task files (800 KB) before staging found one genuinely new disclosure:
 
 **`tasks/001-engineer-routing-memory/` reproduces the user's private agent `MEMORY.md` verbatim** —
-`verification-1.md:84` carries the dev Postgres/Redis credential pair `postgres/postgres` at
-`192.168.2.196`, plus the MinIO host `pluto` / `172.31.0.7` / bucket `compass-files`, the CI runner
-count, and a note about the `gh` token's missing scope. `new-memory-content.md` is memory content by
-its very purpose.
+`verification-1.md:84` carries a literal dev Postgres/Redis `<REDACTED-CREDENTIAL-PAIR>` at
+`192.168.2.196`, plus the MinIO host `<REDACTED-HOSTNAME>` / `<REDACTED-INTERNAL-IP>` and its bucket,
+the CI runner count, and a note about the `gh` token's missing scope. `new-memory-content.md` is memory
+content by its very purpose.
 
 Verified against committed history: `192.168.2.196` **already** appears in `.env.example:18,20` (with a
 `CHANGE_ME` placeholder credential) and in `tasks/010-migrate-investments/implementation-1.md:227`, so
-the bare IP is not a new disclosure. But `postgres/postgres` and `172.31.0.7` have **zero** matches in
-history — they would be new.
+the bare IP is not a new disclosure. But the credential pair and the MinIO host IP had **zero** matches
+in history — they would be new. (The bucket name turned out to be already public via
+`apps/api/src/config.ts:21`'s `S3_BUCKET` default.)
 
 **Decision: exclude `tasks/001-engineer-routing-memory/` from the commit entirely** (all 4 files). It is
 agent-harness scratch about memory management, not project history, and the repo being private today is
