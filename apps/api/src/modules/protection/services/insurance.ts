@@ -12,13 +12,14 @@ import {
   LogPremiumSchema,
   UpdateInsurancePolicySchema,
 } from "@compass/shared";
-import type { Db } from "../db/index.ts";
-import { insuranceHealthCards, insurancePolicies, transactions } from "../db/schema.ts";
-import { HttpError } from "../lib/errors.ts";
-import type { Storage } from "../lib/storage.ts";
-import { assertUploadable } from "../modules/ledger/services/attachments.ts";
-import { createTransaction } from "../modules/ledger/services/transactions.ts";
-import { assertOwnedResource } from "../modules/ledger/services/resources.ts";
+import type { Db } from "../../../db/index.ts";
+import { insuranceHealthCards, insurancePolicies } from "../schema.ts";
+import { transactions } from "../../../db/schema.ts";
+import { HttpError } from "../../../lib/errors.ts";
+import type { Storage } from "../../../lib/storage.ts";
+import { assertUploadable } from "../../ledger/services/attachments.ts";
+import { createTransaction } from "../../ledger/services/transactions.ts";
+import { assertOwnedResource } from "../../ledger/services/resources.ts";
 
 type PolicyRow = typeof insurancePolicies.$inferSelect;
 type HealthCardRow = typeof insuranceHealthCards.$inferSelect;

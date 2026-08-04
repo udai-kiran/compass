@@ -19,7 +19,127 @@ coordinator's own direct re-verification, which is noted explicitly where it cor
 investigation.
 
 ## Status
-PLAN_REVIEW
+COMPLETE — implemented, independently verified, Codex-reviewed (`review-4.md`: **SHIP**, no blocking
+defects), and the one open documentation gap resolved. **Not committed** — the change sits in the
+working tree; committing requires an explicit user request and an explicit file list.
+
+Final evidence (coordinator read the literal output, not a summary):
+- `apps/api` **842/842 pass, 0 fail, exit 0** — the +5 delta (2 schema-smoke + 1 plugin + 2 demo-403)
+  over the 837 baseline, exactly as AC5 predicted after the arithmetic was corrected.
+- `typecheck` exit 0, `lint` exit 0 across all 7 workspaces.
+- Root `npm run test` exit 1 **solely** from the pre-existing `apps/extractor` `DATABASE_URL` gap,
+  traced by stack trace to `statement-duplicate.test.ts:30`; web 264/264, shared 212/212, ai 32/32,
+  ingestor 12/12 all green. Waiver holds — no second failure anywhere.
+- Both route snapshots byte-identical to HEAD (sha256 `a368d4eb…` / `7800feb9…`). The raw-tree
+  prediction from `review-1.md` NB1 proved right: wrapping two already-adjacent registrations changed
+  nothing.
+- `db:generate` zero diff (139-file content-hash manifest); the 4 moved files diff import-lines-only
+  against HEAD, one of them byte-identical; no `userId` predicate gained or lost anywhere.
+
+### Prior status: APPROVED — `review-3.md` returned **IMPLEMENTATION-READY** after three plan-review rounds.
+
+Codex independently confirmed: the 1.9→1.10 dependency edge is the correct and *sufficient* gate (it
+checked the whole roadmap dependency inventory — no other task depends on 1.4 and no other file claims
+to close Phase 1); 1.10's 5 criteria are actionable and preserve the original requirement's substance;
+the declined README row-reordering creates no real risk; and the `backup.test.ts:275` characterization
+is accurate. Its one leftover nit — `route-table.snapshot.txt` sitting under "Modified files" — was
+presentational and is now clarified in Scope.
+
+### Review-2 disposition (Codex, `review-2.md`; verdict NOT IMPLEMENTATION-READY)
+B2 confirmed resolved (+5 → 842 verified correct by the reviewer against all three precedent files);
+NB1–NB5 confirmed applied faithfully; **NB6 accepted** — the reviewer agreed the no-storage-decoration
+warning protects the intended failure mode. One new blocking finding on B1, **accepted and
+coordinator-verified directly**, plus one factual correction to the coordinator's own wording:
+
+- **The carve-out was honest but unenforceable.** Verified: `01.09` closes Phase 1 and depends on
+  1.1–1.8 only; `02.01` depends on `[1.9]`. 1.10 could therefore be stranded at `todo` forever. Fixed
+  by Scope-decision-2 (add `1.10` to 1.9's `depends:`), plus 5 concrete ACs for 1.10 so it cannot be a
+  placeholder. Half the correction (listing 1.10 *before* 1.9 in the README) is declined with reason.
+- **"No storage test of any kind exists" was false.** Verified at `backup.test.ts:275` — a typed
+  `Storage` stub does exist. Wording corrected to "no disk-or-S3 backend contract test exists." On
+  inspection this *strengthens* the case for 1.10: that stub's `put`/`get` throw and its comment states
+  storage is never touched, so no test anywhere exercises a real backend.
+
+### Review-1 disposition (Codex, `review-1.md`; verdict NOT IMPLEMENTATION-READY)
+Both blocking findings **accepted**. Coordinator re-verified each against the code rather than
+relaying; one correction goes *further* than the reviewer.
+
+- **B1 — AC2 weakened the roadmap's storage criterion. Valid.** `tasks/01.04-migrate-protection.md:16`
+  literally requires upload/download to "still work against both S3 and disk storage"; the old AC2
+  offered structural continuity and openly declined any run. Coordinator-verified: **no disk-or-S3
+  backend contract test exists** (`apps/api/src/lib/storage.ts` has no `storage.test.ts` sibling).
+  *Corrected in review-2 (accepted):* the earlier phrasing "no storage test of any kind" was wrong —
+  `services/backup.test.ts:275` defines a typed `Storage` stub. Coordinator-verified that this
+  strengthens rather than weakens the case: that stub's `put`/`get` **throw**, and its own comment says
+  storage "is never actually touched by this fixture." So no test anywhere exercises a real backend.
+  Building a live disk + MinIO contract gate would mean inventing new
+  test infrastructure inside a 4-file relocation — which collides with the standing 1.1/1.3 rule
+  "preserve existing coverage exactly, do not close pre-existing gaps." **Resolution: take Codex's own
+  sanctioned second branch — amend the roadmap criterion explicitly and track the real verification as
+  its own task**, rather than silently claiming AC2 satisfies it. See Scope-decision-1.
+- **B2 — AC5 arithmetic contradictory. Valid, and Codex also undercounted.** Codex said "+4 (1 smoke
+  + 1 plugin + 2 demo-403), baseline 841" — but it took the plan's erroneous "1 smoke" at face value.
+  Coordinator-verified against all three existing modules: every `schema.smoke.test.ts` is **2**
+  `test()` cases, one for tables and one for owned enums (`credit` 25/35, `ledger` 36/46,
+  `investments` 36/46). Protection mirrors that, so the true delta is **+5** (2 smoke + 1 plugin +
+  2 demo-403), baseline 837 → **842**. AC5 rewritten accordingly.
+
+Non-blocking findings NB1–NB5 all accepted and folded in (raw snapshot expected *unchanged*; "54
+matching lines"; "must not change, enforced by the snapshot"; **four** ledger-service import
+statements; PPF fixture strengthens the mutation assertion rather than being needed for the 403).
+NB6 (over-engineering) **partially declined**: the no-storage-decoration paragraph is retained
+deliberately, because its whole purpose is to stop an implementer from "helpfully" decorating a stub
+and destroying the test's failure mode. That is guidance, not ceremony.
+
+### Scope-decision-1: the dual-backend storage criterion is amended, not quietly dropped
+`tasks/01.04-migrate-protection.md:16` is rewritten to state what this relocation can actually prove
+(the `Storage` seam is structurally unchanged), and the live disk-vs-S3 upload/download verification
+is carved out into a new tracked roadmap task **1.10**, `depends: [1.4]`. This is the first
+roadmap-prose change this task makes — the earlier claim that it makes none no longer holds. The
+amendment and the new task file are implementer edits (roadmap files are project content), delegated,
+not written by the coordinator.
+
+### Scope-decision-2: task 1.9 must depend on 1.10, or the carve-out is unenforceable
+Raised by `review-2.md` as blocking; **accepted, coordinator-verified directly.**
+`tasks/01.09-cross-module-ports.md:10` says it "Closes Phase 1" and its frontmatter (`:7`) reads
+`depends: [1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8]`; `tasks/02.01-postings-model.md:7` reads
+`depends: [1.9]`. So with `1.10 depends: [1.4]` alone, 1.9 could close Phase 1 and unblock all of
+Phase 2 while the storage verification sat at `todo` forever — a deferral with no gate is just a
+deletion with extra steps. **Fix: add `1.10` to 1.9's `depends:` list.** That single edit is what
+actually makes the carve-out binding.
+
+**One half of the reviewer's correction is declined:** it also asked that 1.10 be listed *before* 1.9
+in `tasks/README.md`. The README table is an index ordered by id, so the row goes in numeric position
+after 1.9. Row order is cosmetic; the `depends:` edge is the enforcement, and it is now present.
+
+### 1.10's required acceptance criteria — specified here so it cannot become a parking lot
+`review-2.md` correctly objected that "the stated frontmatter" plus an existence check would permit an
+empty placeholder. The new file must therefore carry these ACs:
+- Exercises **both real backends** — a temporary disk-backed store and an S3-compatible backend
+  (MinIO) — not a mock or stub standing in for either.
+- Covers **both** protection resource types: policy documents and health cards.
+- For each resource type against each backend: upload, then download, asserting the bytes returned are
+  **identical** to the bytes uploaded, plus delete.
+- Documents backend setup/teardown and the exact command or CI environment used to run it.
+- **Fails loudly if either backend is skipped** or silently replaced by a stub — a green run that
+  quietly tested one backend is the exact failure mode 1.4 is deferring, and must not recur.
+
+### Post-implementation finding — RESOLVED
+`tasks/01.04-migrate-protection.md` was flipped to `status: done` with its 3 acceptance-criteria
+checkboxes still `- [ ]` and no implementation-record pointer, breaking the convention every completed
+predecessor follows (`01.01` and `01.02` tick five `- [x]` each; `01.03:15-27` also annotates each box
+with evidence and closes with a "Full implementation record" paragraph).
+
+Found by the coordinator on a direct read; **independently re-found by the verifier**. Codex
+`review-4.md`:299 saw it but mischaracterised it as "matches the existing roadmap style" — it does not,
+and that framing was rejected after checking all three predecessors directly. This is the standing
+reason reviewer conclusions are validated rather than relayed.
+
+Fixed: all 3 boxes ticked with their actual evidence, plus the record paragraph. Coordinator-verified
+by direct read of the final file. One worker-reported "discrepancy" (that criterion 2 still held the
+old dual-backend wording) was **investigated and dismissed** — it was a `git diff`-vs-`HEAD` artefact,
+since the amendment was already applied in the uncommitted working tree; the `-` line shown was HEAD's
+text, not the pre-edit state.
 
 ## Objective
 Move the protection domain — `services/insurance.ts`, `services/retirement.ts`,
@@ -132,13 +252,18 @@ levels deeper):
   `fastify-type-provider-zod` and `@compass/shared` are bare specifiers, unaffected.
 
 **Zero imports to a still-flat sibling service exist in either protection file** — unlike investments
-(`goal-allocation.ts`, `ownership.ts`) or credit. Three imports already point at
-`modules/ledger/services/*` (task 1.1 repointed them) and need only the depth adjustment above.
+(`goal-allocation.ts`, `ownership.ts`) or credit. **Four** import statements already point at
+`modules/ledger/services/*` (task 1.1 repointed them) and need only the depth adjustment above:
+`routes/insurance.ts:12` → attachments, `services/insurance.ts:19` → attachments, `:20` →
+transactions, `:21` → resources. (The prose previously said three; the operative list in (c) was
+already complete and correct — `review-1.md` NB4.)
 
 ### Cross-module consumers of protection TABLES — a gap in `investigation-1.md`, found by the coordinator
 `investigation-1.md` §5 scoped its search to imports of protection *files* and therefore missed
 consumers of protection *tables*. A direct grep for the 3 table identifiers across `apps/` returns
-**54 occurrences in exactly 6 files** — proof of exhaustiveness by count, not by sampling:
+**54 matching lines in exactly 6 files** (65 identifier tokens — the two counts differ because several
+lines name a table twice; Codex `review-1.md` NB2 supplied the token column and the coordinator adopted
+the precise phrasing) — proof of exhaustiveness by count, not by sampling:
 
 | File | Occurrences | Nature |
 |---|---|---|
@@ -194,8 +319,13 @@ Known-traps obligation by proving an existing route test still passed), and like
    two independent registrations and covering one would leave the other's hook inheritance unproven:
    - `POST /api/insurance/policies` — plain JSON body, unambiguously mutating; a fresh user has zero
      policies, so the no-mutation assertion is a trivial row count on `insurance_policies`.
-   - `PUT /api/retirement/:accountId/details` — needs one `accounts` row of type `ppf` as a fixture;
-     the no-mutation assertion is that no `retirement_details` row exists afterwards.
+   - `PUT /api/retirement/:accountId/details` — creates one `accounts` row of type `ppf` as a fixture;
+     the no-mutation assertion is that no `retirement_details` row exists afterwards. **The fixture is
+     not needed to obtain the 403** — the root `onRequest` hook rejects `PUT` before validation and
+     handler execution. It is retained because it *strengthens* the mutation assertion: if the hook
+     ever regressed, the handler would reach `ownedRetirementAccount` and then the write, so the
+     fixture is what lets a regressed request actually progress far enough to be caught
+     (`review-1.md` NB5).
 
    Each test asserts **both** the 403 and the absence of the underlying mutation, matching the strength
    of task 1.1's `user-tasks.route.test.ts` and 1.3's `networth.route.test.ts` precedent — never the
@@ -214,8 +344,19 @@ behaviour.
 order** (retirement first, then insurance), and `app.ts` must place the single
 `await app.register(protectionRoutes);` at line 123's position. Because the two calls are already
 adjacent and already in order, this is the least disruptive registration change of any migration so
-far: the canonical `(method, path)` surface cannot change, and the raw `printRoutes()` tree should
-differ only by plugin nesting.
+far: the canonical `(method, path)` surface **must not change, and that is enforced by the canonical
+snapshot test** (`app.route-snapshot.test.ts` records every `onRoute` method/path pair, detects
+duplicates, sorts, and compares exact bytes) — restructuring does not *guarantee* preservation, a typo
+could still break it, which is precisely why the gate exists (`review-1.md` NB3).
+
+**The raw `printRoutes()` tree is expected to be byte-identical too** (`review-1.md` NB1, adopted):
+`printRoutes()` renders the URL radix tree, not Fastify encapsulation boundaries, so wrapping two
+already-adjacent, already-in-order registrations in a plugin changes nothing. Codex independently
+registered the current two route plugins both directly and through an in-memory wrapper and got
+byte-identical output. This is unlike 1.2/1.3, whose raw trees moved only because previously
+interleaved registrations were reordered. Therefore `route-table.snapshot.txt` is **regenerated as a
+check, with an empty diff as the expected and correct result** — a non-empty diff is a finding to
+explain in evidence, not a change to accept.
 
 `investigation-1.md` §12 records the current protection lines: 19 in `route-surface.snapshot.txt`
 (14 real + 5 Fastify auto-`HEAD`, one per distinct `GET` path) and 3 in `route-table.snapshot.txt`
@@ -229,8 +370,11 @@ exhaustively correct, and the stale `account-nps` mention that `tasks/010-migrat
 Scope-decision-1 promised to remove **is confirmed actually removed** (zero matches in the current
 text; `account-nps.ts` exists only under `modules/investments/`). No other roadmap file 01.05–01.09
 claims a protection route/service/table; `01.09`'s single mention is a forward-looking reference to
-the protection module existing. **Unlike 1.1/1.2/1.3, this task makes no roadmap-prose correction** —
-only the `status:` flip at the end.
+the protection module existing.
+
+**Superseded by Scope-decision-1:** the route/table/prose content is accurate, but AC line 16 (the
+dual-backend storage criterion) is amended and a new task 1.10 is added, so this task *does* make a
+roadmap change after all — just not a factual correction to the domain inventory.
 
 ### Baseline gate state (measured before any change)
 `typecheck` exit 0 and `lint` exit 0 across all 7 workspaces. `npm run test` exits **1**, solely
@@ -269,8 +413,23 @@ working tree. All "before" comparisons in this task baseline against the **worki
 **Modified files:**
 - `apps/api/src/app.ts` — 2 imports → 1; 2 registrations → 1 `await app.register(protectionRoutes);`
   at line 123's position; header comment extended with a 1.4 paragraph in the established style
-- `apps/api/src/route-table.snapshot.txt` — regenerated, diff reviewed in evidence
-- `tasks/01.04-migrate-protection.md`, `tasks/README.md` — `status: todo` → `done` (last step only)
+- `apps/api/src/route-table.snapshot.txt` — **regenerated/processed, but expected to end byte-identical**;
+  it is listed here because the command touches it, not because its content should change. An empty diff
+  is the correct result; a non-empty diff is a finding to explain, not to accept. (`review-3.md` flagged
+  the "Modified files" placement as presentationally misleading; clarified rather than moved, since the
+  file *is* rewritten by the regeneration step.)
+- `tasks/01.04-migrate-protection.md` — AC line 16 amended per Scope-decision-1, **and** `status: todo`
+  → `done` (the status flip is the last step only)
+- `tasks/README.md` — 1.4 row `todo` → `done`, plus a new 1.10 index row
+
+**New roadmap file (Scope-decision-1):**
+- `tasks/01.10-storage-backend-contract-tests.md` — `id: "1.10"`, `phase: "1 — Module migration"`,
+  `release: "2.0.0"`, `status: todo`, `depends: [1.4]`. Owns the live disk-vs-S3 upload/download
+  verification that 1.4 cannot honestly discharge, and notes that the only `Storage` in any test today
+  is `backup.test.ts:275`'s deliberately-throwing stub, so 1.10 must **create** the harness, not extend
+  one. Its acceptance criteria are specified concretely below, not left as a stub.
+- `tasks/01.09-cross-module-ports.md` — `depends:` extended from `[1.1 … 1.8]` to include `1.10`
+  (Scope-decision-2)
 
 **Deleted files:** `apps/api/src/routes/insurance.ts`, `apps/api/src/routes/retirement.ts`,
 `apps/api/src/services/insurance.ts`, `apps/api/src/services/retirement.ts` — **4 old production
@@ -304,9 +463,10 @@ paths**, moved not duplicated. There are no old test-file locations, because no 
 - P6: Confirm the 4 original flat paths no longer exist (nonexistence confirmation and cleanup — the
   moves in P3/P4 are where deletion actually happens).
 - P7: Compare (do **not** regenerate) the canonical surface against P1's baseline and the committed
-  file; separately regenerate `route-table.snapshot.txt` and paste the diff in evidence with the
-  3-part reviewer checklist (leaf content matches the canonical set; only ordering/grouping/glyphs/
-  nesting differ; no unexpected constraint or duplicate branch).
+  file; separately regenerate `route-table.snapshot.txt`, **expecting an empty diff**, and paste the
+  result in evidence. If the diff is non-empty, do not silently accept it — apply the 3-part reviewer
+  checklist (leaf content matches the canonical set; only ordering/grouping/glyphs/nesting differ; no
+  unexpected constraint or duplicate branch) and report it as a deviation for coordinator review.
 - P8: Add `protection.route.test.ts` — the 2 demo-403 tests per Root Cause. May run before or after
   P7 with no consequence.
 - P9: `npm run db:generate` — zero diff, proven by a content-hash manifest of `apps/api/drizzle/`
@@ -314,26 +474,41 @@ paths**, moved not duplicated. There are no old test-file locations, because no 
 - P10: `backup.test.ts` passes unmodified — no `backup.ts` edit.
 - P11: Full gate — `npm run typecheck`, `npm run lint`, `npm run test`. Read the complete `git diff`
   directly to confirm no handler body or service logic changed beyond import specifiers (AC9).
+- P12: Scope-decision-1 and -2 roadmap work — (a) amend `tasks/01.04-migrate-protection.md:16` to the
+  structural wording in AC2; (b) create `tasks/01.10-storage-backend-contract-tests.md` with the stated
+  frontmatter **and the 5 concrete acceptance criteria listed in Scope-decision-1**, not a placeholder;
+  (c) add its `tasks/README.md` index row in numeric position after 1.9; (d) add `1.10` to
+  `tasks/01.09-cross-module-ports.md`'s `depends:` list. Only after P1–P11 pass, flip 1.4's `status:`
+  to `done` in both the task file and the README row.
 
 ## Acceptance Criteria
 - AC1 (roadmap): `route-surface.snapshot.txt` byte-identical before and after; `route-table.snapshot.txt`
-  regenerated with its diff reviewed in evidence; `npm run db:generate` produces a zero diff (content-hash
-  manifest before/after); `backup.test.ts` green with no `backup.ts` edit
-- AC2 (roadmap): policy-document and health-card upload/download still work — the `Storage` seam is
-  unchanged. Proven by: `assertUploadable`/`MAX_ATTACHMENT_BYTES` still imported from ledger (at the new
-  depth), the 4 storage endpoints still present in the unchanged canonical surface, all 7 `app.storage`
-  call sites and all 7 `Storage`-taking service signatures intact, and clean `typecheck`. **Explicitly
-  not claimed:** this task performs no live S3/MinIO-vs-disk upload run — no such test exists today and
-  creating one is out of scope. State this as a documented limitation in the evidence; do not assert
-  "verified against both backends" without a run
+  regenerated and **also expected byte-identical**, with the (expected empty) diff shown in evidence;
+  `npm run db:generate` produces a zero diff (content-hash manifest before/after); `backup.test.ts` green
+  with no `backup.ts` edit
+- AC2 (**amended roadmap criterion** — Scope-decision-1): the `Storage` seam is structurally unchanged
+  by the move. Proven by: `assertUploadable`/`MAX_ATTACHMENT_BYTES` still imported from ledger (at the
+  new depth), the 4 storage endpoints still present in the unchanged canonical surface, all 7
+  `app.storage` call sites and all 7 `Storage`-taking service signatures intact, and clean `typecheck`.
+  **This task must not claim the original "works against both S3 and disk" criterion is met** — no such
+  run is performed and no backend contract test exists to extend. AC2 is satisfied only if
+  `tasks/01.04-migrate-protection.md:16` has been amended to this structural wording, **and** the new
+  `tasks/01.10-storage-backend-contract-tests.md` exists carrying all 5 concrete acceptance criteria
+  from Scope-decision-1 (not a placeholder), **and** it is indexed in `tasks/README.md`, **and** `1.10`
+  appears in `tasks/01.09-cross-module-ports.md`'s `depends:` list (Scope-decision-2). Deleting or
+  weakening the criterion without a gated, concretely-specified 1.10 fails AC2
 - AC3 (roadmap): `npm run typecheck` and `npm run lint` green across all workspaces
 - AC4 (this task, schema safety): no circular import — `modules/protection/schema.ts` only re-exports
   named bindings from `db/schema.ts`, and `db/schema.ts` does not `export *` back; proven at runtime by
   `schema.smoke.test.ts`'s object-identity assertions for all **7** bindings
 - AC5 (roadmap, scoped to what this task can prove): `npm run test -w apps/api` is fully green with **no
-  regression against the 837/837 baseline** and a **net +3 test count** (1 smoke + 1 plugin + 2 demo-403
-  = 4 new `test(...)` cases across 3 new files — the implementer reports the exact delta, and any
-  divergence from the arithmetic is explained, not rounded away). The root `npm run test` still exits 1
+  regression against the 837/837 baseline** and a **net +5 test count → 842** (**2** smoke + 1 plugin +
+  2 demo-403 = 5 new `test(...)` cases across 3 new files). The smoke count is 2, not 1: every existing
+  module smoke test splits tables and owned enums into two `test(...)` cases (`credit` 25/35, `ledger`
+  36/46, `investments` 36/46) and protection mirrors that. The implementer **re-measures the baseline
+  immediately before implementing** (the tree is uncommitted, so 837 is a working-tree measurement, not
+  a `HEAD` one), reports the literal before/after counts, and explains any divergence from +5 rather
+  than rounding it away. The root `npm run test` still exits 1
   **only** because of the pre-existing `apps/extractor` `DATABASE_URL` packaging gap documented in Root
   Cause; the implementer must re-confirm that is still the *sole* failure, quoting the per-workspace
   summary lines — a second failure anywhere invalidates this waiver
@@ -357,7 +532,7 @@ paths**, moved not duplicated. There are no old test-file locations, because no 
 - T1: `npm run typecheck` — zero errors, all workspaces, exit code quoted
 - T2: `npm run lint` — zero errors, exit code quoted
 - T3: `npm run test -w apps/api` — full pass, literal summary line and exit code; test count compared
-  against the 837 baseline
+  against the re-measured 837 baseline, expecting 842 (AC5)
 - T4: `npm run test` (root) — literal per-workspace summary lines and exit code; confirm the extractor
   `DATABASE_URL` failure is the sole failure
 - T5: `node --test src/app.route-snapshot.test.ts` (from `apps/api`) — passes; separately, the
@@ -377,6 +552,11 @@ paths**, moved not duplicated. There are no old test-file locations, because no 
   its header-comment paragraph; `services/demo.ts`, `services/goals.ts`,
   `modules/ledger/services/accounts.ts`, `services/backup.ts`, `services/restore-user.ts` and
   `jobs/index.ts` are **untouched**
+- T14: `tasks/01.04-migrate-protection.md:16` shows the amended structural wording;
+  `tasks/01.10-storage-backend-contract-tests.md` exists with the specified frontmatter **and all 5
+  acceptance criteria**; `tasks/README.md` contains a 1.10 row and shows 1.4 as `done`; and
+  `tasks/01.09-cross-module-ports.md`'s `depends:` line literally contains `1.10` — quoted verbatim in
+  evidence, since this edge is the only thing preventing Phase 1 from closing over an undone criterion
 
 ## Non-Goals
 - Not adding a Fastify route prefix — the standing deferral from 1.1/1.2/1.3.
@@ -392,4 +572,6 @@ paths**, moved not duplicated. There are no old test-file locations, because no 
 - Not adding functional test coverage for insurance/retirement business logic beyond the AC8 demo-403
   characterization. This domain has zero tests, but "preserve existing coverage exactly, do not close
   pre-existing gaps" is the rule 1.1 set and 1.3 followed; closing this gap properly is its own task.
-- Not performing a live S3-vs-disk storage upload verification (see AC2's explicit limitation).
+- Not performing a live S3-vs-disk storage upload verification, and not building the storage test
+  harness that would be needed for one — **carved out into new roadmap task 1.10** per
+  Scope-decision-1, rather than left as an unowned gap.

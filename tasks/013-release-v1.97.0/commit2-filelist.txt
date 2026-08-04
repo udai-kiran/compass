@@ -1,0 +1,11 @@
+tasks/00.01-00.02-verification-1.md
+tasks/000-agent-harness
+tasks/001-domain-event-bus
+tasks/002-resume-refactor
+tasks/002-retire-url-regex-hook
+tasks/003-demo-monthday-utc-fix
+tasks/004-fix-eslint-no-undef
+tasks/005-fix-api-test-env-loading
+tasks/006-module-scaffold-and-route-gate
+tasks/012-release-checkpoint
+tasks/013-release-v1.97.0
