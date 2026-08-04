@@ -97,12 +97,13 @@ Phase 4 and 5 are **extensions of real working code**, not greenfield. Verified 
 | 1.1 | [Migrate ledger module](./01.01-migrate-ledger.md) | 1 — Module migration | done |
 | 1.2 | [Migrate credit module](./01.02-migrate-credit.md) | 1 — Module migration | done |
 | 1.3 | [Migrate investments module](./01.03-migrate-investments.md) | 1 — Module migration | done |
-| 1.4 | [Migrate protection module](./01.04-migrate-protection.md) | 1 — Module migration | todo |
+| 1.4 | [Migrate protection module](./01.04-migrate-protection.md) | 1 — Module migration | done |
 | 1.5 | [Migrate planning module](./01.05-migrate-planning.md) | 1 — Module migration | todo |
 | 1.6 | [Migrate automation/AI module](./01.06-migrate-automation.md) | 1 — Module migration | todo |
 | 1.7 | [Migrate ingest module](./01.07-migrate-ingest.md) | 1 — Module migration | todo |
 | 1.8 | [Migrate system module](./01.08-migrate-system.md) | 1 — Module migration | todo |
 | 1.9 | [Cross-module ports + flat-services cleanup](./01.09-cross-module-ports.md) | 1 — Module migration | todo |
+| 1.10 | [Storage backend contract tests](./01.10-storage-backend-contract-tests.md) | 1 — Module migration | todo |
 | 2.1 | [Postings model & balance invariant](./02.01-postings-model.md) | 2 — Double-entry ledger | todo |
 | 2.2 | [Retire transfer_links & transfer-exclusion logic](./02.02-retire-transfer-links.md) | 2 — Double-entry ledger | todo |
 | 2.3 | [Fold transaction_splits into postings](./02.03-splits-into-postings.md) | 2 — Double-entry ledger | todo |

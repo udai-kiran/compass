@@ -1,9 +1,10 @@
 import { and, eq } from "drizzle-orm";
 import type { RetirementDetails, UpsertRetirementDetails } from "@compass/shared";
 import { isRetirementAccount, UpsertRetirementDetailsSchema } from "@compass/shared";
-import type { Db } from "../db/index.ts";
-import { accounts, retirementDetails } from "../db/schema.ts";
-import { HttpError } from "../lib/errors.ts";
+import type { Db } from "../../../db/index.ts";
+import { retirementDetails } from "../schema.ts";
+import { accounts } from "../../../db/schema.ts";
+import { HttpError } from "../../../lib/errors.ts";
 
 type DetailsRow = typeof retirementDetails.$inferSelect;
 

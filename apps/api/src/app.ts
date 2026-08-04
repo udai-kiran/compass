@@ -28,8 +28,7 @@ import { investmentsRoutes } from "./modules/investments/plugin.ts";
 import { cashflowRoutes } from "./routes/cashflow.ts";
 import { billRoutes } from "./routes/bills.ts";
 import { creditRoutes } from "./modules/credit/plugin.ts";
-import { retirementRoutes } from "./routes/retirement.ts";
-import { insuranceRoutes } from "./routes/insurance.ts";
+import { protectionRoutes } from "./modules/protection/plugin.ts";
 import { insightRoutes } from "./routes/insights.ts";
 import { reportRoutes } from "./routes/reports.ts";
 import { backupRoutes } from "./routes/backup.ts";
@@ -106,6 +105,15 @@ export function registerLedgerCacheSubscriber(app: FastifyInstance): void {
  * tasks/007-migrate-ledger/TASK.md's / tasks/008-migrate-credit/TASK.md's /
  * tasks/010-migrate-investments/TASK.md's Root Cause for why both snapshots
  * exist.
+ *
+ * As of task 1.4 (migrate-protection), the 2 protection route registrations
+ * (retirement/insurance) are collapsed into the single `protectionRoutes`
+ * plugin, in the same position (`retirementRoutes` used to occupy, with
+ * `insuranceRoutes` immediately after). Unlike the three earlier migrations,
+ * wrapping two already-adjacent, already-in-order registrations in a plugin
+ * does not change the raw `printRoutes()` tree — see
+ * `route-table.snapshot.txt` whose regenerated content is expected
+ * byte-identical.
  */
 export async function registerRoutes(app: FastifyInstance): Promise<void> {
   await app.register(healthRoutes);
@@ -120,8 +128,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   await app.register(cashflowRoutes);
   await app.register(billRoutes);
   await app.register(creditRoutes);
-  await app.register(retirementRoutes);
-  await app.register(insuranceRoutes);
+  await app.register(protectionRoutes);
   await app.register(insightRoutes);
   await app.register(reportRoutes);
   await app.register(backupRoutes);
