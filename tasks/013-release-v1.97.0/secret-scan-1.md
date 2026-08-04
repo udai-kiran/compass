@@ -1,5 +1,9 @@
 # Secret scan — tasks/ agent-orchestration files (candidates for commit)
 
+## Redaction note
+
+This report was itself committed in `b4cc143` while quoting the below-redacted strings (credential pair, internal IP, hostname, bucket name) verbatim. Those quotes have since been redacted in the working copy of this file. The original values remain recoverable from git history at commit `b4cc143`, at `d3155a6`, and inside tag `v1.97.0` — redacting the working copy does not remove them from history. The repository is private. The durable mitigation is rotating the dev Postgres credential referenced below, not rewriting history to scrub these commits.
+
 Scope scanned (all files, recursively, under):
 - tasks/00.01-00.02-verification-1.md
 - tasks/000-agent-harness/
@@ -64,9 +68,9 @@ Classification: **HARMLESS** — variable names only, no values, and (per `tasks
 
 No `AWS_`, `S3_`, `MINIO_`, `SMTP_`, `API_KEY`, `CLIENT_SECRET`, `REFRESH_TOKEN` matches at all (checked separately, zero hits): `tasks/012-release-checkpoint`, `tasks/011-migrate-protection`, etc. contain "MinIO" only in prose (see section 6 below), never as an env-var name/value.
 
-`compass-files` bucket name mention (not an env assignment, but S3/MinIO-adjacent):
+`<REDACTED-BUCKET>` bucket name mention (not an env assignment, but S3/MinIO-adjacent):
 ```
-tasks/001-engineer-routing-memory/verification-1.md:92:11	- [Object storage (MinIO)](object-storage-minio.md) — uploads go to self-hosted MinIO (pluto 172.31.0.7, bucket compass-files) via Storage abstraction; disk fallback; live since v1.36.0
+tasks/001-engineer-routing-memory/verification-1.md:92:11	- [Object storage (MinIO)](object-storage-minio.md) — uploads go to self-hosted MinIO (<REDACTED-HOSTNAME> <REDACTED-INTERNAL-IP>, bucket <REDACTED-BUCKET>) via Storage abstraction; disk fallback; live since v1.36.0
 ```
 Classification: **INTERNAL-BUT-SENSITIVE** (see section 3/6 — this is the whole `MEMORY.md` pasted verbatim into a task report).
 
@@ -81,17 +85,17 @@ tasks/002-retire-url-regex-hook/implementation-1.md:851:- Both the repo's dev Po
 tasks/006-module-scaffold-and-route-gate/verification-1.md:135:**Leftover-test-user check (independent DB query, not trusting the `t.after()` claim):** connected directly to the dev Postgres (`compass_dev` at 192.168.2.196, via `pg` in a one-off Node script, credentials from repo-root `.env`) and ran:
 tasks/006-module-scaffold-and-route-gate/verification-1.md:220:- Used the repo-root `.env`'s `DATABASE_URL`/`REDIS_URL`/`SESSION_SECRET` for all DB/Redis-backed commands, per the project's documented dev-server convention (192.168.2.196, `compass_dev`).
 tasks/002-retire-url-regex-hook/DELEGATION.md:34:- `npm run test -w apps/api` passes in full (793+ tests, 0 failures) — export ... both Postgres and Redis at `192.168.2.196` are reachable (confirmed independently twice already in this task). ...
-tasks/001-engineer-routing-memory/verification-1.md:84:3	- [Compass infra](compass-infra.md) — Postgres 18.3 + Redis at 192.168.2.196 (postgres/postgres dev), BullMQ chosen over host's RabbitMQ
-tasks/001-engineer-routing-memory/verification-1.md:92:11	- [Object storage (MinIO)](object-storage-minio.md) — uploads go to self-hosted MinIO (pluto 172.31.0.7, bucket compass-files) via Storage abstraction; disk fallback; live since v1.36.0
+tasks/001-engineer-routing-memory/verification-1.md:84:3	- [Compass infra](compass-infra.md) — Postgres 18.3 + Redis at 192.168.2.196 (<REDACTED-CREDENTIAL-PAIR> dev), BullMQ chosen over host's RabbitMQ
+tasks/001-engineer-routing-memory/verification-1.md:92:11	- [Object storage (MinIO)](object-storage-minio.md) — uploads go to self-hosted MinIO (<REDACTED-HOSTNAME> <REDACTED-INTERNAL-IP>, bucket <REDACTED-BUCKET>) via Storage abstraction; disk fallback; live since v1.36.0
 tasks/002-retire-url-regex-hook/verification-1.md:221:$ timeout 3 bash -c 'cat < /dev/null > /dev/tcp/192.168.2.196/5432' && echo "postgres reachable" || echo "postgres NOT reachable"
 tasks/002-retire-url-regex-hook/verification-1.md:223:$ timeout 3 bash -c 'cat < /dev/null > /dev/tcp/192.168.2.196/6379' && echo "redis reachable" || echo "redis NOT reachable"
 tasks/002-retire-url-regex-hook/verification-1.md:296:- Ran `npm run test -w apps/api` with `DATABASE_URL`/`REDIS_URL`/`SESSION_SECRET` sourced from the repo root `.env` (per DELEGATION.md's instruction); both Postgres and Redis at `192.168.2.196` were independently confirmed reachable via raw `/dev/tcp` checks before running, so this was a live run, not a skip.
 ```
 Also matched (but not infra-sensitive): `.env.local` filename references in `tasks/013-release-v1.97.0/preflight-1.md:152`, `tasks/012-release-checkpoint/preflight-1.md:438`, `tasks/012-release-checkpoint/staging-1.md:41` — these are the literal string `.env.local` (a filename in `.gitignore` output), not a `*.local` hostname. **HARMLESS**.
 
-Classification: every `192.168.2.196` occurrence above is **INTERNAL-BUT-SENSITIVE** — it is the real private-network IP of the shared dev Postgres/Redis host, repeated 13 times across 8 files, several times paired with the DB name `compass_dev`/`compass_ci` and, at `tasks/001-engineer-routing-memory/verification-1.md:84`, with the literal credential pair `postgres/postgres` (see section 4 — this one is worse than IP disclosure alone).
+Classification: every `192.168.2.196` occurrence above is **INTERNAL-BUT-SENSITIVE** — it is the real private-network IP of the shared dev Postgres/Redis host, repeated 13 times across 8 files, several times paired with the DB name `compass_dev`/`compass_ci` and, at `tasks/001-engineer-routing-memory/verification-1.md:84`, with the literal credential pair `<REDACTED-CREDENTIAL-PAIR>` (see section 4 — this one is worse than IP disclosure alone).
 
-`tasks/001-engineer-routing-memory/verification-1.md:92` additionally discloses the MinIO host's private IP `172.31.0.7` and its hostname `pluto` and bucket name `compass-files` — **INTERNAL-BUT-SENSITIVE**. This line is part of a **verbatim paste of the user's entire `MEMORY.md` index** (lines 80–91 of that file reproduce all 14 memory-index bullet lines, including infra/db-ownership/CI-runner details) — see full quote below in section 4.
+`tasks/001-engineer-routing-memory/verification-1.md:92` additionally discloses the MinIO host's private IP `<REDACTED-INTERNAL-IP>` and its hostname `pluto` and bucket name `<REDACTED-BUCKET>` — **INTERNAL-BUT-SENSITIVE**. This line is part of a **verbatim paste of the user's entire `MEMORY.md` index** (lines 80–91 of that file reproduce all 14 memory-index bullet lines, including infra/db-ownership/CI-runner details) — see full quote below in section 4.
 
 ## 4. Credential pairs (`postgres:postgres`, `user:password@host`, etc.)
 
@@ -101,19 +105,19 @@ tasks/013-release-v1.97.0/preflight-1.md:280:    DATABASE_URL: postgres://compas
 tasks/013-release-v1.97.0/preflight-1.md:283:    DATABASE_URL: postgres://compass:compass-ci@localhost:${{ job.services.postgres.ports['5432'] }}/compass_ci
 tasks/004-fix-eslint-no-undef/TASK.md:38:   (`postgresql://compass:...@192.168.2.196:5432/compass_dev`) to query
 tasks/012-release-checkpoint/preflight-1.md:91:npm run db:migrate          (DATABASE_URL=postgres://compass:compass-ci@localhost:<pg-port>/compass_ci)
-tasks/001-engineer-routing-memory/verification-1.md:84:3	- [Compass infra](compass-infra.md) — Postgres 18.3 + Redis at 192.168.2.196 (postgres/postgres dev), BullMQ chosen over host's RabbitMQ
+tasks/001-engineer-routing-memory/verification-1.md:84:3	- [Compass infra](compass-infra.md) — Postgres 18.3 + Redis at 192.168.2.196 (<REDACTED-CREDENTIAL-PAIR> dev), BullMQ chosen over host's RabbitMQ
 ```
 
 Classification:
 - `compass:compass-ci` (CI service creds, `localhost`, ephemeral Actions container) — **HARMLESS**, per section 1.
 - `compass:...@192.168.2.196` — password redacted, but real username+host — **INTERNAL-BUT-SENSITIVE**.
-- **`postgres/postgres` at `192.168.2.196` (`tasks/001-engineer-routing-memory/verification-1.md:84`) — REAL SECRET.** This is a literal, reachable dev-database credential pair (username `postgres`, password `postgres`) for a real, currently-online private-network host, pasted verbatim as part of a full `MEMORY.md` dump. Unlike the CI creds (ephemeral/localhost-only) or the redacted TASK.md line, this line gives both username and password with nothing redacted, for a host proven reachable elsewhere in this same file set (`002-retire-url-regex-hook/verification-1.md:221-223` independently confirms `192.168.2.196:5432` accepts TCP connections). This is the single strongest finding in this scan.
+- **`<REDACTED-CREDENTIAL-PAIR>` at `192.168.2.196` (`tasks/001-engineer-routing-memory/verification-1.md:84`) — REAL SECRET.** This is a literal, reachable dev-database credential pair (username `postgres`, password `postgres`) for a real, currently-online private-network host, pasted verbatim as part of a full `MEMORY.md` dump. Unlike the CI creds (ephemeral/localhost-only) or the redacted TASK.md line, this line gives both username and password with nothing redacted, for a host proven reachable elsewhere in this same file set (`002-retire-url-regex-hook/verification-1.md:221-223` independently confirms `192.168.2.196:5432` accepts TCP connections). This is the single strongest finding in this scan.
 
 Full context of that line (verbatim `MEMORY.md` paste inside the report — `tasks/001-engineer-routing-memory/verification-1.md:80-91`):
 ```
 1	# Memory index
 2	
-3	- [Compass infra](compass-infra.md) — Postgres 18.3 + Redis at 192.168.2.196 (postgres/postgres dev), BullMQ chosen over host's RabbitMQ
+3	- [Compass infra](compass-infra.md) — Postgres 18.3 + Redis at 192.168.2.196 (<REDACTED-CREDENTIAL-PAIR> dev), BullMQ chosen over host's RabbitMQ
 4	- [Compass task board](compass-task-board.md) — one file per task in tasks/, status frontmatter is source of truth, update README index too
 5	- [No auto-categorization](no-auto-categorization.md) — never auto-classify transactions; manual category now, AI-assisted in Phase 7; rules engine removed
 6	- [Dev server workflow](dev-server-workflow.md) — run API on 3002 (not 3001), Vite 5173, demo creds, restart/port hazards, CSRF+rate-limit curl notes
@@ -121,12 +125,12 @@ Full context of that line (verbatim `MEMORY.md` paste inside the report — `tas
 8	- [MF position identity](mf-position-identity.md) — a mutual-fund position is keyed by scheme + folio, not scheme alone; units are per house+folio
 9	- [Email ingest pipeline](email-ingest-pipeline.md) — ingestor+extractor containers, OAuth2 IMAP → DeepSeek → review inbox; Phases A/B/C done, D+E left
 10	- [DB app-role ownership](db-app-role-ownership.md) — app connects as `compass` role; migrate as compass not postgres or tables get "permission denied"; repair script + fix branch
-11	- [Object storage (MinIO)](object-storage-minio.md) — uploads go to self-hosted MinIO (pluto 172.31.0.7, bucket compass-files) via Storage abstraction; disk fallback; live since v1.36.0
+11	- [Object storage (MinIO)](object-storage-minio.md) — uploads go to self-hosted MinIO (<REDACTED-HOSTNAME> <REDACTED-INTERNAL-IP>, bucket <REDACTED-BUCKET>) via Storage abstraction; disk fallback; live since v1.36.0
 12	- [Statement dedup by period](statement-dedup-by-period.md) — mailbox holds duplicate statement emails; reward capture / Phase-2 reconcile must key on (card, period), not ingestion_id
 13	- [Worker + Codex review flow](worker-codex-review-flow.md) — app code goes to the backend-engineer/frontend-engineer scripts (2 args, not agents), sonnet-worker keeps verification; codex-reviewer before shipping
 14	- [CI runners & GHCR](ci-runners-and-ghcr.md) — CI on 4 self-hosted runners; a tag cut before the runner switch can't build; `gh` token lacks write:packages so manual image pushes are denied
 ```
-This entire block is **REAL SECRET** (line 3, `postgres/postgres`) plus **INTERNAL-BUT-SENSITIVE** (lines 3/11: IPs, hostname `pluto`, bucket name, port `3002`, self-hosted-runner count, and the fact a `gh` token lacks `write:packages`).
+This entire block is **REAL SECRET** (line 3, `<REDACTED-CREDENTIAL-PAIR>`) plus **INTERNAL-BUT-SENSITIVE** (lines 3/11: IPs, hostname `pluto`, bucket name, port `3002`, self-hosted-runner count, and the fact a `gh` token lacks `write:packages`).
 
 ## 5. Bearer tokens, `ghp_`, `gho_`, `sk-`, `Bearer `, long base64/hex blobs (32+ chars)
 
@@ -161,9 +165,9 @@ Checked every `/home/<user>` occurrence in scope (274 matches across the file se
 **Yes — this scan found hits classified REAL SECRET and INTERNAL-BUT-SENSITIVE. They must not be committed as-is.**
 
 - **REAL SECRET:**
-  - `tasks/001-engineer-routing-memory/verification-1.md:84` — literal dev-Postgres credential pair `postgres/postgres` at private IP `192.168.2.196`, inside a verbatim `MEMORY.md` paste.
+  - `tasks/001-engineer-routing-memory/verification-1.md:84` — literal dev-Postgres credential pair `<REDACTED-CREDENTIAL-PAIR>` at private IP `192.168.2.196`, inside a verbatim `MEMORY.md` paste.
 
-- **INTERNAL-BUT-SENSITIVE** (private infra topology — repeated private IP `192.168.2.196` for dev Postgres/Redis, `172.31.0.7`/hostname `pluto`/bucket `compass-files` for MinIO, DB names `compass_dev`/`compass_ci`, redacted-but-real DB username `compass`):
+- **INTERNAL-BUT-SENSITIVE** (private infra topology — repeated private IP `192.168.2.196` for dev Postgres/Redis, `<REDACTED-INTERNAL-IP>`/hostname `pluto`/bucket `<REDACTED-BUCKET>` for MinIO, DB names `compass_dev`/`compass_ci`, redacted-but-real DB username `compass`):
   - `tasks/001-engineer-routing-memory/verification-1.md:84,92` (full `MEMORY.md` dump, lines 80–91)
   - `tasks/004-fix-eslint-no-undef/TASK.md:38`
   - `tasks/005-fix-api-test-env-loading/TASK.md:48`
@@ -181,4 +185,4 @@ Everything else found (CI-ephemeral `compass:compass-ci@localhost` creds, git/sh
 
 ## Unresolved risks
 - I did not check file contents outside the 14 listed paths (e.g., `tasks/README.md`, other numbered task dirs not listed in the brief) — if those are also being committed, they were out of scope for this scan and should be scanned separately before publishing.
-- I did not verify whether `192.168.2.196` or `172.31.0.7` are reachable from the public internet (only reachability from this sandboxed environment was demonstrated inside the scanned files themselves, at `002-retire-url-regex-hook/verification-1.md:221-223`) — the severity of the IP disclosure depends on that, which this read-only scan cannot determine.
+- I did not verify whether `192.168.2.196` or `<REDACTED-INTERNAL-IP>` are reachable from the public internet (only reachability from this sandboxed environment was demonstrated inside the scanned files themselves, at `002-retire-url-regex-hook/verification-1.md:221-223`) — the severity of the IP disclosure depends on that, which this read-only scan cannot determine.
