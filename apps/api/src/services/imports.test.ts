@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { dedupeHash, linkedRollbackBlockers, parseRow, suggestMapping } from "./imports.ts";
-import { heuristicNormalize, normalizeMerchant } from "./merchants.ts";
+import { heuristicNormalize, normalizeMerchant } from "../modules/ledger/services/merchants.ts";
 import type { ImportMapping } from "@compass/shared";
 
 const signedMapping: ImportMapping = {

@@ -5,7 +5,7 @@ import type { Db } from "../db/index.ts";
 import { users } from "../db/schema.ts";
 import { HttpError, pgError } from "../lib/errors.ts";
 import { findUserByEmail, findUserById, type UserRow } from "../repositories/users.ts";
-import { seedDefaultCategories } from "./categories.ts";
+import { seedDefaultCategories } from "../modules/ledger/services/categories.ts";
 
 function toUser(row: UserRow): User {
   return { id: row.id, email: row.email, displayName: row.displayName, isDemo: row.isDemo };

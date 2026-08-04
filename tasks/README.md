@@ -94,9 +94,9 @@ Phase 4 and 5 are **extensions of real working code**, not greenfield. Verified 
 | 0.1 | [Domain event bus](./00.01-domain-event-bus.md) | 0 — Foundation | done |
 | 0.2 | [Retire the URL-regex onResponse hook](./00.02-retire-url-regex-hook.md) | 0 — Foundation | done |
 | 0.3 | [Module scaffold + route-table identity gate](./00.03-module-scaffold-and-route-gate.md) | 0 — Foundation | done |
-| 1.1 | [Migrate ledger module](./01.01-migrate-ledger.md) | 1 — Module migration | todo |
-| 1.2 | [Migrate credit module](./01.02-migrate-credit.md) | 1 — Module migration | todo |
-| 1.3 | [Migrate investments module](./01.03-migrate-investments.md) | 1 — Module migration | todo |
+| 1.1 | [Migrate ledger module](./01.01-migrate-ledger.md) | 1 — Module migration | done |
+| 1.2 | [Migrate credit module](./01.02-migrate-credit.md) | 1 — Module migration | done |
+| 1.3 | [Migrate investments module](./01.03-migrate-investments.md) | 1 — Module migration | done |
 | 1.4 | [Migrate protection module](./01.04-migrate-protection.md) | 1 — Module migration | todo |
 | 1.5 | [Migrate planning module](./01.05-migrate-planning.md) | 1 — Module migration | todo |
 | 1.6 | [Migrate automation/AI module](./01.06-migrate-automation.md) | 1 — Module migration | todo |

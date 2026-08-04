@@ -18,34 +18,20 @@ import { setupAuth } from "./plugins/auth.ts";
 import { setupSecurity } from "./plugins/security.ts";
 import { healthRoutes } from "./routes/health.ts";
 import { authRoutes } from "./routes/auth.ts";
-import { accountRoutes } from "./routes/accounts.ts";
-import { categoryRoutes } from "./routes/categories.ts";
-import { transactionRoutes } from "./routes/transactions.ts";
-import { transferRoutes } from "./routes/transfers.ts";
-import { attachmentRoutes } from "./routes/attachments.ts";
-import { transactionLinkRoutes } from "./routes/transaction-links.ts";
+import { ledgerRoutes } from "./modules/ledger/plugin.ts";
 import { importRoutes } from "./routes/imports.ts";
-import { ruleRoutes } from "./routes/rules.ts";
 import { budgetRoutes } from "./routes/budgets.ts";
 import { dashboardRoutes } from "./routes/dashboard.ts";
 import { notificationRoutes } from "./routes/notifications.ts";
-import { recurringRoutes } from "./routes/recurring.ts";
 import { goalRoutes } from "./routes/goals.ts";
-import { sipRoutes } from "./routes/sips.ts";
+import { investmentsRoutes } from "./modules/investments/plugin.ts";
 import { cashflowRoutes } from "./routes/cashflow.ts";
 import { billRoutes } from "./routes/bills.ts";
-import { cardRoutes } from "./routes/cards.ts";
-import { emiRoutes } from "./routes/emis.ts";
+import { creditRoutes } from "./modules/credit/plugin.ts";
 import { retirementRoutes } from "./routes/retirement.ts";
-import { accountNpsRoutes } from "./routes/account-nps.ts";
-import { bankDetailsRoutes } from "./routes/bank-details.ts";
-import { overdraftDetailsRoutes } from "./routes/overdraft-details.ts";
 import { insuranceRoutes } from "./routes/insurance.ts";
-import { holdingRoutes } from "./routes/holdings.ts";
-import { netWorthRoutes } from "./routes/networth.ts";
 import { insightRoutes } from "./routes/insights.ts";
 import { reportRoutes } from "./routes/reports.ts";
-import { searchRoutes } from "./routes/search.ts";
 import { backupRoutes } from "./routes/backup.ts";
 import { aiRoutes } from "./routes/ai.ts";
 import { aiEventRoutes } from "./routes/ai-events.ts";
@@ -53,8 +39,6 @@ import { planningRoutes } from "./modules/planning/plugin.ts";
 import { profileRoutes } from "./routes/profile.ts";
 import { inboxRoutes } from "./routes/inbox.ts";
 import { mailboxRoutes } from "./routes/mailboxes.ts";
-import { resourceRoutes } from "./routes/resources.ts";
-import { userTaskRoutes } from "./routes/user-tasks.ts";
 import { invalidateUserCache } from "./services/cache.ts";
 import { enqueueBudgetEvaluation } from "./jobs/index.ts";
 import { createStorage, type Storage } from "./lib/storage.ts";
@@ -91,42 +75,55 @@ export function registerLedgerCacheSubscriber(app: FastifyInstance): void {
 /**
  * Registers every application route module (not the HTTP-level `multipart`/
  * `compress` plugins, which stay in `buildApp()` since they aren't routes).
- * Same 39 registrations, same order, as `buildApp()` always had — extracted so
- * a hermetic test (`app.route-snapshot.test.ts`) can build a minimal Fastify
- * instance around just this function and snapshot the resulting route table
- * without booting Postgres/Redis/storage/jobs/auth/security.
+ * Same URLs/methods as `buildApp()` always had — extracted so a hermetic test
+ * (`app.route-snapshot.test.ts`) can build a minimal Fastify instance around
+ * just this function and snapshot the resulting route table without booting
+ * Postgres/Redis/storage/jobs/auth/security.
+ *
+ * As of task 1.1 (migrate-ledger), the 11 ledger route registrations that used
+ * to sit here directly (accounts/categories/transactions/transfers/
+ * transaction-links/attachments/rules/recurring/search/resources/user-tasks)
+ * are collapsed into the single `ledgerRoutes` plugin registered below, in the
+ * position the first of them (`accountRoutes`) used to occupy — see
+ * `modules/ledger/plugin.ts`. As of task 1.2 (migrate-credit), the same
+ * applies to the 4 credit route registrations (cards/emis/bank-details/
+ * overdraft-details) — collapsed into the single `creditRoutes` plugin, in
+ * the position `cardRoutes` used to occupy; `bankDetailsRoutes`/
+ * `overdraftDetailsRoutes` used to register later (interleaved with
+ * `retirementRoutes`/`accountNpsRoutes`), so this also moves them earlier in
+ * registration order — see `modules/credit/plugin.ts`. As of task 1.3
+ * (migrate-investments), the same applies to the 4 investments route
+ * registrations (holdings/sips/networth/account-nps) — collapsed into the
+ * single `investmentsRoutes` plugin, in the position `sipRoutes` used to
+ * occupy; `accountNpsRoutes` used to register later (interleaved with
+ * `retirementRoutes`) and `holdingRoutes`/`netWorthRoutes` used to register
+ * after `insuranceRoutes` — see `modules/investments/plugin.ts` and
+ * `tasks/010-migrate-investments/TASK.md` Root Cause's Scope decision 1 for
+ * why `account-nps` belongs to investments rather than protection (task 1.4).
+ * All three migrations change the raw `printRoutes()` tree (registration/
+ * nesting structure) but not the canonical (method, path) surface — see
+ * `route-surface.snapshot.txt` / `route-table.snapshot.txt` and
+ * tasks/007-migrate-ledger/TASK.md's / tasks/008-migrate-credit/TASK.md's /
+ * tasks/010-migrate-investments/TASK.md's Root Cause for why both snapshots
+ * exist.
  */
 export async function registerRoutes(app: FastifyInstance): Promise<void> {
   await app.register(healthRoutes);
   await app.register(authRoutes);
-  await app.register(accountRoutes);
-  await app.register(categoryRoutes);
-  await app.register(transactionRoutes);
-  await app.register(transferRoutes);
-  await app.register(attachmentRoutes);
-  await app.register(transactionLinkRoutes);
+  await app.register(ledgerRoutes);
   await app.register(importRoutes);
-  await app.register(ruleRoutes);
   await app.register(budgetRoutes);
   await app.register(dashboardRoutes);
   await app.register(notificationRoutes);
-  await app.register(recurringRoutes);
   await app.register(goalRoutes);
-  await app.register(sipRoutes);
+  await app.register(investmentsRoutes);
   await app.register(cashflowRoutes);
   await app.register(billRoutes);
-  await app.register(cardRoutes);
-  await app.register(emiRoutes);
+  await app.register(creditRoutes);
   await app.register(retirementRoutes);
-  await app.register(accountNpsRoutes);
-  await app.register(bankDetailsRoutes);
-  await app.register(overdraftDetailsRoutes);
   await app.register(insuranceRoutes);
-  await app.register(holdingRoutes);
-  await app.register(netWorthRoutes);
   await app.register(insightRoutes);
   await app.register(reportRoutes);
-  await app.register(searchRoutes);
   await app.register(backupRoutes);
   await app.register(aiRoutes);
   await app.register(aiEventRoutes);
@@ -134,8 +131,6 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   await app.register(profileRoutes);
   await app.register(inboxRoutes);
   await app.register(mailboxRoutes);
-  await app.register(resourceRoutes);
-  await app.register(userTaskRoutes);
 }
 
 export async function buildApp(config: Config): Promise<FastifyInstance> {

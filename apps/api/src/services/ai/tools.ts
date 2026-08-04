@@ -6,7 +6,7 @@ import type { Db } from "../../db/index.ts";
 import { buildReport } from "../reports.ts";
 import { getUtilization } from "../budgets.ts";
 import { getInsights } from "../insights.ts";
-import { search } from "../search.ts";
+import { search } from "../../modules/ledger/services/search.ts";
 import { listGoals } from "../goals.ts";
 import { currentPeriodKey } from "../periods.ts";
 

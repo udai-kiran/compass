@@ -9,7 +9,7 @@ import {
   UpdateInsurancePolicySchema,
 } from "@compass/shared";
 import { HttpError } from "../lib/errors.ts";
-import { MAX_ATTACHMENT_BYTES } from "../services/attachments.ts";
+import { MAX_ATTACHMENT_BYTES } from "../modules/ledger/services/attachments.ts";
 import {
   addHealthCard,
   createPolicy,

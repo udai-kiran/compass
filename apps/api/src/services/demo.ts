@@ -24,7 +24,7 @@ import {
   transactions,
   users,
 } from "../db/schema.ts";
-import { seedDefaultCategories } from "./categories.ts";
+import { seedDefaultCategories } from "../modules/ledger/services/categories.ts";
 import { findUserByEmail } from "../repositories/users.ts";
 
 /** ₹ → paise. Amounts throughout the seed are written in rupees for readability. */

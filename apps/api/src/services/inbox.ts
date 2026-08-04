@@ -16,10 +16,10 @@ import {
   transferLinks,
 } from "../db/schema.ts";
 import { HttpError } from "../lib/errors.ts";
-import { getMerchantRules, normalizeMerchant } from "./merchants.ts";
-import { isUniqueViolation } from "./sips.ts";
-import { createTransaction } from "./transactions.ts";
-import { autoLinkTransfers, linkTransfer, TRANSFER_WINDOW_DAYS } from "./transfers.ts";
+import { getMerchantRules, normalizeMerchant } from "../modules/ledger/services/merchants.ts";
+import { isUniqueViolation } from "../modules/investments/services/sip-lifecycle.ts";
+import { createTransaction } from "../modules/ledger/services/transactions.ts";
+import { autoLinkTransfers, linkTransfer, TRANSFER_WINDOW_DAYS } from "../modules/ledger/services/transfers.ts";
 
 /**
  * Review inbox for AI-extracted transactions. Rows land here as `pending` drafts

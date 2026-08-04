@@ -8,8 +8,8 @@ import { bankCashTotal } from "./balances.ts";
 import { cached } from "./cache.ts";
 import { getTrends } from "./dashboard.ts";
 import { LIABILITY_TYPES_SQL } from "./periods.ts";
-import { advanceDate } from "./recurring.ts";
-import { sipOccurrencesInWindow } from "./sips.ts";
+import { advanceDate } from "../modules/ledger/services/recurring.ts";
+import { sipOccurrencesInWindow } from "../modules/investments/services/sip-schedule.ts";
 
 const TTL = 300;
 

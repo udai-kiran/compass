@@ -3,8 +3,8 @@ import type { FastifyInstance } from "fastify";
 import { INGESTOR_QUEUE } from "@compass/shared";
 import { evaluateBudgetAlerts } from "../services/notifications.ts";
 import { evaluateBillReminders } from "../services/bills.ts";
-import { evaluateCardDueReminders, evaluateCardUtilization } from "../services/cards.ts";
-import { materializeCardDueTasks } from "../services/card-due-tasks.ts";
+import { evaluateCardDueReminders, evaluateCardUtilization } from "../modules/credit/services/alerts.ts";
+import { materializeCardDueTasks } from "../modules/credit/services/card-due-tasks.ts";
 import { evaluateAnomalies } from "../services/anomaly.ts";
 import { runAutopilotReview, runGoalReview } from "../services/autopilot.ts";
 import {
@@ -12,10 +12,10 @@ import {
   isSystemicFailure,
   snapshotAllUsers,
   type SnapshotPassResult,
-} from "../services/networth.ts";
+} from "../modules/investments/services/networth.ts";
 import { createEncryptedBackup } from "../services/backup.ts";
 import { evaluateLargeTransactions, evaluateLowBalance, prefEnabled } from "../services/prefs.ts";
-import { materializeDue } from "../services/recurring.ts";
+import { materializeDue } from "../modules/ledger/services/recurring.ts";
 
 export interface Queues {
   system: Queue;
