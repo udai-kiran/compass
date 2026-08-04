@@ -73,6 +73,13 @@ History rewrite was **not** chosen: the repo is private, and rewriting would bre
 `v1.97.0` tag and the merged PR. The durable mitigation is credential rotation, which is the user's
 call and is host-side.
 
+## Convention — secret-scan reports must never quote the secret
+Sensitive literals (the dev credential pair, internal IPs) live only in the gitignored
+`.secret-patterns` (one regex per line, never committed). Every scan for them uses
+`grep -f .secret-patterns -l`, which reports filenames only. Evidence files cite `file:line`
+and a classification (e.g. `<REDACTED-CREDENTIAL-PAIR>`) but never reproduce the value itself
+— this is what let the string recur five times across prior scrub records.
+
 ## Remaining (operator, outside this repo)
 - Bump `COMPASS_VERSION` on the host and run `make update`.
 - **Recommended:** rotate the dev Postgres password. The exposed pair is a weak default regardless of

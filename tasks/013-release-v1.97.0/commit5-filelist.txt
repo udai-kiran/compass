@@ -1,0 +1,4 @@
+.gitignore
+tasks/013-release-v1.97.0/TASK.md
+tasks/013-release-v1.97.0/scrub-final-1.md
+tasks/013-release-v1.97.0/commit5-filelist.txt

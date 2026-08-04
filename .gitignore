@@ -20,3 +20,7 @@ data/
 .idea/
 *.pdf
 Pasted image*
+
+# Literal secret-value regexes (dev credential pair, internal IPs) used with
+# `grep -f .secret-patterns` so evidence/report files never need to quote them.
+.secret-patterns
