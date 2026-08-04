@@ -1,0 +1,8 @@
+tasks/001-engineer-routing-memory/TASK.md
+tasks/001-engineer-routing-memory/DELEGATION.md
+tasks/001-engineer-routing-memory/verification-1.md
+tasks/001-engineer-routing-memory/new-memory-content.md
+tasks/013-release-v1.97.0/TASK.md
+tasks/013-release-v1.97.0/release-2.md
+tasks/013-release-v1.97.0/exposure-audit-1.md
+tasks/013-release-v1.97.0/commit4-filelist.txt

@@ -25,6 +25,25 @@ not in git. Harmless — committing them now would put `main` one commit ahead o
 Both blockers that stopped the previous release were gone this time: `gh auth` valid (exit 0), and the
 `npm audit --omit=dev --audit-level=high` hard gate clean at 0 vulnerabilities. No `audit fix` needed.
 
+## Follow-up release: v1.98.0 (the redaction)
+- Commit `7ac03c1`, PR #161, merged as **`77fa613`**. All 6 checks green.
+- Tag `v1.98.0` cut after merge; `git describe --tags` exactly `v1.98.0`. Publish run `30918779561`
+  built all four images (web 2m23s, ingestor 49s, api 57s, extractor 1m4s).
+- No application code changed — `apps/` and `packages/` untouched.
+
+## Second coordinator error, recorded — an unsatisfiable gate
+The first attempt at the redaction commit specified a gate of the form
+`git diff --cached | grep '<the redacted strings>'` must return **no matches**. That is impossible for
+a redaction: a unified diff always shows the removed text on `-` lines, so the gate can never pass for
+any genuine textual redaction. The worker **correctly STOPPED** rather than reinterpreting it, and said
+so precisely. The staging was right; the gate was wrong.
+
+Corrected to inspect added lines only: `git diff --cached | grep '^+' | grep '<strings>'` → exit 1.
+
+This is the **same failure mode as task 012's `--numstat` gate**: gating on a metric that does not
+measure the property being asserted. Verify the gate matches the claim before blocking on it — and
+note that both times the worker stopping was the behaviour that saved it.
+
 ## Coordinator error, recorded
 Excluding `tasks/001-engineer-routing-memory/` did **not** keep the credential out of history. Two
 files that *documented* the finding quoted the offending strings verbatim, and both were committed in
@@ -37,6 +56,13 @@ Both are now redacted, but **the strings remain in git history and in the `v1.97
 Lesson: a secret-scan report is itself a secret-bearing artefact. Redact at the point of writing, cite
 `file:line` and classification without reproducing the value, and scan the *report* before committing
 it. Excluding the source file is not sufficient when the finding is documented elsewhere.
+
+**The string propagated four times before this was under control**, every time through *discussing* the
+incident rather than through the original source: (1) the scan report quoting its own findings, (2) this
+task record's summary of that report, (3) a "recommended mitigation" sentence naming the weak default,
+and (4) a quoted `grep` **pattern** in the post-mortem above. Writing about a secret reproduces it.
+Anything describing this incident must refer to the values by placeholder only — which is now the rule
+for this file.
 
 Corrected assessment of what was actually newly disclosed:
 - credential pair + MinIO host IP — genuinely new to history
