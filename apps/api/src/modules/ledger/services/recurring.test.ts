@@ -9,7 +9,7 @@ import { accounts, recurringTemplates, transactions } from "../schema.ts";
 import { emiDetails, users } from "../../../db/schema.ts";
 import { HttpError } from "../../../lib/errors.ts";
 import { createEmi, listEmiInstallments, upsertEmiDetails } from "../../credit/services/emis.ts";
-import { incomeExpense, spentByCategory } from "../../../services/periods.ts";
+import { incomeExpense, spentByCategory } from "../../../lib/periods.ts";
 import { advanceDate, createTemplate, materializeDue, updateTemplate } from "./recurring.ts";
 
 // ---------- DB-backed regression coverage for materializeDue's lock-then-read

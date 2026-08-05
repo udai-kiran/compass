@@ -11,7 +11,7 @@ import { createDb } from "../../../db/index.ts";
 import { setupAuth, SESSION_COOKIE } from "../../../plugins/auth.ts";
 import { setupSecurity } from "../../../plugins/security.ts";
 import { protectionRoutes } from "../plugin.ts";
-import { createSession, destroySession } from "../../../services/session.ts";
+import { createSession, destroySession } from "../../../modules/system/services/session.ts";
 import { insurancePolicies, retirementDetails } from "../schema.ts";
 import { users, accounts } from "../../../db/schema.ts";
 

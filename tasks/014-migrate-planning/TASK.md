@@ -1,8 +1,11 @@
 # Task: 014-migrate-planning (roadmap 1.5)
 
 ## Status
-COMPLETE — implemented across 5 slices, independently verified, Codex-reviewed (1 blocking finding
-fixed), roadmap R1-R4 landed. `apps/api` 848/848, both snapshots correct, zero migration diff.
+COMPLETE & SHIPPED — commit `bede18a`, PR #163 merged to main as `f58ad0f`, tagged **v1.99.0**
+(publish CI triggered). Implemented across 5 slices, independently verified, Codex-reviewed (1 blocking
+finding fixed), roadmap R1-R4 landed. `apps/api` 848/848, both snapshots correct, zero migration diff.
+Staged as an explicit 64-file list (git detected all 24 moves as renames); the stray
+`tasks/013-release-v1.97.0/commit-pr-final.md` was deliberately left untracked.
 
 ## Objective
 Move the planning domain (7 flat route files, 11 flat services, 6 colocated test files) into

@@ -17,7 +17,7 @@ import { getMonthlySummary } from "../services/summary.ts";
 import { runAssistant } from "../services/assistant.ts";
 import { recordAiEvent } from "../services/events.ts";
 import { getAiSettings, getUserAiProvider, upsertAiSettings } from "../services/ai-settings.ts";
-import { mailboxSecret } from "../../../services/mailboxes.ts";
+import { mailboxSecret } from "../../ingest/services/mailboxes.ts";
 
 /**
  * AI endpoints (Phase 7). The provider is resolved per user from their stored

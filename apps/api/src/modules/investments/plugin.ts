@@ -7,7 +7,8 @@ import { accountNpsRoutes } from "./routes/account-nps.ts";
 /**
  * `modules/investments/` — third of 8 Phase-1 module migrations (task 1.3),
  * reusing task 1.1/1.2's `modules/<domain>/` template directly: `schema.ts`
- * (thin re-export — see schema.ts's own comment), `services/`, `routes/`,
+ * (physically defines investments' 6 resident tables and 4 owned enums;
+ * re-exports the shared tables/enums that make up its schema surface from `db/shared/*`), `services/`, `routes/`,
  * `plugin.ts` (this file).
  *
  * Registers all 4 investments route groups internally, replacing the 4

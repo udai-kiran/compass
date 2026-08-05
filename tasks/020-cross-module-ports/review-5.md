@@ -1,0 +1,49 @@
+No blocking findings. The SP1 plan is sound, with one minor test-strengthening recommendation.
+
+1. Correctness
+
+- The raw cross-domain read is exactly at [networth.ts:57](/home/udai/PennyPilot/apps/api/src/modules/investments/services/networth.ts:57)–[67](/home/udai/PennyPilot/apps/api/src/modules/investments/services/networth.ts:67). It reads `accounts` and an aggregate of `transactions`, filters transactions by user, deletion state, and `date <= asOf`, then filters accounts by the same user and archive state.
+- Moving the template literally into `accountBalancesAtDate()` can preserve the generated SQL and parameters exactly. The actual parameter sequence is three bound slots, not two: `[userId, asOf, userId]`, from [networth.ts:63](/home/udai/PennyPilot/apps/api/src/modules/investments/services/networth.ts:63) and [66](/home/udai/PennyPilot/apps/api/src/modules/investments/services/networth.ts:66). The plan’s phrase “the two `${userId}/${asOf}` binds” is imprecise if it means two parameters; `userId` occurs twice.
+- `coalesce(a.opening_balance_paise + coalesce(t.total, 0), 0)::bigint` at [networth.ts:58](/home/udai/PennyPilot/apps/api/src/modules/investments/services/networth.ts:58) guarantees a non-null bigint result. PostgreSQL enum values arrive as strings, and bigint values ordinarily arrive as strings through the driver. The existing loop explicitly models that shape at [networth.ts:79](/home/udai/PennyPilot/apps/api/src/modules/investments/services/networth.ts:79).
+- Mapping `{ type: r.type as AccountType, balancePaise: Number(r.balance) }` merely moves the existing casts/conversion from [networth.ts:80](/home/udai/PennyPilot/apps/api/src/modules/investments/services/networth.ts:80) and [85](/home/udai/PennyPilot/apps/api/src/modules/investments/services/networth.ts:85) across the service boundary. It does not change runtime values, rounding behavior, or null handling. The pre-existing potential loss of precision above `Number.MAX_SAFE_INTEGER` remains exactly the same.
+- The `AccountType` assertion is compile-time only. An unexpected database enum string remains unchanged at runtime, so `ACCOUNT_BUCKET[r.type]` still produces `undefined` and the guard at [networth.ts:83](/home/udai/PennyPilot/apps/api/src/modules/investments/services/networth.ts:83) still throws. Explicit `null`, notably insurance, remains distinguishable and is skipped at [networth.ts:84](/home/udai/PennyPilot/apps/api/src/modules/investments/services/networth.ts:84).
+- Byte-identical query text requires retaining all whitespace inside the SQL template, not merely retaining equivalent SQL. The proposed literal move can do that because both functions are top-level and use the same indentation. Bound values and order remain identical if all three interpolations are copied.
+
+2. `sql` import
+
+- In [networth.ts:2](/home/udai/PennyPilot/apps/api/src/modules/investments/services/networth.ts:2), `sql` is used only by the raw query beginning at [networth.ts:57](/home/udai/PennyPilot/apps/api/src/modules/investments/services/networth.ts:57).
+- There are no other `sql` identifier uses anywhere in that file. Removing it after moving the query is correct and prevents an unused-import lint failure.
+- The other Drizzle imports—`and`, `asc`, `eq`, `gte`, `lt`, and `lte`—are used later and must remain.
+
+3. Test interaction
+
+- The existing stub’s `execute()` interception is at [networth.test.ts:192](/home/udai/PennyPilot/apps/api/src/modules/investments/services/networth.test.ts:192). It extracts all SQL parameters, checks `failFor`/`failForDates`, and returns `{ rows: [] }` at [networth.test.ts:194](/home/udai/PennyPilot/apps/api/src/modules/investments/services/networth.test.ts:194)–[200](/home/udai/PennyPilot/apps/api/src/modules/investments/services/networth.test.ts:200).
+- Calling `db.execute()` inside the ledger helper uses the same database object, so the stub continues to intercept the call. Both `userId` occurrences and `asOf` remain bound values, and `{rows:[]}` still maps to an empty contributor array.
+- Consequently, the failure-isolation tests using `failFor`, such as [networth.test.ts:286](/home/udai/PennyPilot/apps/api/src/modules/investments/services/networth.test.ts:286), and the date-sensitive tests using `failForDates` continue to behave without edits.
+- No existing test should break from the faithful move. `networth.route.test.ts` is chiefly a real-app demo-mode authorization/write characterization at [networth.route.test.ts:91](/home/udai/PennyPilot/apps/api/src/modules/investments/routes/networth.route.test.ts:91); the service relocation does not change its behavior.
+- Minor missing coverage: P3 should assert the exact ordered parameters `[userId, asOf, userId]`, including the duplicate user binding, rather than merely checking that both distinct values “reach” the query. If “byte-identical query text” is intended as a proved invariant, the focused test should also compile/inspect the SQL text. Existing `networth.test.ts` checks only whether selected values are present in the bound parameters, not SQL-text identity.
+
+4. Scope and AC1
+
+- The reduced contributor interpretation is defensible. Credit-card, loan, overdraft, and home-loan-overdraft balances are account types in [ledger.ts:5](/home/udai/PennyPilot/packages/shared/src/schemas/ledger.ts:5)–[21](/home/udai/PennyPilot/packages/shared/src/schemas/ledger.ts:21), and the liability grouping is explicit at [ledger.ts:77](/home/udai/PennyPilot/packages/shared/src/schemas/ledger.ts:77)–[86](/home/udai/PennyPilot/packages/shared/src/schemas/ledger.ts:86). Their monetary balances come from ledger-owned `accounts` and `transactions`, not credit detail tables.
+- `ACCOUNT_BUCKET` classifies `credit_card`, `loan`, `overdraft`, and `home_loan_od` as liabilities at [networth.ts:38](/home/udai/PennyPilot/apps/api/src/modules/investments/services/networth.ts:38)–[44](/home/udai/PennyPilot/apps/api/src/modules/investments/services/networth.ts:44).
+- Protection has no monetary contribution in this computation: the deprecated insurance account type is explicitly balance-less and maps to `null` at [networth.ts:45](/home/udai/PennyPilot/apps/api/src/modules/investments/services/networth.ts:45)–[48](/home/udai/PennyPilot/apps/api/src/modules/investments/services/networth.ts:48). The shared schema also states that insurance is retained only as a deprecated PostgreSQL enum value at [ledger.ts:17](/home/udai/PennyPilot/packages/shared/src/schemas/ledger.ts:17)–[20](/home/udai/PennyPilot/packages/shared/src/schemas/ledger.ts:20).
+- Investments already supplies its in-module holding value through `portfolioValue` at [networth.ts:90](/home/udai/PennyPilot/apps/api/src/modules/investments/services/networth.ts:90).
+- Therefore AC1’s “or equivalent” language at [TASK.md:363](/home/udai/PennyPilot/tasks/020-cross-module-ports/TASK.md:363) does not require empty credit/protection adapters merely to produce one symbol per named module. Ledger and investments are the only modules contributing monetary inputs to this computation.
+
+5. Import cycles and module initialization
+
+- The proposed investments→ledger service direction already exists: [goal-networth.ts:6](/home/udai/PennyPilot/apps/api/src/modules/investments/services/goal-networth.ts:6) imports `listAccounts` from the same ledger `accounts.ts` service.
+- `accounts.ts` imports shared types, database/schema objects, errors, and ownership helpers at [accounts.ts:1](/home/udai/PennyPilot/apps/api/src/modules/ledger/services/accounts.ts:1)–[13](/home/udai/PennyPilot/apps/api/src/modules/ledger/services/accounts.ts:13). None imports `investments/services/networth.ts`.
+- The repository does have a pre-existing reverse ledger→investments service edge in [transactions.ts:18](/home/udai/PennyPilot/apps/api/src/modules/ledger/services/transactions.ts:18), but `accounts.ts` does not import `transactions.ts`; importing `accounts.ts` from `networth.ts` therefore does not close a service-module cycle.
+- Schema-barrel imports load schema definitions, not the net-worth service. There is no new module-initialization or temporal-dead-zone hazard.
+
+6. Regression, security, and convention risks
+
+- There is no new SQL-injection risk: all three dynamic values remain Drizzle SQL-template parameters rather than string concatenation.
+- User isolation remains intact because both the transaction subquery and outer account query retain `user_id = userId` at [networth.ts:63](/home/udai/PennyPilot/apps/api/src/modules/investments/services/networth.ts:63) and [66](/home/udai/PennyPilot/apps/api/src/modules/investments/services/networth.ts:66). Deleted transactions and archived accounts remain excluded.
+- Locating the query in ledger `accounts.ts` matches ownership and the existing balance-service convention; `listAccounts` already computes account balances there at [accounts.ts:152](/home/udai/PennyPilot/apps/api/src/modules/ledger/services/accounts.ts:152)–[172](/home/udai/PennyPilot/apps/api/src/modules/ledger/services/accounts.ts:172).
+- The main regression risk is accidental “cleanup” during the move: changing whitespace undermines the literal byte-identity claim, while changing to a query builder breaks the current stub contract. P1/P2 correctly forbid both.
+- P3 covers row conversion and binding, but it should include a negative/large bigint-string example and exact parameter multiplicity/order. A focused helper test plus the unchanged net-worth suites is otherwise proportionate.
+
+The plan is sound and should preserve net-worth behavior exactly if the SQL template and all three interpolations are copied literally.

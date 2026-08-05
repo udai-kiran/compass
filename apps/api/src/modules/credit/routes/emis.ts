@@ -4,7 +4,7 @@ import { z } from "zod";
 import { CreateEmiSchema, EmiInstallmentSchema, EmiSummarySchema } from "@compass/shared";
 import { createEmi, deleteEmi, listEmiInstallments, listEmis } from "../services/emis.ts";
 import { materializeDue } from "../../ledger/services/recurring.ts";
-import { invalidateUserCache } from "../../../services/cache.ts";
+import { invalidateUserCache } from "../../../lib/cache.ts";
 import { enqueueBudgetEvaluation } from "../../../jobs/index.ts";
 
 const IdParams = z.object({ templateId: z.uuid() });

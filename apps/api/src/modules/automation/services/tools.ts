@@ -8,7 +8,7 @@ import { getUtilization } from "../../planning/services/budgets.ts";
 import { getInsights } from "../../planning/services/insights.ts";
 import { search } from "../../ledger/services/search.ts";
 import { listGoals } from "../../planning/services/goals.ts";
-import { currentPeriodKey } from "../../../services/periods.ts";
+import { currentPeriodKey } from "../../../lib/periods.ts";
 
 export interface ToolContext {
   db: Db;

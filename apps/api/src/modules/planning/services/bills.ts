@@ -4,8 +4,8 @@ import { formatINR } from "@compass/shared";
 import { recurringTemplates, alertLedger } from "../../../db/schema.ts";
 import { subscriptionDismissals } from "../schema.ts";
 import type { Db } from "../../../db/index.ts";
-import { createNotification } from "../../../services/notifications.ts";
-import { prefEnabled } from "../../../services/prefs.ts";
+import { createNotification } from "../../system/services/notifications.ts";
+import { prefEnabled } from "../../system/services/prefs.ts";
 import { advanceDate } from "../../ledger/services/recurring.ts";
 
 function todayIso(): string {

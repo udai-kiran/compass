@@ -11,7 +11,7 @@ import { createDb } from "../../../db/index.ts";
 import { setupAuth, SESSION_COOKIE } from "../../../plugins/auth.ts";
 import { setupSecurity } from "../../../plugins/security.ts";
 import { automationRoutes } from "../plugin.ts";
-import { createSession, destroySession } from "../../../services/session.ts";
+import { createSession, destroySession } from "../../../modules/system/services/session.ts";
 import { users } from "../../../db/core-schema.ts";
 import { aiSettings, aiEvents } from "../schema.ts";
 

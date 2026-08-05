@@ -20,7 +20,7 @@ import {
   upsertBudget,
   upsertBudgetLine,
 } from "../services/budgets.ts";
-import { invalidateUserCache } from "../../../services/cache.ts";
+import { invalidateUserCache } from "../../../lib/cache.ts";
 import { enqueueBudgetEvaluation } from "../../../jobs/index.ts";
 
 const PeriodParams = z.object({ period: BudgetPeriodSchema, key: PeriodKeySchema });

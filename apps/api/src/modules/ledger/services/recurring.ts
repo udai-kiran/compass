@@ -10,7 +10,7 @@ import { recurringTemplates, transactions } from "../schema.ts";
 import { emiDetails } from "../../../db/schema.ts";
 import { HttpError } from "../../../lib/errors.ts";
 import { lockAccountPair, stepAmortization } from "../../credit/services/emis.ts";
-import { assertOwnedAccount, assertOwnedCategory } from "../../../services/ownership.ts";
+import { assertOwnedAccount, assertOwnedCategory } from "../../../lib/ownership.ts";
 import { assertOwnedResource } from "./resources.ts";
 
 type TemplateRow = typeof recurringTemplates.$inferSelect;

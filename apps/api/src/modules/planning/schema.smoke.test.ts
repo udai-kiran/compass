@@ -6,11 +6,13 @@ import { createDb } from "../../db/index.ts";
 import * as barrel from "../../db/schema.ts";
 import * as planningSchema from "./schema.ts";
 
-// Object-identity proof: modules/planning/schema.ts is a thin re-export, not an
-// accidental duplicate definition. Every one of the 6 planning tables (and their
-// 2 owned enums) imported via the module path must be the exact same object
-// as the one imported via the db/schema.ts barrel — not just structurally
-// equal. Mirrors modules/credit/schema.smoke.test.ts.
+// Object-identity proof: modules/planning/schema.ts physically defines its
+// resident tables/enums and re-exports the shared symbols that complete its
+// schema surface. The test asserts the module's export is the exact same
+// object as the barrel's (identity through the barrel): every one of the 6
+// tables and 2 enums on the module's export surface — residents plus
+// re-exported shared symbols — must be the identical object from db/schema.ts,
+// not just structurally equal. Mirrors modules/credit/schema.smoke.test.ts.
 
 const TABLE_NAMES: Record<string, string> = {
   budgets: "budgets",

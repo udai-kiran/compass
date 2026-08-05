@@ -18,7 +18,7 @@ import {
   periodRange,
   spendByNecessity,
   spentByCategory,
-} from "../../../services/periods.ts";
+} from "../../../lib/periods.ts";
 import { savingRatePct } from "./insights.ts";
 
 /**

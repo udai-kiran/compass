@@ -13,7 +13,7 @@
  * Current consumers:
  * - `modules/planning/routes/goals.ts` — GET /api/goals (listGoals),
  *   GET /api/goals/:id/progress (getGoalProgress).
- * - `services/autopilot.ts` — weekly `autopilot.goals` cron
+ * - `modules/automation/services/autopilot.ts` — weekly `autopilot.goals` cron
  *   (jobs/index.ts:221-228 scheduler, :325-335 worker) uses all three to
  *   generate asset-allocation and contribution proposals.
  * - `modules/automation/services/tools.ts` — uses listGoals for AI budget/goal queries.
@@ -40,9 +40,9 @@ import { getPortfolio } from "../../investments/services/holdings.ts";
 import { accountReturnBps, holdingReturnBps } from "./goal-returns.ts";
 import { projectGoal } from "./goal-projection.ts";
 import { buildGoalPlan } from "./goal-plan.ts";
-import { createNotification } from "../../../services/notifications.ts";
-import { incomeExpense, periodRange, prevPeriodKey, currentPeriodKey } from "../../../services/periods.ts";
-import { prefEnabled } from "../../../services/prefs.ts";
+import { createNotification } from "../../system/services/notifications.ts";
+import { incomeExpense, periodRange, prevPeriodKey, currentPeriodKey } from "../../../lib/periods.ts";
+import { prefEnabled } from "../../system/services/prefs.ts";
 import { getProjectionSettings } from "./projection-settings.ts";
 import { committedForGoal } from "../../investments/services/sip-commitments.ts";
 import {

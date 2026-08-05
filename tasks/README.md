@@ -102,7 +102,7 @@ Phase 4 and 5 are **extensions of real working code**, not greenfield. Verified 
 | 1.6 | [Migrate automation/AI module](./01.06-migrate-automation.md) | 1 — Module migration | done |
 | 1.7 | [Migrate ingest module](./01.07-migrate-ingest.md) | 1 — Module migration | todo |
 | 1.8 | [Migrate system module](./01.08-migrate-system.md) | 1 — Module migration | todo |
-| 1.9 | [Cross-module ports + flat-services cleanup](./01.09-cross-module-ports.md) | 1 — Module migration | todo |
+| 1.9 | [Cross-module ports + flat-services cleanup](./01.09-cross-module-ports.md) | 1 — Module migration | done |
 | 1.10 | [Storage backend contract tests](./01.10-storage-backend-contract-tests.md) | 1 — Module migration | todo |
 | 2.1 | [Postings model & balance invariant](./02.01-postings-model.md) | 2 — Double-entry ledger | todo |
 | 2.2 | [Retire transfer_links & transfer-exclusion logic](./02.02-retire-transfer-links.md) | 2 — Double-entry ledger | todo |

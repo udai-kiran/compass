@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import pg from "pg";
 import { decryptBackup } from "../lib/crypto-backup.ts";
-import { ALL_TABLES } from "../services/backup.ts";
+import { ALL_TABLES } from "../modules/system/services/backup.ts";
 
 type Dump = Record<string, Array<Record<string, unknown>>>;
 

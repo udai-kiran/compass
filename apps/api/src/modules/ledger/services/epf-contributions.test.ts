@@ -9,7 +9,7 @@ import { createPool } from "../../../infra/db.ts";
 import { accounts, categories, transactions, transferLinks } from "../schema.ts";
 import { users } from "../../../db/schema.ts";
 import { HttpError } from "../../../lib/errors.ts";
-import { bankCashBalances } from "../../../services/balances.ts";
+import { bankCashBalances } from "./balances.ts";
 import { listAccounts } from "./accounts.ts";
 import { recordEpfContribution } from "./epf-contributions.ts";
 import { getTransaction } from "./transactions.ts";

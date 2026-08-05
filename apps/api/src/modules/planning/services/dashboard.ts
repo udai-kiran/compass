@@ -2,8 +2,8 @@ import { sql } from "drizzle-orm";
 import type { Redis } from "ioredis";
 import type { Dashboard, Trends } from "@compass/shared";
 import type { Db } from "../../../db/index.ts";
-import { bankCashTotal } from "../../../services/balances.ts";
-import { cached } from "../../../services/cache.ts";
+import { bankCashTotal } from "../../ledger/services/balances.ts";
+import { cached } from "../../../lib/cache.ts";
 import { getUtilization } from "./budgets.ts";
 import {
   currentPeriodKey,
@@ -11,7 +11,7 @@ import {
   LIABILITY_TYPES_SQL,
   periodRange,
   spentByCategory,
-} from "../../../services/periods.ts";
+} from "../../../lib/periods.ts";
 import { listTransactions } from "../../ledger/services/transactions.ts";
 
 const TTL = 300;

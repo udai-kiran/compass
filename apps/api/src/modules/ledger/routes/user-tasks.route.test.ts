@@ -11,7 +11,7 @@ import { createDb } from "../../../db/index.ts";
 import { setupAuth, SESSION_COOKIE } from "../../../plugins/auth.ts";
 import { setupSecurity } from "../../../plugins/security.ts";
 import { userTaskRoutes } from "./user-tasks.ts";
-import { createSession, destroySession } from "../../../services/session.ts";
+import { createSession, destroySession } from "../../../modules/system/services/session.ts";
 import { accounts, transactions, userTasks } from "../schema.ts";
 import { users } from "../../../db/schema.ts";
 import { createUserTask } from "../services/user-tasks.ts";

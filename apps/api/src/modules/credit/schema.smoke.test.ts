@@ -3,11 +3,12 @@ import assert from "node:assert/strict";
 import * as barrel from "../../db/schema.ts";
 import * as creditSchema from "./schema.ts";
 
-// Object-identity proof: modules/credit/schema.ts is a thin re-export, not an
-// accidental duplicate definition. Every one of the 8 credit tables (and their
-// 2 owned enums) imported via the module path must be the exact same object
-// as the one imported via the db/schema.ts barrel — not just structurally
-// equal. Mirrors modules/ledger/schema.smoke.test.ts exactly.
+// Object-identity proof: modules/credit/schema.ts now physically defines its
+// resident tables and enums; the test asserts the module's export is the exact
+// same object as the barrel's (identity through the barrel). Every one of the
+// 8 credit tables (and their 2 owned enums) imported via the module path must
+// be the identical object from db/schema.ts — not just structurally equal.
+// Mirrors modules/ledger/schema.smoke.test.ts exactly.
 
 const TABLE_NAMES = [
   "cardDetails",
