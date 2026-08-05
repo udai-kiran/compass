@@ -2,7 +2,7 @@ import { Queue, Worker } from "bullmq";
 import type { FastifyInstance } from "fastify";
 import { INGESTOR_QUEUE } from "@compass/shared";
 import { evaluateBudgetAlerts } from "../services/notifications.ts";
-import { evaluateBillReminders } from "../services/bills.ts";
+import { evaluateBillReminders } from "../modules/planning/services/bills.ts";
 import { evaluateCardDueReminders, evaluateCardUtilization } from "../modules/credit/services/alerts.ts";
 import { materializeCardDueTasks } from "../modules/credit/services/card-due-tasks.ts";
 import { evaluateAnomalies } from "../services/anomaly.ts";

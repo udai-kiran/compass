@@ -8,11 +8,11 @@ import type {
   UtilizationLine,
 } from "@compass/shared";
 import { CreateBudgetSchema } from "@compass/shared";
-import type { Db } from "../db/index.ts";
-import { budgetLines, budgets } from "../db/schema.ts";
-import { HttpError } from "../lib/errors.ts";
-import { assertOwnedCategory } from "./ownership.ts";
-import { currentPeriodKey, periodRange, prevPeriodKey, spentByCategory } from "./periods.ts";
+import type { Db } from "../../../db/index.ts";
+import { budgetLines, budgets } from "../schema.ts";
+import { HttpError } from "../../../lib/errors.ts";
+import { assertOwnedCategory } from "../../../services/ownership.ts";
+import { currentPeriodKey, periodRange, prevPeriodKey, spentByCategory } from "../../../services/periods.ts";
 
 /** Past periods are closed: viewable with their then-current budget, never editable. */
 export function isClosed(period: BudgetPeriod, key: string): boolean {

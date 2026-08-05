@@ -1,11 +1,12 @@
 import { and, eq, isNull, ne, sql } from "drizzle-orm";
 import type { BillOccurrence, SubscriptionSuggestion } from "@compass/shared";
 import { formatINR } from "@compass/shared";
-import type { Db } from "../db/index.ts";
-import { recurringTemplates, subscriptionDismissals, alertLedger } from "../db/schema.ts";
-import { createNotification } from "./notifications.ts";
-import { prefEnabled } from "./prefs.ts";
-import { advanceDate } from "../modules/ledger/services/recurring.ts";
+import { recurringTemplates, alertLedger } from "../../../db/schema.ts";
+import { subscriptionDismissals } from "../schema.ts";
+import type { Db } from "../../../db/index.ts";
+import { createNotification } from "../../../services/notifications.ts";
+import { prefEnabled } from "../../../services/prefs.ts";
+import { advanceDate } from "../../ledger/services/recurring.ts";
 
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);

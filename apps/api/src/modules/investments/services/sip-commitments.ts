@@ -3,7 +3,7 @@ import type { AccountType, AssetClass, GainsTaxClass, SipFrequency } from "@comp
 import type { Db } from "../../../db/index.ts";
 import { accounts } from "../../../db/schema.ts";
 import { holdings, sips } from "../schema.ts";
-import { accountAllocationClass, holdingAllocationClass, type GoalAllocationClass } from "../../../services/goal-allocation.ts";
+import { accountAllocationClass, holdingAllocationClass, type GoalAllocationClass } from "../../planning/services/goal-allocation.ts";
 
 // ---------- Committed monthly (goal-plan gap) ----------
 

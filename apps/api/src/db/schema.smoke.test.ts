@@ -19,7 +19,7 @@ test("schema barrel exposes users and projectionSettings exactly once, with corr
   assert.equal(
     schema.projectionSettings,
     projectionSettings,
-    "projectionSettings must be the same table object re-exported from modules/planning/schema.ts",
+    "projectionSettings must be the same table object re-exported from db/schema.ts to modules/planning/schema.ts",
   );
 
   const usersConfig = getTableConfig(schema.users);

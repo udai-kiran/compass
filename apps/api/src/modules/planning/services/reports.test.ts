@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { Report, ReportQuery } from "@compass/shared";
 import { MAX_REPORT_RANGE_DAYS, formatINR } from "@compass/shared";
-import type { NecessitySpendRow } from "./periods.ts";
+import type { NecessitySpendRow } from "../../../services/periods.ts";
 import { reportToCsv, resolveReportRange, splitByNecessity } from "./reports.ts";
 
 /** ISO date shifted by `days` (may be negative), via UTC epoch arithmetic. */

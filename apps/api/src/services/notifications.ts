@@ -4,7 +4,7 @@ import type { Db, DbOrTx } from "../db/index.ts";
 import { budgetAlerts, categories, notifications } from "../db/schema.ts";
 import { formatINR } from "@compass/shared";
 import { currentPeriodKey } from "./periods.ts";
-import { getUtilization } from "./budgets.ts";
+import { getUtilization } from "../modules/planning/services/budgets.ts";
 
 function toNotification(n: typeof notifications.$inferSelect): Notification {
   return {

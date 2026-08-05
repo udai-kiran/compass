@@ -1,3 +1,26 @@
+/**
+ * == Planning module public surface (for cross-module reuse) ==
+ *
+ * The following three functions are the planning module's exported interface
+ * consumed outside the module:
+ *
+ * - `getGoalProgress` (this file): calculates a single goal's progress metrics
+ *   (current corpus, monthly contribution, projected completion, allocation).
+ * - `listGoals` (this file): returns all of a user's goals (including archived), ordered by sort order then creation time.
+ * - `equityShareOfInvestable` (goal-plan.ts): calculates the equity share of
+ *   investable assets given current equity/debt percentages.
+ *
+ * Current consumers:
+ * - `modules/planning/routes/goals.ts` — GET /api/goals (listGoals),
+ *   GET /api/goals/:id/progress (getGoalProgress).
+ * - `services/autopilot.ts` — weekly `autopilot.goals` cron
+ *   (jobs/index.ts:221-228 scheduler, :325-335 worker) uses all three to
+ *   generate asset-allocation and contribution proposals.
+ * - `services/ai/tools.ts` — uses listGoals for AI budget/goal queries.
+ *
+ * Task 1.9 converts this ad-hoc surface into a declared port interface.
+ */
+
 import { and, asc, eq, gt, inArray, isNull, sql } from "drizzle-orm";
 import type {
   CreateGoal,
@@ -8,19 +31,20 @@ import type {
   UpdateGoal,
 } from "@compass/shared";
 import { CreateGoalSchema, isRetirementAccount, ReorderGoalsSchema } from "@compass/shared";
-import type { Db } from "../db/index.ts";
-import { alertLedger, goals, holdingEvents, retirementDetails, transactions } from "../db/schema.ts";
-import { HttpError } from "../lib/errors.ts";
-import { listAccounts } from "../modules/ledger/services/accounts.ts";
-import { getPortfolio } from "../modules/investments/services/holdings.ts";
+import type { Db } from "../../../db/index.ts";
+import { alertLedger, holdingEvents, retirementDetails, transactions } from "../../../db/schema.ts";
+import { goals } from "../schema.ts";
+import { HttpError } from "../../../lib/errors.ts";
+import { listAccounts } from "../../ledger/services/accounts.ts";
+import { getPortfolio } from "../../investments/services/holdings.ts";
 import { accountReturnBps, holdingReturnBps } from "./goal-returns.ts";
 import { projectGoal } from "./goal-projection.ts";
 import { buildGoalPlan } from "./goal-plan.ts";
-import { createNotification } from "./notifications.ts";
-import { incomeExpense, periodRange, prevPeriodKey, currentPeriodKey } from "./periods.ts";
-import { prefEnabled } from "./prefs.ts";
-import { getProjectionSettings } from "../modules/planning/services/projection-settings.ts";
-import { committedForGoal } from "../modules/investments/services/sip-commitments.ts";
+import { createNotification } from "../../../services/notifications.ts";
+import { incomeExpense, periodRange, prevPeriodKey, currentPeriodKey } from "../../../services/periods.ts";
+import { prefEnabled } from "../../../services/prefs.ts";
+import { getProjectionSettings } from "./projection-settings.ts";
+import { committedForGoal } from "../../investments/services/sip-commitments.ts";
 import {
   accountAllocationClass,
   allocationPercentages,
