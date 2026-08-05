@@ -1,7 +1,7 @@
 import { Queue, Worker } from "bullmq";
 import type { FastifyInstance } from "fastify";
 import { INGESTOR_QUEUE } from "@compass/shared";
-import { evaluateBudgetAlerts } from "../services/notifications.ts";
+import { evaluateBudgetAlerts } from "../modules/system/services/notifications.ts";
 import { evaluateBillReminders } from "../modules/planning/services/bills.ts";
 import { evaluateCardDueReminders, evaluateCardUtilization } from "../modules/credit/services/alerts.ts";
 import { materializeCardDueTasks } from "../modules/credit/services/card-due-tasks.ts";
@@ -13,8 +13,8 @@ import {
   snapshotAllUsers,
   type SnapshotPassResult,
 } from "../modules/investments/services/networth.ts";
-import { createEncryptedBackup } from "../services/backup.ts";
-import { evaluateLargeTransactions, evaluateLowBalance, prefEnabled } from "../services/prefs.ts";
+import { createEncryptedBackup } from "../modules/system/services/backup.ts";
+import { evaluateLargeTransactions, evaluateLowBalance, prefEnabled } from "../modules/system/services/prefs.ts";
 import { materializeDue } from "../modules/ledger/services/recurring.ts";
 
 export interface Queues {

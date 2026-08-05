@@ -1,6 +1,6 @@
 import cookie from "@fastify/cookie";
 import type { FastifyInstance, FastifyReply } from "fastify";
-import { getSession, SESSION_TTL_SECONDS } from "../services/session.ts";
+import { getSession, SESSION_TTL_SECONDS } from "../modules/system/services/session.ts";
 
 export const SESSION_COOKIE = "compass_sid";
 

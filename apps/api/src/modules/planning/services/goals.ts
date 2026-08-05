@@ -40,9 +40,9 @@ import { getPortfolio } from "../../investments/services/holdings.ts";
 import { accountReturnBps, holdingReturnBps } from "./goal-returns.ts";
 import { projectGoal } from "./goal-projection.ts";
 import { buildGoalPlan } from "./goal-plan.ts";
-import { createNotification } from "../../../services/notifications.ts";
+import { createNotification } from "../../system/services/notifications.ts";
 import { incomeExpense, periodRange, prevPeriodKey, currentPeriodKey } from "../../../services/periods.ts";
-import { prefEnabled } from "../../../services/prefs.ts";
+import { prefEnabled } from "../../system/services/prefs.ts";
 import { getProjectionSettings } from "./projection-settings.ts";
 import { committedForGoal } from "../../investments/services/sip-commitments.ts";
 import {

@@ -16,20 +16,14 @@ import multipart from "@fastify/multipart";
 import compress from "@fastify/compress";
 import { setupAuth } from "./plugins/auth.ts";
 import { setupSecurity } from "./plugins/security.ts";
-import { healthRoutes } from "./routes/health.ts";
-import { authRoutes } from "./routes/auth.ts";
+import { systemRoutes } from "./modules/system/plugin.ts";
 import { ledgerRoutes } from "./modules/ledger/plugin.ts";
-import { importRoutes } from "./routes/imports.ts";
-import { notificationRoutes } from "./routes/notifications.ts";
+import { ingestRoutes } from "./modules/ingest/plugin.ts";
 import { investmentsRoutes } from "./modules/investments/plugin.ts";
 import { creditRoutes } from "./modules/credit/plugin.ts";
 import { protectionRoutes } from "./modules/protection/plugin.ts";
-import { backupRoutes } from "./routes/backup.ts";
 import { automationRoutes } from "./modules/automation/plugin.ts";
 import { planningRoutes } from "./modules/planning/plugin.ts";
-import { profileRoutes } from "./routes/profile.ts";
-import { inboxRoutes } from "./routes/inbox.ts";
-import { mailboxRoutes } from "./routes/mailboxes.ts";
 import { invalidateUserCache } from "./services/cache.ts";
 import { enqueueBudgetEvaluation } from "./jobs/index.ts";
 import { createStorage, type Storage } from "./lib/storage.ts";
@@ -122,22 +116,35 @@ export function registerLedgerCacheSubscriber(app: FastifyInstance): void {
  * already-adjacent, already-in-order registrations in a plugin does not
  * change the raw `printRoutes()` tree — see `route-table.snapshot.txt`
  * whose regenerated content is expected byte-identical.
+ *
+ * As of task 1.7 (migrate-ingest), the 3 email→transaction route
+ * registrations (imports/inbox/mailboxes) are collapsed into the single
+ * `ingestRoutes` plugin, in the position `importRoutes` used to occupy.
+ * `inboxRoutes`/`mailboxRoutes` used to register much later (after
+ * `profileRoutes`, interleaved with other flat registrations) — like the
+ * three earlier migrations that moved interleaved registrations together,
+ * this legitimately restructures the raw `printRoutes()` tree — see
+ * `modules/ingest/plugin.ts`.
+ * As of task 1.8 (migrate-system), the 5 system route registrations that used
+ * to sit here directly (health/auth/notifications/backup/profile) are collapsed
+ * into the single `systemRoutes` plugin registered below, in the position
+ * `healthRoutes` used to occupy. `notificationRoutes`/`backupRoutes`/
+ * `profileRoutes` used to register much later (interleaved with other module
+ * registrations), so collapsing all 5 into one contiguous plugin call, in the
+ * position `healthRoutes` used to occupy, legitimately restructures the raw
+ * `printRoutes()` tree (see `route-table.snapshot.txt`'s regenerated diff) but
+ * does not change the canonical (method, path) surface
+ * (`route-surface.snapshot.txt`).
  */
 export async function registerRoutes(app: FastifyInstance): Promise<void> {
-  await app.register(healthRoutes);
-  await app.register(authRoutes);
+  await app.register(systemRoutes);
   await app.register(ledgerRoutes);
-  await app.register(importRoutes);
+  await app.register(ingestRoutes);
   await app.register(planningRoutes);
-  await app.register(notificationRoutes);
   await app.register(investmentsRoutes);
   await app.register(creditRoutes);
   await app.register(protectionRoutes);
-  await app.register(backupRoutes);
   await app.register(automationRoutes);
-  await app.register(profileRoutes);
-  await app.register(inboxRoutes);
-  await app.register(mailboxRoutes);
 }
 
 export async function buildApp(config: Config): Promise<FastifyInstance> {

@@ -31,7 +31,7 @@ import {
   saveCardStatement,
 } from "../services/card-statements.ts";
 import { MAX_ATTACHMENT_BYTES } from "../../ledger/services/attachments.ts";
-import { mailboxSecret } from "../../../services/mailboxes.ts";
+import { mailboxSecret } from "../../ingest/services/mailboxes.ts";
 
 const AccountParams = z.object({ accountId: z.uuid() });
 const RewardParams = z.object({ accountId: z.uuid(), id: z.uuid() });

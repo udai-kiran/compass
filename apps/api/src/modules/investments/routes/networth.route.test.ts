@@ -11,7 +11,7 @@ import { createDb } from "../../../db/index.ts";
 import { setupAuth, SESSION_COOKIE } from "../../../plugins/auth.ts";
 import { setupSecurity } from "../../../plugins/security.ts";
 import { netWorthRoutes } from "./networth.ts";
-import { createSession, destroySession } from "../../../services/session.ts";
+import { createSession, destroySession } from "../../../modules/system/services/session.ts";
 import { netWorthSnapshots } from "../schema.ts";
 import { users } from "../../../db/schema.ts";
 

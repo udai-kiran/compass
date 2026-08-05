@@ -2,7 +2,7 @@ import { formatINR } from "@compass/shared";
 import type { Db } from "../../../db/index.ts";
 import { alertLedger } from "../../../db/schema.ts";
 import { cardDetails } from "../schema.ts";
-import { createNotification } from "../../../services/notifications.ts";
+import { createNotification } from "../../system/services/notifications.ts";
 import { currentPeriodKey } from "../../../services/periods.ts";
 import { listCardHolders } from "./cards.ts";
 
