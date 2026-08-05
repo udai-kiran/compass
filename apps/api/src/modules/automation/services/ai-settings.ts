@@ -2,10 +2,10 @@ import { eq } from "drizzle-orm";
 import { createAiProvider, NullProvider, type AiObserver, type AiProvider } from "@compass/ai";
 import type { AiSettings, UpdateAiSettings } from "@compass/shared";
 import { UpdateAiSettingsSchema } from "@compass/shared";
-import type { Db } from "../db/index.ts";
-import { aiSettings } from "../db/schema.ts";
-import { decryptSecret, encryptSecret } from "../lib/secret-box.ts";
-import { HttpError } from "../lib/errors.ts";
+import type { Db } from "../../../db/index.ts";
+import { aiSettings } from "../schema.ts";
+import { decryptSecret, encryptSecret } from "../../../lib/secret-box.ts";
+import { HttpError } from "../../../lib/errors.ts";
 
 type Row = typeof aiSettings.$inferSelect;
 

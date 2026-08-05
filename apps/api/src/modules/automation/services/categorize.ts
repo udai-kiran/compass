@@ -1,7 +1,7 @@
 import { sql } from "drizzle-orm";
 import type { AiProvider } from "@compass/ai";
 import { redactPii, type AiCategorySuggestion, type RedactionIdentity } from "@compass/shared";
-import type { Db } from "../../db/index.ts";
+import type { Db } from "../../../db/index.ts";
 
 /**
  * The user's own identifiers, to redact *their* PII from the free-text note sent

@@ -6,7 +6,7 @@ import {
   AiEventPageSchema,
   ListAiEventsQuerySchema,
 } from "@compass/shared";
-import { getAiEvent, listAiEvents } from "../services/ai/events.ts";
+import { getAiEvent, listAiEvents } from "../services/events.ts";
 
 const IdParams = z.object({ id: z.uuid() });
 

@@ -1,9 +1,9 @@
 import type { Redis } from "ioredis";
 import type { AiProvider } from "@compass/ai";
 import { formatINR, type AiSummary } from "@compass/shared";
-import type { Db } from "../../db/index.ts";
-import { buildReport } from "../../modules/planning/services/reports.ts";
-import { getInsights } from "../../modules/planning/services/insights.ts";
+import type { Db } from "../../../db/index.ts";
+import { buildReport } from "../../planning/services/reports.ts";
+import { getInsights } from "../../planning/services/insights.ts";
 
 const TTL_SECONDS = 60 * 60 * 24 * 7; // narratives are stable for a closed month
 const cacheKey = (userId: string, period: string) => `ai:summary:${userId}:${period}`;

@@ -24,7 +24,7 @@ import { savingRatePct } from "./insights.ts";
 /**
  * Resolve a validated `ReportQuery` into a concrete `from`/`to`/`periodKey`.
  * Throws rather than using `!` non-null assertions: `buildReport` is also
- * called directly from `services/ai/tools.ts` and `services/ai/summary.ts`,
+ * called directly from `modules/automation/services/tools.ts` and `modules/automation/services/summary.ts`,
  * which construct their own query objects and bypass Zod entirely. The rules
  * enforced here are equivalent to `ReportQuerySchema`'s: `MONTH_KEY_RE`,
  * `YEAR_KEY_RE`, `MAX_REPORT_RANGE_DAYS` and `inclusiveDayCount` are shared

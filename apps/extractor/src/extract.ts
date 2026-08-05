@@ -58,7 +58,7 @@ const StatementTxnResultSchema = z.object({
 // ---------------------------------------------------------------------------
 // Forced-tool-call structured output (additive to the prose-JSON shape above).
 // Hand-written JSON Schemas (no zod-to-json-schema dependency), matching the
-// convention in apps/api/src/services/ai/tools.ts. `additionalProperties` is
+// convention in apps/api/src/modules/automation/services/tools.ts. `additionalProperties` is
 // deliberately left UNSET (permissive) on every object schema below — matches
 // that existing convention, not an oversight.
 //

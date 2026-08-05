@@ -2,13 +2,13 @@ import { z } from "zod";
 import type { ToolSpec } from "@compass/ai";
 import { formatINR } from "@compass/shared";
 import type { Redis } from "ioredis";
-import type { Db } from "../../db/index.ts";
-import { buildReport } from "../../modules/planning/services/reports.ts";
-import { getUtilization } from "../../modules/planning/services/budgets.ts";
-import { getInsights } from "../../modules/planning/services/insights.ts";
-import { search } from "../../modules/ledger/services/search.ts";
-import { listGoals } from "../../modules/planning/services/goals.ts";
-import { currentPeriodKey } from "../periods.ts";
+import type { Db } from "../../../db/index.ts";
+import { buildReport } from "../../planning/services/reports.ts";
+import { getUtilization } from "../../planning/services/budgets.ts";
+import { getInsights } from "../../planning/services/insights.ts";
+import { search } from "../../ledger/services/search.ts";
+import { listGoals } from "../../planning/services/goals.ts";
+import { currentPeriodKey } from "../../../services/periods.ts";
 
 export interface ToolContext {
   db: Db;

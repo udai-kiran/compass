@@ -99,7 +99,7 @@ Phase 4 and 5 are **extensions of real working code**, not greenfield. Verified 
 | 1.3 | [Migrate investments module](./01.03-migrate-investments.md) | 1 — Module migration | done |
 | 1.4 | [Migrate protection module](./01.04-migrate-protection.md) | 1 — Module migration | done |
 | 1.5 | [Migrate planning module](./01.05-migrate-planning.md) | 1 — Module migration | done |
-| 1.6 | [Migrate automation/AI module](./01.06-migrate-automation.md) | 1 — Module migration | todo |
+| 1.6 | [Migrate automation/AI module](./01.06-migrate-automation.md) | 1 — Module migration | done |
 | 1.7 | [Migrate ingest module](./01.07-migrate-ingest.md) | 1 — Module migration | todo |
 | 1.8 | [Migrate system module](./01.08-migrate-system.md) | 1 — Module migration | todo |
 | 1.9 | [Cross-module ports + flat-services cleanup](./01.09-cross-module-ports.md) | 1 — Module migration | todo |

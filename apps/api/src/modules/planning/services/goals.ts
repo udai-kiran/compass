@@ -16,7 +16,7 @@
  * - `services/autopilot.ts` — weekly `autopilot.goals` cron
  *   (jobs/index.ts:221-228 scheduler, :325-335 worker) uses all three to
  *   generate asset-allocation and contribution proposals.
- * - `services/ai/tools.ts` — uses listGoals for AI budget/goal queries.
+ * - `modules/automation/services/tools.ts` — uses listGoals for AI budget/goal queries.
  *
  * Task 1.9 converts this ad-hoc surface into a declared port interface.
  */
