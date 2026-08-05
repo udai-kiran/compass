@@ -25,8 +25,7 @@ import { investmentsRoutes } from "./modules/investments/plugin.ts";
 import { creditRoutes } from "./modules/credit/plugin.ts";
 import { protectionRoutes } from "./modules/protection/plugin.ts";
 import { backupRoutes } from "./routes/backup.ts";
-import { aiRoutes } from "./routes/ai.ts";
-import { aiEventRoutes } from "./routes/ai-events.ts";
+import { automationRoutes } from "./modules/automation/plugin.ts";
 import { planningRoutes } from "./modules/planning/plugin.ts";
 import { profileRoutes } from "./routes/profile.ts";
 import { inboxRoutes } from "./routes/inbox.ts";
@@ -115,6 +114,14 @@ export function registerLedgerCacheSubscriber(app: FastifyInstance): void {
  * does not change the raw `printRoutes()` tree — see
  * `route-table.snapshot.txt` whose regenerated content is expected
  * byte-identical.
+ *
+ * As of task 1.6 (migrate-automation), the 2 AI route registrations
+ * (aiRoutes/aiEventRoutes) are collapsed into the single `automationRoutes`
+ * plugin, in the same position (`aiRoutes` used to occupy, with
+ * `aiEventRoutes` immediately after). Like protection, wrapping two
+ * already-adjacent, already-in-order registrations in a plugin does not
+ * change the raw `printRoutes()` tree — see `route-table.snapshot.txt`
+ * whose regenerated content is expected byte-identical.
  */
 export async function registerRoutes(app: FastifyInstance): Promise<void> {
   await app.register(healthRoutes);
@@ -127,8 +134,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   await app.register(creditRoutes);
   await app.register(protectionRoutes);
   await app.register(backupRoutes);
-  await app.register(aiRoutes);
-  await app.register(aiEventRoutes);
+  await app.register(automationRoutes);
   await app.register(profileRoutes);
   await app.register(inboxRoutes);
   await app.register(mailboxRoutes);
@@ -154,7 +160,7 @@ export async function buildApp(config: Config): Promise<FastifyInstance> {
   app.decorate("storage", createStorage(config));
   await app.storage.ensureReady();
   // AI is per-user now (Settings → AI), resolved per request from ai_settings —
-  // there is no global provider. See services/ai-settings.ts.
+  // there is no global provider. See modules/automation/services/ai-settings.ts.
 
   const eventBus = new EventBus({
     error: (msg, ctx) => app.log.error(ctx ?? {}, msg),

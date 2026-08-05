@@ -17,7 +17,7 @@ import { createSession, destroySession, listSessions } from "../services/session
 import { ensureDemoData } from "../services/demo.ts";
 import { countUsers, findUserById } from "../repositories/users.ts";
 import { clearSessionCookie, setSessionCookie } from "../plugins/auth.ts";
-import { getAiSettings, getUserAiProvider } from "../services/ai-settings.ts";
+import { getAiSettings, getUserAiProvider } from "../modules/automation/services/ai-settings.ts";
 import { mailboxSecret } from "../services/mailboxes.ts";
 
 export async function authRoutes(app: FastifyInstance) {

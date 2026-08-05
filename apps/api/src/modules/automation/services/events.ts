@@ -6,9 +6,9 @@ import type {
   AiEventStatus,
   AiEventSummary,
 } from "@compass/shared";
-import type { Db, DbOrTx } from "../../db/index.ts";
-import { aiEvents } from "../../db/schema.ts";
-import { HttpError } from "../../lib/errors.ts";
+import type { Db, DbOrTx } from "../../../db/index.ts";
+import { aiEvents } from "../schema.ts";
+import { HttpError } from "../../../lib/errors.ts";
 
 type Row = typeof aiEvents.$inferSelect;
 

@@ -11,13 +11,13 @@ import {
 } from "@compass/shared";
 import { AiUnavailableError, effectiveModel, type AiObserver } from "@compass/ai";
 import type { AiEventKind } from "@compass/shared";
-import { HttpError } from "../lib/errors.ts";
-import { suggestCategoriesFor } from "../services/ai/categorize.ts";
-import { getMonthlySummary } from "../services/ai/summary.ts";
-import { runAssistant } from "../services/ai/assistant.ts";
-import { recordAiEvent } from "../services/ai/events.ts";
+import { HttpError } from "../../../lib/errors.ts";
+import { suggestCategoriesFor } from "../services/categorize.ts";
+import { getMonthlySummary } from "../services/summary.ts";
+import { runAssistant } from "../services/assistant.ts";
+import { recordAiEvent } from "../services/events.ts";
 import { getAiSettings, getUserAiProvider, upsertAiSettings } from "../services/ai-settings.ts";
-import { mailboxSecret } from "../services/mailboxes.ts";
+import { mailboxSecret } from "../../../services/mailboxes.ts";
 
 /**
  * AI endpoints (Phase 7). The provider is resolved per user from their stored
