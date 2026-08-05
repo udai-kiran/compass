@@ -20,17 +20,10 @@ import { healthRoutes } from "./routes/health.ts";
 import { authRoutes } from "./routes/auth.ts";
 import { ledgerRoutes } from "./modules/ledger/plugin.ts";
 import { importRoutes } from "./routes/imports.ts";
-import { budgetRoutes } from "./routes/budgets.ts";
-import { dashboardRoutes } from "./routes/dashboard.ts";
 import { notificationRoutes } from "./routes/notifications.ts";
-import { goalRoutes } from "./routes/goals.ts";
 import { investmentsRoutes } from "./modules/investments/plugin.ts";
-import { cashflowRoutes } from "./routes/cashflow.ts";
-import { billRoutes } from "./routes/bills.ts";
 import { creditRoutes } from "./modules/credit/plugin.ts";
 import { protectionRoutes } from "./modules/protection/plugin.ts";
-import { insightRoutes } from "./routes/insights.ts";
-import { reportRoutes } from "./routes/reports.ts";
 import { backupRoutes } from "./routes/backup.ts";
 import { aiRoutes } from "./routes/ai.ts";
 import { aiEventRoutes } from "./routes/ai-events.ts";
@@ -106,6 +99,14 @@ export function registerLedgerCacheSubscriber(app: FastifyInstance): void {
  * tasks/010-migrate-investments/TASK.md's Root Cause for why both snapshots
  * exist.
  *
+ * As of task 1.5 (migrate-planning), the 8 planning route registrations that
+ * used to sit here directly (budgets/dashboard/goals/cashflow/bills/insights/
+ * reports) are collapsed into the single `planningRoutes` plugin registered
+ * below, in the position `budgetRoutes` used to occupy; `projectionSettings`
+ * was already collapsed into the same plugin (it registered at the end before
+ * this migration). All 8 are now contiguous — see
+ * `modules/planning/plugin.ts`.
+ *
  * As of task 1.4 (migrate-protection), the 2 protection route registrations
  * (retirement/insurance) are collapsed into the single `protectionRoutes`
  * plugin, in the same position (`retirementRoutes` used to occupy, with
@@ -120,21 +121,14 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   await app.register(authRoutes);
   await app.register(ledgerRoutes);
   await app.register(importRoutes);
-  await app.register(budgetRoutes);
-  await app.register(dashboardRoutes);
+  await app.register(planningRoutes);
   await app.register(notificationRoutes);
-  await app.register(goalRoutes);
   await app.register(investmentsRoutes);
-  await app.register(cashflowRoutes);
-  await app.register(billRoutes);
   await app.register(creditRoutes);
   await app.register(protectionRoutes);
-  await app.register(insightRoutes);
-  await app.register(reportRoutes);
   await app.register(backupRoutes);
   await app.register(aiRoutes);
   await app.register(aiEventRoutes);
-  await app.register(planningRoutes);
   await app.register(profileRoutes);
   await app.register(inboxRoutes);
   await app.register(mailboxRoutes);

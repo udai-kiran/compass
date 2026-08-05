@@ -3,9 +3,9 @@ import type { GoalProgress } from "@compass/shared";
 import { formatINR } from "@compass/shared";
 import type { Db } from "../db/index.ts";
 import { alertLedger, users } from "../db/schema.ts";
-import { getForecast } from "./cashflow.ts";
-import { equityShareOfInvestable, OTHER_BAND_PCT } from "./goal-plan.ts";
-import { getGoalProgress, listGoals } from "./goals.ts";
+import { getForecast } from "../modules/planning/services/cashflow.ts";
+import { equityShareOfInvestable, OTHER_BAND_PCT } from "../modules/planning/services/goal-plan.ts";
+import { getGoalProgress, listGoals } from "../modules/planning/services/goals.ts";
 import { createNotification } from "./notifications.ts";
 import { prefEnabled } from "./prefs.ts";
 

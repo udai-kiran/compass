@@ -9,16 +9,16 @@ import {
   MONTH_KEY_RE,
   YEAR_KEY_RE,
 } from "@compass/shared";
-import type { Db } from "../db/index.ts";
-import { toCsv } from "../lib/csv.ts";
-import { categories } from "../db/schema.ts";
+import type { Db } from "../../../db/index.ts";
+import { toCsv } from "../../../lib/csv.ts";
+import { categories } from "../../../db/schema.ts";
 import {
   incomeExpense,
   type NecessitySpendRow,
   periodRange,
   spendByNecessity,
   spentByCategory,
-} from "./periods.ts";
+} from "../../../services/periods.ts";
 import { savingRatePct } from "./insights.ts";
 
 /**

@@ -3,8 +3,8 @@ import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
 import { InsightsSchema } from "@compass/shared";
 import { getInsights } from "../services/insights.ts";
-import { cached } from "../services/cache.ts";
-import { currentPeriodKey } from "../services/periods.ts";
+import { cached } from "../../../services/cache.ts";
+import { currentPeriodKey } from "../../../services/periods.ts";
 
 export async function insightRoutes(app: FastifyInstance) {
   const r = app.withTypeProvider<ZodTypeProvider>();

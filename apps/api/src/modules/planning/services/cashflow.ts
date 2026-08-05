@@ -1,15 +1,15 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
 import type { Redis } from "ioredis";
 import type { CashflowMonth, Forecast } from "@compass/shared";
-import type { Db } from "../db/index.ts";
-import { accounts, holdings, recurringTemplates, sips } from "../db/schema.ts";
-import { toCsv } from "../lib/csv.ts";
-import { bankCashTotal } from "./balances.ts";
-import { cached } from "./cache.ts";
+import type { Db } from "../../../db/index.ts";
+import { accounts, holdings, recurringTemplates, sips } from "../../../db/schema.ts";
+import { toCsv } from "../../../lib/csv.ts";
+import { bankCashTotal } from "../../../services/balances.ts";
+import { cached } from "../../../services/cache.ts";
 import { getTrends } from "./dashboard.ts";
-import { LIABILITY_TYPES_SQL } from "./periods.ts";
-import { advanceDate } from "../modules/ledger/services/recurring.ts";
-import { sipOccurrencesInWindow } from "../modules/investments/services/sip-schedule.ts";
+import { LIABILITY_TYPES_SQL } from "../../../services/periods.ts";
+import { advanceDate } from "../../ledger/services/recurring.ts";
+import { sipOccurrencesInWindow } from "../../investments/services/sip-schedule.ts";
 
 const TTL = 300;
 

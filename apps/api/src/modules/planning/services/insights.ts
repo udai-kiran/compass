@@ -1,7 +1,7 @@
 import { sql } from "drizzle-orm";
 import type { HealthScore, InsightCard, Insights } from "@compass/shared";
-import type { Db } from "../db/index.ts";
-import { incomeExpense, periodRange, prevPeriodKey } from "./periods.ts";
+import type { Db } from "../../../db/index.ts";
+import { incomeExpense, periodRange, prevPeriodKey } from "../../../services/periods.ts";
 
 // ---------- pure, tested helpers ----------
 
