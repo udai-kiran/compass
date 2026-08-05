@@ -1,6 +1,6 @@
 import { eq, sql } from "drizzle-orm";
-import type { Db } from "../db/index.ts";
-import { users } from "../db/schema.ts";
+import type { Db } from "../../../db/index.ts";
+import { users } from "../../../db/schema.ts";
 
 export type UserRow = typeof users.$inferSelect;
 

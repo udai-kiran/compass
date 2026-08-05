@@ -4,7 +4,7 @@ import type { User } from "@compass/shared";
 import type { Db } from "../../../db/index.ts";
 import { users } from "../schema.ts";
 import { HttpError, pgError } from "../../../lib/errors.ts";
-import { findUserByEmail, findUserById, type UserRow } from "../../../repositories/users.ts";
+import { findUserByEmail, findUserById, type UserRow } from "./users.ts";
 import { seedDefaultCategories } from "../../ledger/services/categories.ts";
 
 function toUser(row: UserRow): User {

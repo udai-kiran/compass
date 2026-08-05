@@ -1,0 +1,30 @@
+refactor(api): physical per-module schema ownership + flat-services cleanup (roadmap 1.9)
+
+Closes Phase 1 of the module migration. Replaces the transitional
+thin-schema re-export surfaces from tasks 1.1-1.8 with real physical
+schema ownership, and removes the emptied flat service/repository dirs.
+
+Schema decomposition (Policy B, layered):
+- 12 cross-module tables + their shared enums physically defined in
+  DAG-depth files under apps/api/src/db/shared/{foundation,hubs,
+  recurring,spines,ledger}.ts; each layer imports only db/core-schema.ts
+  and preceding layers, keeping the schema graph acyclic.
+- db/core-schema.ts holds the cycle-free core identity (users).
+- Each modules/<domain>/schema.ts physically defines its resident
+  tables/enums, imports its FK targets from db/shared/*, and re-exports
+  the shared symbols forming its module-facing schema surface.
+- db/schema.ts is now a pure re-export barrel and the sole Drizzle Kit
+  entry point. 50 tables + 38 enums + users.
+
+Cross-module ports & cleanup:
+- Net worth becomes a NetWorthContributor port each module implements,
+  replacing raw cross-domain balance reads; net-worth numbers unchanged.
+- Flat services/ and repositories/ removed; domain-neutral helpers moved
+  to lib/ (cache, ownership, periods); autopilot/anomaly to
+  modules/automation; users to modules/system.
+
+Proof: zero migration diff (db:generate clean, drizzle/ unchanged),
+table-object identity asserted via schema.decomposition.test.ts and
+per-module schema.smoke.test.ts. typecheck + lint clean; 885 tests pass.
+
+Co-Authored-By: Claude <noreply@anthropic.com>

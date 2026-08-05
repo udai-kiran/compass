@@ -3,7 +3,7 @@ import type { Db } from "../../../db/index.ts";
 import { alertLedger } from "../../../db/schema.ts";
 import { cardDetails } from "../schema.ts";
 import { createNotification } from "../../system/services/notifications.ts";
-import { currentPeriodKey } from "../../../services/periods.ts";
+import { currentPeriodKey } from "../../../lib/periods.ts";
 import { listCardHolders } from "./cards.ts";
 
 /** Daily job: due-date reminders for every configured card, once per due date. */

@@ -5,8 +5,8 @@ import { evaluateBudgetAlerts } from "../modules/system/services/notifications.t
 import { evaluateBillReminders } from "../modules/planning/services/bills.ts";
 import { evaluateCardDueReminders, evaluateCardUtilization } from "../modules/credit/services/alerts.ts";
 import { materializeCardDueTasks } from "../modules/credit/services/card-due-tasks.ts";
-import { evaluateAnomalies } from "../services/anomaly.ts";
-import { runAutopilotReview, runGoalReview } from "../services/autopilot.ts";
+import { evaluateAnomalies } from "../modules/automation/services/anomaly.ts";
+import { runAutopilotReview, runGoalReview } from "../modules/automation/services/autopilot.ts";
 import {
   closePreviousDay,
   isSystemicFailure,

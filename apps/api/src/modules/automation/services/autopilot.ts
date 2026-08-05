@@ -1,13 +1,13 @@
 import type { Redis } from "ioredis";
 import type { GoalProgress } from "@compass/shared";
 import { formatINR } from "@compass/shared";
-import type { Db } from "../db/index.ts";
-import { alertLedger, users } from "../db/schema.ts";
-import { getForecast } from "../modules/planning/services/cashflow.ts";
-import { equityShareOfInvestable, OTHER_BAND_PCT } from "../modules/planning/services/goal-plan.ts";
-import { getGoalProgress, listGoals } from "../modules/planning/services/goals.ts";
-import { createNotification } from "../modules/system/services/notifications.ts";
-import { prefEnabled } from "../modules/system/services/prefs.ts";
+import type { Db } from "../../../db/index.ts";
+import { alertLedger, users } from "../../../db/schema.ts";
+import { getForecast } from "../../planning/services/cashflow.ts";
+import { equityShareOfInvestable, OTHER_BAND_PCT } from "../../planning/services/goal-plan.ts";
+import { getGoalProgress, listGoals } from "../../planning/services/goals.ts";
+import { createNotification } from "../../system/services/notifications.ts";
+import { prefEnabled } from "../../system/services/prefs.ts";
 
 /**
  * Outcome of a fan-out review. `errors` carries the per-user failures so the job

@@ -14,8 +14,8 @@ import { userTaskRoutes } from "./routes/user-tasks.ts";
 /**
  * `modules/ledger/` — the largest domain, first of 8 Phase-1 module
  * migrations (task 1.1). Same `modules/<domain>/` convention task 0.3
- * introduced: `schema.ts` (thin re-export — see schema.ts's own comment for
- * why physical table ownership stays in `db/schema.ts` for now), `services/`,
+ * introduced: `schema.ts` (physically defines ledger's 6 resident tables (its enums live in the shared
+ * layers) and re-exports the shared tables/enums that make up its schema surface from `db/shared/*`), `services/`,
  * `routes/`, `plugin.ts` (this file).
  *
  * Registers all 11 ledger route groups internally, replacing the 11 separate

@@ -25,7 +25,7 @@ import {
   users,
 } from "../../../db/schema.ts";
 import { seedDefaultCategories } from "../../ledger/services/categories.ts";
-import { findUserByEmail } from "../../../repositories/users.ts";
+import { findUserByEmail } from "./users.ts";
 
 /** ₹ → paise. Amounts throughout the seed are written in rupees for readability. */
 const r = (rupees: number): number => Math.round(rupees * 100);

@@ -10,7 +10,7 @@ import type { Db, DbOrTx } from "../../../db/index.ts";
 import { accounts, recurringTemplates, transactions } from "../../../db/schema.ts";
 import { emiDetails } from "../schema.ts";
 import { HttpError } from "../../../lib/errors.ts";
-import { assertOwnedCategory } from "../../../services/ownership.ts";
+import { assertOwnedCategory } from "../../../lib/ownership.ts";
 
 function monthsSince(startDate: string, today: string): number {
   const [sy, sm, sd] = startDate.split("-").map(Number) as [number, number, number];

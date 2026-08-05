@@ -24,7 +24,7 @@ import {
   recordSipInstallment,
   unlinkSipInstallment,
 } from "../services/sip-installments.ts";
-import { invalidateUserCache } from "../../../services/cache.ts";
+import { invalidateUserCache } from "../../../lib/cache.ts";
 
 const IdParams = z.object({ id: z.uuid() });
 const GoalIdParams = z.object({ id: z.uuid() });

@@ -1,7 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import type { DbOrTx } from "../db/index.ts";
 import { accounts, categories, goals, holdings } from "../db/schema.ts";
-import { HttpError } from "../lib/errors.ts";
+import { HttpError } from "./errors.ts";
 
 /**
  * A foreign key proves a row exists, not that the caller owns it. Once more than

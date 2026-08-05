@@ -10,7 +10,7 @@ import type { Db } from "../../../db/index.ts";
 import { accounts, transactions } from "../schema.ts";
 import { bankDetails, retirementDetails, sips } from "../../../db/schema.ts";
 import { HttpError } from "../../../lib/errors.ts";
-import { assertOwnedGoal } from "../../../services/ownership.ts";
+import { assertOwnedGoal } from "../../../lib/ownership.ts";
 
 /** Only these carry their opening balance as a ledger transaction; other types
  * (cards/loans/schemes) keep it on the accounts.opening_balance_paise column,
@@ -147,6 +147,33 @@ function toAccount(row: AccountRow): Account {
     sortOrder: row.sortOrder,
     archivedAt: row.archivedAt?.toISOString() ?? null,
   };
+}
+
+export interface AccountBalanceAtDate {
+  type: AccountType;
+  balancePaise: number;
+}
+
+export async function accountBalancesAtDate(
+  db: Db,
+  userId: string,
+  asOf: string,
+): Promise<AccountBalanceAtDate[]> {
+  const res = await db.execute(sql`
+    select a.type, coalesce(a.opening_balance_paise + coalesce(t.total, 0), 0)::bigint as balance
+    from accounts a
+    left join (
+      select account_id, sum(amount_paise) as total
+      from transactions
+      where user_id = ${userId} and deleted_at is null and date <= ${asOf}
+      group by account_id
+    ) t on t.account_id = a.id
+    where a.user_id = ${userId} and a.archived_at is null
+  `);
+  return (res.rows as Array<{ type: string; balance: string }>).map((r) => ({
+    type: r.type as AccountType,
+    balancePaise: Number(r.balance),
+  }));
 }
 
 export async function listAccounts(db: Db, userId: string): Promise<AccountWithBalance[]> {

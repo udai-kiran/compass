@@ -3,11 +3,13 @@ import assert from "node:assert/strict";
 import * as barrel from "../../db/schema.ts";
 import * as ledgerSchema from "./schema.ts";
 
-// Object-identity proof: modules/ledger/schema.ts is a thin re-export, not an
-// accidental duplicate definition. Every one of the 11 ledger tables (and
-// their 7 owned enums) imported via the module path must be the exact same
-// object as the one imported via the db/schema.ts barrel — not just
-// structurally equal.
+// Object-identity proof: modules/ledger/schema.ts physically defines its 6
+// resident tables (its enums live in the shared layers) and re-exports the
+// shared symbols that complete its schema surface. The test asserts the
+// module's export is the exact same object as the barrel's (identity through
+// the barrel): every one of the 11 tables and 7 enums on the module's export
+// surface — residents plus re-exported shared symbols — must be the identical
+// object from db/schema.ts, not just structurally equal.
 
 const TABLE_NAMES = [
   "accounts",

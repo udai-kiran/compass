@@ -1,11 +1,11 @@
 import { eq } from "drizzle-orm";
 import type { AnomalySensitivity } from "@compass/shared";
 import { formatINR } from "@compass/shared";
-import type { Db } from "../db/index.ts";
-import { alertLedger, categories } from "../db/schema.ts";
-import { createNotification } from "../modules/system/services/notifications.ts";
-import { listPrefs } from "../modules/system/services/prefs.ts";
-import { currentPeriodKey, periodRange, prevPeriodKey, spentByCategory } from "./periods.ts";
+import type { Db } from "../../../db/index.ts";
+import { alertLedger, categories } from "../../../db/schema.ts";
+import { createNotification } from "../../system/services/notifications.ts";
+import { listPrefs } from "../../system/services/prefs.ts";
+import { currentPeriodKey, periodRange, prevPeriodKey, spentByCategory } from "../../../lib/periods.ts";
 
 /** Sensitivity → z-score threshold; null disables detection. Lower fires more readily. */
 export function sensitivityThreshold(s: AnomalySensitivity): number | null {

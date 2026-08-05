@@ -13,7 +13,7 @@ import type { Db, DbOrTx } from "../../../db/index.ts";
 import { recurringTemplates, transactions, transactionSplits, transferLinks } from "../schema.ts";
 import { HttpError } from "../../../lib/errors.ts";
 import { getMerchantRules, normalizeMerchant } from "./merchants.ts";
-import { assertOwnedAccount, assertOwnedCategory } from "../../../services/ownership.ts";
+import { assertOwnedAccount, assertOwnedCategory } from "../../../lib/ownership.ts";
 import { assertOwnedResource } from "./resources.ts";
 import { isUniqueViolation } from "../../investments/services/sip-lifecycle.ts";
 

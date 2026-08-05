@@ -9,7 +9,7 @@ import { createPool } from "../../../infra/db.ts";
 import { accounts, categories, transactions, transferLinks, users } from "../../../db/schema.ts";
 import { emailIngestions, extractedTransactions } from "../schema.ts";
 import { HttpError } from "../../../lib/errors.ts";
-import { incomeExpense } from "../../../services/periods.ts";
+import { incomeExpense } from "../../../lib/periods.ts";
 import { createTransaction } from "../../ledger/services/transactions.ts";
 import { linkTransfer, TRANSFER_WINDOW_DAYS } from "../../ledger/services/transfers.ts";
 import { acceptExtracted, restoreOrphan, rejectExtracted } from "./review-actions.ts";

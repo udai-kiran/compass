@@ -3,9 +3,9 @@ import type { NotificationPref, NotificationType, UpsertNotificationPref } from 
 import { formatINR, UpsertNotificationPrefSchema } from "@compass/shared";
 import type { Db } from "../../../db/index.ts";
 import { alertLedger, notificationPrefs } from "../schema.ts";
-import { bankCashBalances } from "../../../services/balances.ts";
+import { bankCashBalances } from "../../ledger/services/balances.ts";
 import { createNotification } from "./notifications.ts";
-import { assertOwnedAccount } from "../../../services/ownership.ts";
+import { assertOwnedAccount } from "../../../lib/ownership.ts";
 
 type PrefRow = typeof notificationPrefs.$inferSelect;
 

@@ -16,7 +16,7 @@ import type { Db, DbOrTx } from "../../../db/index.ts";
 import { holdingEvents, holdings, holdingValuations, sips } from "../schema.ts";
 import { HttpError } from "../../../lib/errors.ts";
 import { fetchNavByCode } from "./amfi.ts";
-import { assertOwnedGoal } from "../../../services/ownership.ts";
+import { assertOwnedGoal } from "../../../lib/ownership.ts";
 import { defaultTaxClass } from "./tax-lots.ts";
 import { positionCashFlows, xirrBps, type CashFlow } from "./xirr.ts";
 

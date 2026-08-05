@@ -15,7 +15,7 @@ import { HttpError } from "../../../lib/errors.ts";
 import { changePassword, registerUser, updateProfile, verifyLogin } from "../services/auth.ts";
 import { createSession, destroySession, listSessions } from "../services/session.ts";
 import { ensureDemoData } from "../services/demo.ts";
-import { countUsers, findUserById } from "../../../repositories/users.ts";
+import { countUsers, findUserById } from "../services/users.ts";
 import { clearSessionCookie, setSessionCookie } from "../../../plugins/auth.ts";
 import { getAiSettings, getUserAiProvider } from "../../automation/services/ai-settings.ts";
 import { mailboxSecret } from "../../ingest/services/mailboxes.ts";

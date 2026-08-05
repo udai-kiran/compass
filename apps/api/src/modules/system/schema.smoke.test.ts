@@ -7,11 +7,12 @@ import * as barrel from "../../db/schema.ts";
 import * as coreSchema from "../../db/core-schema.ts";
 import * as systemSchema from "./schema.ts";
 
-// Object-identity proof: modules/system/schema.ts is a thin re-export, not an
-// accidental duplicate definition. Every one of the 6 system tables (and their
-// 2 owned enums) imported via the module path must be the exact same object
-// as the one imported via the db/schema.ts barrel — not just structurally
-// equal. Mirrors modules/planning/schema.smoke.test.ts and
+// Object-identity proof: modules/system/schema.ts now physically defines its
+// resident tables and enums; the test asserts the module's export is the exact
+// same object as the barrel's (identity through the barrel). Every one of the
+// 6 system tables (and their 2 owned enums) imported via the module path must
+// be the identical object from db/schema.ts — not just structurally equal.
+// Mirrors modules/planning/schema.smoke.test.ts and
 // modules/ingest/schema.smoke.test.ts.
 
 const TABLE_NAMES: Record<string, string> = {

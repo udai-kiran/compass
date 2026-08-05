@@ -4,10 +4,10 @@ import type { CashflowMonth, Forecast } from "@compass/shared";
 import type { Db } from "../../../db/index.ts";
 import { accounts, holdings, recurringTemplates, sips } from "../../../db/schema.ts";
 import { toCsv } from "../../../lib/csv.ts";
-import { bankCashTotal } from "../../../services/balances.ts";
-import { cached } from "../../../services/cache.ts";
+import { bankCashTotal } from "../../ledger/services/balances.ts";
+import { cached } from "../../../lib/cache.ts";
 import { getTrends } from "./dashboard.ts";
-import { LIABILITY_TYPES_SQL } from "../../../services/periods.ts";
+import { LIABILITY_TYPES_SQL } from "../../../lib/periods.ts";
 import { advanceDate } from "../../ledger/services/recurring.ts";
 import { sipOccurrencesInWindow } from "../../investments/services/sip-schedule.ts";
 

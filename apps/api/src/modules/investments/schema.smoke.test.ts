@@ -3,11 +3,13 @@ import assert from "node:assert/strict";
 import * as barrel from "../../db/schema.ts";
 import * as investmentsSchema from "./schema.ts";
 
-// Object-identity proof: modules/investments/schema.ts is a thin re-export,
-// not an accidental duplicate definition. Every one of the 8 investments
-// tables (and their 10 owned enums) imported via the module path must be the
-// exact same object as the one imported via the db/schema.ts barrel — not
-// just structurally equal.
+// Object-identity proof: modules/investments/schema.ts physically defines its 6
+// resident tables and 4 resident enums and re-exports the shared symbols that
+// complete its schema surface. The test asserts the module's export is the
+// exact same object as the barrel's (identity through the barrel): every one
+// of the 8 tables and 10 enums on the module's export surface — residents plus
+// re-exported shared symbols — must be the identical object from db/schema.ts,
+// not just structurally equal.
 
 const TABLE_NAMES = [
   "holdings",

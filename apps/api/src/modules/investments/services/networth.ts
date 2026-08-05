@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, eq, gte, lt, lte, sql } from "drizzle-orm";
+import { and, asc, eq, gte, lt, lte } from "drizzle-orm";
 import type { AccountType, NetWorthReport, SnapshotRepair } from "@compass/shared";
 import type { Db } from "../../../db/index.ts";
 import type { Redis } from "ioredis";
 import { HttpError } from "../../../lib/errors.ts";
 import { netWorthSnapshots } from "../schema.ts";
 import { users } from "../../../db/schema.ts";
+import { accountBalancesAtDate } from "../../ledger/services/accounts.ts";
 import { portfolioValue } from "./holdings.ts";
 
 interface Breakdown {
@@ -54,17 +55,7 @@ export async function computeNetWorth(
   userId: string,
   asOf: string,
 ): Promise<{ assetsPaise: number; liabilitiesPaise: number; breakdown: Breakdown }> {
-  const res = await db.execute(sql`
-    select a.type, coalesce(a.opening_balance_paise + coalesce(t.total, 0), 0)::bigint as balance
-    from accounts a
-    left join (
-      select account_id, sum(amount_paise) as total
-      from transactions
-      where user_id = ${userId} and deleted_at is null and date <= ${asOf}
-      group by account_id
-    ) t on t.account_id = a.id
-    where a.user_id = ${userId} and a.archived_at is null
-  `);
+  const entries = await accountBalancesAtDate(db, userId, asOf);
   const buckets: Record<AccountBucket, number> = {
     cashPaise: 0,
     investmentAccountsPaise: 0,
@@ -76,13 +67,13 @@ export async function computeNetWorth(
   // liability would vanish from the totals even though net worth stayed right.
   let accountAssets = 0;
   let accountLiabilities = 0;
-  for (const r of res.rows as Array<{ type: string; balance: string }>) {
-    const bucket = ACCOUNT_BUCKET[r.type as AccountType];
+  for (const r of entries) {
+    const bucket = ACCOUNT_BUCKET[r.type];
     // A type Postgres knows but this code doesn't: skipping it would hide money.
     // (null is an explicit "no bucket", e.g. insurance — that's fine to skip.)
     if (bucket === undefined) throw new Error(`Unclassified account type in net worth: ${r.type}`);
     if (bucket === null) continue;
-    const balance = Number(r.balance);
+    const balance = r.balancePaise;
     buckets[bucket] += balance;
     accountAssets += Math.max(0, balance);
     accountLiabilities += Math.max(0, -balance);

@@ -15,7 +15,7 @@ import type { Db, DbOrTx } from "../../../db/index.ts";
 import { accounts, transactions } from "../../../db/schema.ts";
 import { holdingEvents, holdings, sips } from "../schema.ts";
 import { HttpError, pgError } from "../../../lib/errors.ts";
-import { assertOwnedGoal } from "../../../services/ownership.ts";
+import { assertOwnedGoal } from "../../../lib/ownership.ts";
 import { dueInstallmentDate } from "./sip-schedule.ts";
 
 type SipRow = typeof sips.$inferSelect;
@@ -86,7 +86,7 @@ export function laterInstallmentDate(a: string | null, b: string | null): string
  * records via `holding_events`; an account-target SIP (PPF/SSY) will record
  * via a ledger `transactions` row instead — so both sources are checked.
  * Soft-deleted transactions are excluded: a deleted transaction must not
- * count as a recorded installment (see services/balances.ts).
+ * count as a recorded installment (see modules/ledger/services/balances.ts).
  */
 export async function lastInstallmentDateFor(db: DbOrTx, sipId: string): Promise<string | null> {
   const holdingRows = await db

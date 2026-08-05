@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import type { Db } from "../db/index.ts";
+import type { Db } from "../../../db/index.ts";
 
 export interface AccountBalance {
   id: string;

@@ -24,7 +24,7 @@ import { creditRoutes } from "./modules/credit/plugin.ts";
 import { protectionRoutes } from "./modules/protection/plugin.ts";
 import { automationRoutes } from "./modules/automation/plugin.ts";
 import { planningRoutes } from "./modules/planning/plugin.ts";
-import { invalidateUserCache } from "./services/cache.ts";
+import { invalidateUserCache } from "./lib/cache.ts";
 import { enqueueBudgetEvaluation } from "./jobs/index.ts";
 import { createStorage, type Storage } from "./lib/storage.ts";
 import { EventBus } from "./lib/event-bus.ts";
