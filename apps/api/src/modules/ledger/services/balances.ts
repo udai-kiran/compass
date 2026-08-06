@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import type { Db } from "../../../db/index.ts";
+import { HttpError } from "../../../lib/errors.ts";
 
 export interface AccountBalance {
   id: string;
@@ -17,6 +18,14 @@ export interface AccountBalance {
  * account list apply the same `date <= asOf` cut, so every surface that shows a
  * balance agrees on what counts as posted. Callers that need a different set of
  * account types should filter the result; this is the single source of the sum.
+ *
+ * The per-account activity total is summed from `postings` (dual-write mirror
+ * of `transactions.amount_paise`), joined to the non-deleted parent transaction
+ * for the date cut — see postings-balance-parity.test.ts for the parity proof.
+ * `opening_balance_paise` remains an explicit addend: bank/cash accounts carry
+ * their opening balance as a real `is_opening` transaction (already inside the
+ * postings sum, column pinned at 0); other real-account types keep it on the
+ * column with no posting.
  */
 export async function bankCashBalances(
   db: Db,
@@ -24,21 +33,32 @@ export async function bankCashBalances(
   asOf: string = new Date().toISOString().slice(0, 10),
 ): Promise<AccountBalance[]> {
   const res = await db.execute(sql`
-    select a.id, a.name, (a.opening_balance_paise + coalesce(t.total, 0))::bigint as balance
+    select a.id, a.name,
+           a.opening_balance_paise as opening,
+           coalesce(p.total, 0) as posting_total
     from accounts a
     left join (
-      select account_id, sum(amount_paise) as total
-      from transactions
-      where user_id = ${userId} and deleted_at is null and date <= ${asOf}
-      group by account_id
-    ) t on t.account_id = a.id
+      select po.account_id, sum(po.amount_paise) as total
+      from postings po
+      join transactions t on t.id = po.transaction_id
+      where t.user_id = ${userId} and t.deleted_at is null and t.date <= ${asOf}
+      group by po.account_id
+    ) p on p.account_id = a.id
     where a.user_id = ${userId} and a.archived_at is null and a.type in ('bank', 'cash')
   `);
-  return (res.rows as Array<{ id: string; name: string; balance: string }>).map((r) => ({
-    id: r.id,
-    name: r.name,
-    balancePaise: Number(r.balance),
-  }));
+  return (
+    res.rows as Array<{ id: string; name: string; opening: string; posting_total: string }>
+  ).map((r) => {
+    const postingTotal = Number(r.posting_total);
+    if (!Number.isSafeInteger(postingTotal)) {
+      throw new HttpError(500, "Balance aggregate exceeded a safe integer — refusing to lose paise");
+    }
+    const balancePaise = Number(r.opening) + postingTotal;
+    if (!Number.isSafeInteger(balancePaise)) {
+      throw new HttpError(500, "Balance aggregate exceeded a safe integer — refusing to lose paise");
+    }
+    return { id: r.id, name: r.name, balancePaise };
+  });
 }
 
 /** Total posted bank+cash balance (sum of {@link bankCashBalances}). */
@@ -48,5 +68,12 @@ export async function bankCashTotal(
   asOf?: string,
 ): Promise<number> {
   const rows = await bankCashBalances(db, userId, asOf);
-  return rows.reduce((sum, r) => sum + r.balancePaise, 0);
+  let total = 0;
+  for (const r of rows) {
+    total += r.balancePaise;
+    if (!Number.isSafeInteger(total)) {
+      throw new HttpError(500, "Balance aggregate exceeded a safe integer — refusing to lose paise");
+    }
+  }
+  return total;
 }
