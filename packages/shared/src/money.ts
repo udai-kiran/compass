@@ -1,7 +1,15 @@
+import { z } from "zod";
+
 /**
  * Money is always handled as an integer number of minor units (paise).
  * Never store or compute money as floating-point rupees.
  */
+
+/**
+ * Zod schema for a safe integer paise amount.
+ * Rejects floats, NaN, Infinity, and values outside the safe integer range.
+ */
+export const SafePaiseSchema = z.number().int().refine(Number.isSafeInteger, "amount exceeds safe integer range");
 
 export function rupeesToPaise(rupees: number): number {
   return Math.round(rupees * 100);
