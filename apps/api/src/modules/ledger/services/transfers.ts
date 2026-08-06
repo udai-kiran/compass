@@ -1,9 +1,9 @@
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, isNull, or, sql } from "drizzle-orm";
 import type { CreateTransfer, TransferResult, TransferSuggestion } from "@compass/shared";
 import type { Db, DbOrTx } from "../../../db/index.ts";
 import { transactions, transferLinks } from "../schema.ts";
 import { HttpError } from "../../../lib/errors.ts";
-import { createTransaction } from "./transactions.ts";
+import { createTransaction, rebuildPostingsForTransaction } from "./transactions.ts";
 
 type CreateTransferInput = CreateTransfer;
 
@@ -72,34 +72,71 @@ export async function linkTransfer(
   inTransactionId: string,
   auto = false,
 ): Promise<{ id: string }> {
-  const [out, inn] = await Promise.all([
-    db.query.transactions.findFirst({
-      where: and(
-        eq(transactions.id, outTransactionId),
-        eq(transactions.userId, userId),
-        isNull(transactions.deletedAt),
+  // Validation (row locks + shape/membership checks) runs INSIDE the same db
+  // transaction as the link insert + both-leg posting rebuild (ATOMICITY LAW).
+  // `db.transaction(...)` opens a real transaction when `db` is a bare `Db`,
+  // or a nested savepoint when `db` is already a `Tx` (createTransfer passes
+  // its own tx here) — either way validation, the link, and both legs'
+  // Clearing postings commit/rollback together, and the `.for("update")` locks
+  // prevent a concurrent edit/link from racing this validation.
+  return db.transaction(async (t) => {
+    // Lock rows in sorted-id order to prevent deadlocks with a concurrent
+    // linkTransfer that locks the same two rows in the opposite order.
+    const [firstId, secondId] =
+      outTransactionId < inTransactionId
+        ? [outTransactionId, inTransactionId]
+        : [inTransactionId, outTransactionId];
+    const firstRows = await t
+      .select()
+      .from(transactions)
+      .where(
+        and(
+          eq(transactions.id, firstId),
+          eq(transactions.userId, userId),
+          isNull(transactions.deletedAt),
+        ),
+      )
+      .for("update");
+    const secondRows = await t
+      .select()
+      .from(transactions)
+      .where(
+        and(
+          eq(transactions.id, secondId),
+          eq(transactions.userId, userId),
+          isNull(transactions.deletedAt),
+        ),
+      )
+      .for("update");
+    const out = [firstRows[0], secondRows[0]].find(r => r?.id === outTransactionId);
+    const inn = [firstRows[0], secondRows[0]].find(r => r?.id === inTransactionId);
+    if (!out || !inn) throw new HttpError(404, "Transaction not found");
+    if (out.amountPaise >= 0 || inn.amountPaise <= 0 || out.amountPaise + inn.amountPaise !== 0) {
+      throw new HttpError(400, "Transfer legs must be opposite-sign and equal amounts");
+    }
+    if (out.accountId === inn.accountId) {
+      throw new HttpError(400, "Transfer legs must be in different accounts");
+    }
+    if (out.isOpening || inn.isOpening) {
+      throw new HttpError(400, "Opening balances cannot be transfers");
+    }
+    const existingLink = await t.query.transferLinks.findFirst({
+      where: or(
+        eq(transferLinks.outTransactionId, outTransactionId),
+        eq(transferLinks.inTransactionId, outTransactionId),
+        eq(transferLinks.outTransactionId, inTransactionId),
+        eq(transferLinks.inTransactionId, inTransactionId),
       ),
-    }),
-    db.query.transactions.findFirst({
-      where: and(
-        eq(transactions.id, inTransactionId),
-        eq(transactions.userId, userId),
-        isNull(transactions.deletedAt),
-      ),
-    }),
-  ]);
-  if (!out || !inn) throw new HttpError(404, "Transaction not found");
-  if (out.amountPaise >= 0 || inn.amountPaise <= 0 || out.amountPaise + inn.amountPaise !== 0) {
-    throw new HttpError(400, "Transfer legs must be opposite-sign and equal amounts");
-  }
-  if (out.accountId === inn.accountId) {
-    throw new HttpError(400, "Transfer legs must be in different accounts");
-  }
-  const rows = await db
-    .insert(transferLinks)
-    .values({ userId, outTransactionId, inTransactionId, auto })
-    .returning({ id: transferLinks.id });
-  return rows[0]!;
+    });
+    if (existingLink) throw new HttpError(409, "Transaction is already part of a transfer");
+    const rows = await t
+      .insert(transferLinks)
+      .values({ userId, outTransactionId, inTransactionId, auto })
+      .returning({ id: transferLinks.id });
+    await rebuildPostingsForTransaction(t, userId, outTransactionId);
+    await rebuildPostingsForTransaction(t, userId, inTransactionId);
+    return rows[0]!;
+  });
 }
 
 /**
@@ -132,11 +169,18 @@ export async function autoLinkTransfers(db: Db, userId: string): Promise<number>
 }
 
 export async function unlinkTransfer(db: Db, userId: string, id: string): Promise<void> {
-  const rows = await db
-    .delete(transferLinks)
-    .where(and(eq(transferLinks.id, id), eq(transferLinks.userId, userId)))
-    .returning({ id: transferLinks.id });
-  if (rows.length === 0) throw new HttpError(404, "Transfer link not found");
+  // Link delete + both-leg posting rebuild share ONE db transaction (ATOMICITY
+  // LAW): read the link first to capture its legs, delete it, then rebuild
+  // both legs — now absent from transfer_links, they revert to ordinary shape.
+  await db.transaction(async (t) => {
+    const link = await t.query.transferLinks.findFirst({
+      where: and(eq(transferLinks.id, id), eq(transferLinks.userId, userId)),
+    });
+    if (!link) throw new HttpError(404, "Transfer link not found");
+    await t.delete(transferLinks).where(and(eq(transferLinks.id, id), eq(transferLinks.userId, userId)));
+    await rebuildPostingsForTransaction(t, userId, link.outTransactionId);
+    await rebuildPostingsForTransaction(t, userId, link.inTransactionId);
+  });
 }
 
 /**
@@ -153,7 +197,7 @@ export function buildTransferLegs(input: CreateTransferInput): {
   if (input.fromAccountId === input.toAccountId) {
     throw new HttpError(400, "Transfer legs must be in different accounts");
   }
-  if (!Number.isInteger(input.amountPaise) || input.amountPaise <= 0) {
+  if (!Number.isSafeInteger(input.amountPaise) || input.amountPaise <= 0) {
     throw new HttpError(400, "Transfer amount must be a positive whole number of paise");
   }
   const common = {

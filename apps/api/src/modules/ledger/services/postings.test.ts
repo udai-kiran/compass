@@ -7,6 +7,7 @@ import {
   buildOpeningPostings,
   buildOrdinaryPostings,
   buildSplitPostings,
+  buildTransferLegPostings,
   buildTransferPostings,
   classifyShape,
   projectCounter,
@@ -207,6 +208,61 @@ test("buildOpeningPostings: 500000 → asset +500000 / opening -500000", () => {
     { accountId: "sys-open", amountPaise: -500000, categoryId: null, necessity: null, note: "" },
   ]);
   assert.doesNotThrow(() => assertZeroSum(postings));
+});
+
+test("buildTransferLegPostings: outflow leg → real -X / Clearing +X, zero-sum", () => {
+  const postings = buildTransferLegPostings({
+    accountId: "acc-1",
+    amountPaise: -200000,
+    clearingAccountId: "sys-clearing",
+    note: "savings",
+  });
+  assert.deepEqual(postings, [
+    { accountId: "acc-1", amountPaise: -200000, categoryId: null, necessity: null, note: "savings" },
+    { accountId: "sys-clearing", amountPaise: 200000, categoryId: null, necessity: null, note: "savings" },
+  ]);
+  assert.doesNotThrow(() => assertZeroSum(postings));
+});
+
+test("buildTransferLegPostings: inflow leg → real +X / Clearing -X, zero-sum", () => {
+  const postings = buildTransferLegPostings({
+    accountId: "acc-2",
+    amountPaise: 200000,
+    clearingAccountId: "sys-clearing",
+    note: "savings",
+  });
+  assert.deepEqual(postings, [
+    { accountId: "acc-2", amountPaise: 200000, categoryId: null, necessity: null, note: "savings" },
+    { accountId: "sys-clearing", amountPaise: -200000, categoryId: null, necessity: null, note: "savings" },
+  ]);
+  assert.doesNotThrow(() => assertZeroSum(postings));
+});
+
+test("buildTransferLegPostings: safe-integer boundary value zero-sums both signs", () => {
+  const max = Number.MAX_SAFE_INTEGER;
+  const outflow = buildTransferLegPostings({
+    accountId: "acc-1",
+    amountPaise: -max,
+    clearingAccountId: "sys-clearing",
+    note: "",
+  });
+  assert.deepEqual(outflow, [
+    { accountId: "acc-1", amountPaise: -max, categoryId: null, necessity: null, note: "" },
+    { accountId: "sys-clearing", amountPaise: max, categoryId: null, necessity: null, note: "" },
+  ]);
+  assert.doesNotThrow(() => assertZeroSum(outflow));
+
+  const inflow = buildTransferLegPostings({
+    accountId: "acc-2",
+    amountPaise: max,
+    clearingAccountId: "sys-clearing",
+    note: "",
+  });
+  assert.deepEqual(inflow, [
+    { accountId: "acc-2", amountPaise: max, categoryId: null, necessity: null, note: "" },
+    { accountId: "sys-clearing", amountPaise: -max, categoryId: null, necessity: null, note: "" },
+  ]);
+  assert.doesNotThrow(() => assertZeroSum(inflow));
 });
 
 // ---------------------------------------------------------------------------

@@ -94,7 +94,14 @@ export async function backupRoutes(app: FastifyInstance) {
         }
         throw new HttpError(400, "Wrong passphrase, or the backup file is corrupt");
       }
-      return await restoreUserBackup(app.pg, app.storage, req.session!.userId, plaintextPath);
+      const summary = await restoreUserBackup(app.pg, app.storage, req.session!.userId, plaintextPath);
+      if (summary.postings?.failed && summary.postings.failed > 0) {
+        app.log.error(
+          { failed: summary.postings.failed, repaired: summary.postings.repaired },
+          "post-commit restore reconcile: PR-B reader gate NOT satisfied — some transactions failed to re-synthesize",
+        );
+      }
+      return summary;
     } finally {
       await unlink(envelopePath).catch(() => {});
       await unlink(plaintextPath).catch(() => {});

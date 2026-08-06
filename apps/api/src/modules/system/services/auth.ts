@@ -6,6 +6,7 @@ import { users } from "../schema.ts";
 import { HttpError, pgError } from "../../../lib/errors.ts";
 import { findUserByEmail, findUserById, type UserRow } from "./users.ts";
 import { seedDefaultCategories } from "../../ledger/services/categories.ts";
+import { seedSystemAccounts } from "../../ledger/services/post-entry.ts";
 
 function toUser(row: UserRow): User {
   return { id: row.id, email: row.email, displayName: row.displayName, isDemo: row.isDemo };
@@ -42,6 +43,7 @@ export async function registerUser(
         .returning();
       const created = inserted[0]!;
       await seedDefaultCategories(tx, created.id);
+      await seedSystemAccounts(tx, created.id);
       return created;
     });
   } catch (err) {

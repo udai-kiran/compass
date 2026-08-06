@@ -5,6 +5,7 @@ import type { Db } from "../../../db/index.ts";
 import { accounts } from "../../../db/schema.ts";
 import { overdraftDetails } from "../schema.ts";
 import { HttpError } from "../../../lib/errors.ts";
+import { assertPublicAccountType } from "../../../lib/account-type.ts";
 
 type DetailsRow = typeof overdraftDetails.$inferSelect;
 
@@ -21,7 +22,9 @@ async function ownedOverdraftAccount(db: Db, userId: string, accountId: string) 
     where: and(eq(accounts.id, accountId), eq(accounts.userId, userId)),
   });
   if (!acc) throw new HttpError(404, "Account not found");
-  if (!isOverdraftAccount(acc.type)) throw new HttpError(400, "Not an overdraft loan account");
+  if (!isOverdraftAccount(assertPublicAccountType(acc.type))) {
+    throw new HttpError(400, "Not an overdraft loan account");
+  }
   return acc;
 }
 

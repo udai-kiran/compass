@@ -6,6 +6,7 @@ import { accounts } from "../../../db/schema.ts";
 import { bankDetails } from "../schema.ts";
 import { HttpError } from "../../../lib/errors.ts";
 import { syncAccountLast4 } from "../../ledger/services/accounts.ts";
+import { assertPublicAccountType } from "../../../lib/account-type.ts";
 
 type DetailsRow = typeof bankDetails.$inferSelect;
 
@@ -26,7 +27,7 @@ async function ownedBankAccount(db: Db, userId: string, accountId: string) {
     where: and(eq(accounts.id, accountId), eq(accounts.userId, userId)),
   });
   if (!acc) throw new HttpError(404, "Account not found");
-  if (!isBankAccount(acc.type)) throw new HttpError(400, "Not a bank account");
+  if (!isBankAccount(assertPublicAccountType(acc.type))) throw new HttpError(400, "Not a bank account");
   return acc;
 }
 

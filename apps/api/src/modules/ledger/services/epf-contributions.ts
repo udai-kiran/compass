@@ -4,6 +4,7 @@ import { isRetirementAccount } from "@compass/shared";
 import type { Db } from "../../../db/index.ts";
 import { accounts } from "../schema.ts";
 import { HttpError } from "../../../lib/errors.ts";
+import { assertPublicAccountType } from "../../../lib/account-type.ts";
 import { findOrCreateCategory } from "./categories.ts";
 import { createTransaction } from "./transactions.ts";
 
@@ -18,7 +19,7 @@ async function ownedAccountType(
     columns: { type: true, archivedAt: true },
   });
   if (!row) throw new HttpError(404, "Account not found");
-  return row;
+  return { ...row, type: assertPublicAccountType(row.type) };
 }
 
 const PAYSLIP_TAG = "payslip";

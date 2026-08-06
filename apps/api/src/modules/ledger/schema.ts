@@ -35,7 +35,7 @@ import { categories } from "../../db/shared/foundation.ts";
 export { accounts, accountType } from "../../db/shared/hubs.ts";
 export { categories, categoryKind, expenseNecessity, resourceKind, resources } from "../../db/shared/foundation.ts";
 export { recurringFrequency, recurringKind, recurringTemplates } from "../../db/shared/recurring.ts";
-export { transactions, transactionSource } from "../../db/shared/ledger.ts";
+export { transactions, transactionSource, postings } from "../../db/shared/ledger.ts";
 
 export const transactionSplits = pgTable(
   "transaction_splits",

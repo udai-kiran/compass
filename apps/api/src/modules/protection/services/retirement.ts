@@ -5,6 +5,7 @@ import type { Db } from "../../../db/index.ts";
 import { retirementDetails } from "../schema.ts";
 import { accounts } from "../../../db/schema.ts";
 import { HttpError } from "../../../lib/errors.ts";
+import { assertPublicAccountType } from "../../../lib/account-type.ts";
 
 type DetailsRow = typeof retirementDetails.$inferSelect;
 
@@ -23,7 +24,9 @@ async function ownedRetirementAccount(db: Db, userId: string, accountId: string)
     where: and(eq(accounts.id, accountId), eq(accounts.userId, userId)),
   });
   if (!acc) throw new HttpError(404, "Account not found");
-  if (!isRetirementAccount(acc.type)) throw new HttpError(400, "Not a PPF, EPF or SSY account");
+  if (!isRetirementAccount(assertPublicAccountType(acc.type))) {
+    throw new HttpError(400, "Not a PPF, EPF or SSY account");
+  }
   return acc;
 }
 

@@ -12,6 +12,7 @@ import { HttpError } from "../../../lib/errors.ts";
 import { lockAccountPair, stepAmortization } from "../../credit/services/emis.ts";
 import { assertOwnedAccount, assertOwnedCategory } from "../../../lib/ownership.ts";
 import { assertOwnedResource } from "./resources.ts";
+import { rebuildPostingsForTransaction } from "./transactions.ts";
 
 type TemplateRow = typeof recurringTemplates.$inferSelect;
 
@@ -284,7 +285,7 @@ export async function materializeDue(
                 principalLegs.push({ date, amountPaise: step.principalPaise });
               }
             }
-            await trx.insert(transactions).values(
+            const emiSourceRows = await trx.insert(transactions).values(
               dates.map((date) => ({
                 userId: t.userId,
                 accountId: t.accountId,
@@ -297,10 +298,15 @@ export async function materializeDue(
                 resourceId: t.resourceId,
                 recurringTemplateId: t.id,
               })),
-            );
+            ).returning({ id: transactions.id });
+            // EMI source-family leg: an independent ORDINARY posting family
+            // (never a transfer — D21). Rebuild mirrors ordinary postings.
+            for (const row of emiSourceRows) {
+              await rebuildPostingsForTransaction(trx, t.userId, row.id);
+            }
             if (onEmiLegsForTest) await onEmiLegsForTest(t.id);
             if (principalLegs.length > 0) {
-              await trx.insert(transactions).values(
+              const emiPrincipalRows = await trx.insert(transactions).values(
                 principalLegs.map((leg) => ({
                   userId: t.userId,
                   accountId: details.loanAccountId!,
@@ -312,7 +318,12 @@ export async function materializeDue(
                   source: "recurring" as const,
                   recurringTemplateId: t.id,
                 })),
-              );
+              ).returning({ id: transactions.id });
+              // EMI principal-family leg: also an independent ORDINARY family
+              // (source + principal are two separate ordinary posting sets).
+              for (const row of emiPrincipalRows) {
+                await rebuildPostingsForTransaction(trx, t.userId, row.id);
+              }
             }
             await trx
               .update(emiDetails)
@@ -327,7 +338,7 @@ export async function materializeDue(
         }
       }
 
-      await trx.insert(transactions).values(
+      const genericRows = await trx.insert(transactions).values(
         dates.map((date) => ({
           userId: t.userId,
           accountId: t.accountId,
@@ -340,7 +351,12 @@ export async function materializeDue(
           resourceId: t.resourceId,
           recurringTemplateId: t.id,
         })),
-      );
+      ).returning({ id: transactions.id });
+      // Generic recurring rows are ordinary (non-opening, non-transfer-linked,
+      // no splits) — rebuild mirrors ordinary postings per row.
+      for (const row of genericRows) {
+        await rebuildPostingsForTransaction(trx, t.userId, row.id);
+      }
       return { created: dates.length, userId: t.userId };
     });
     if (result) {

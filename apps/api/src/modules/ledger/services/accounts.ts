@@ -11,6 +11,8 @@ import { accounts, transactions } from "../schema.ts";
 import { bankDetails, retirementDetails, sips } from "../../../db/schema.ts";
 import { HttpError } from "../../../lib/errors.ts";
 import { assertOwnedGoal } from "../../../lib/ownership.ts";
+import { assertPublicAccountType } from "../../../lib/account-type.ts";
+import { rebuildPostingsForTransaction } from "./transactions.ts";
 
 /** Only these carry their opening balance as a ledger transaction; other types
  * (cards/loans/schemes) keep it on the accounts.opening_balance_paise column,
@@ -136,7 +138,7 @@ function toAccount(row: AccountRow): Account {
   return {
     id: row.id,
     name: row.name,
-    type: row.type,
+    type: assertPublicAccountType(row.type),
     institution: row.institution,
     accountLast4: row.accountLast4,
     holderName: row.holderName,
@@ -168,10 +170,10 @@ export async function accountBalancesAtDate(
       where user_id = ${userId} and deleted_at is null and date <= ${asOf}
       group by account_id
     ) t on t.account_id = a.id
-    where a.user_id = ${userId} and a.archived_at is null
+    where a.user_id = ${userId} and a.archived_at is null and a.system_kind is null
   `);
   return (res.rows as Array<{ type: string; balance: string }>).map((r) => ({
-    type: r.type as AccountType,
+    type: assertPublicAccountType(r.type),
     balancePaise: Number(r.balance),
   }));
 }
@@ -189,7 +191,7 @@ export async function listAccounts(db: Db, userId: string): Promise<AccountWithB
     .from(accounts)
     .leftJoin(transactions, eq(transactions.accountId, accounts.id))
     .leftJoin(bankDetails, eq(bankDetails.accountId, accounts.id))
-    .where(eq(accounts.userId, userId))
+    .where(and(eq(accounts.userId, userId), isNull(accounts.systemKind)))
     .groupBy(accounts.id, bankDetails.subtype)
     .orderBy(accounts.sortOrder, accounts.createdAt);
   return rows.map(({ account, txSum, subtype }) => ({
@@ -222,7 +224,10 @@ export async function createAccount(
         openingBalancePaise: input.openingBalancePaise,
         date: new Date().toISOString().slice(0, 10),
       });
-      if (row) await tx.insert(transactions).values(row);
+      if (row) {
+        const [openingTxn] = await tx.insert(transactions).values(row).returning({ id: transactions.id });
+        await rebuildPostingsForTransaction(tx, userId, openingTxn!.id);
+      }
     }
     return toAccount(account);
   });
@@ -337,8 +342,12 @@ export async function updateAccount(
       .for("update");
     const current = currentRows[0];
     if (!current) throw new HttpError(404, "Account not found");
+    // System accounts (Expenses/Income/Opening/Clearing) are internal to the
+    // postings model — invisible to account management, including archive
+    // (which flows through this function).
+    if (current.systemKind !== null) throw new HttpError(404, "Account not found");
 
-    const nextType = fields.type ?? current.type;
+    const nextType = assertPublicAccountType(fields.type ?? current.type);
     const typeChanged = fields.type !== undefined && fields.type !== current.type;
     const goalChanged = fields.goalId !== undefined && fields.goalId !== current.goalId;
     const archiving = archived === true && current.archivedAt === null;
@@ -354,7 +363,11 @@ export async function updateAccount(
         .where(or(eq(sips.sourceAccountId, id), eq(sips.targetAccountId, id)));
       const targetSipCount = sipRefs.filter((r) => r.targetAccountId === id).length;
       const sourceSipCount = sipRefs.filter((r) => r.sourceAccountId === id).length;
-      const blocked = assessAccountEditAgainstSips({ ...fields, archived }, current, { targetSipCount, sourceSipCount });
+      const blocked = assessAccountEditAgainstSips(
+        { ...fields, archived },
+        { ...current, type: assertPublicAccountType(current.type) },
+        { targetSipCount, sourceSipCount },
+      );
       if (blocked) throw new HttpError(409, blocked);
     }
 
@@ -423,14 +436,18 @@ export async function updateAccount(
       });
       openingColumn = { openingBalancePaise: plan.columnPaise };
       if (plan.txn.kind === "insert") {
-        await tx.insert(transactions).values({
-          userId,
-          accountId: id,
-          date: plan.txn.date,
-          amountPaise: plan.txn.amountPaise,
-          merchant: "Opening balance",
-          isOpening: true,
-        });
+        const [openingTxn] = await tx
+          .insert(transactions)
+          .values({
+            userId,
+            accountId: id,
+            date: plan.txn.date,
+            amountPaise: plan.txn.amountPaise,
+            merchant: "Opening balance",
+            isOpening: true,
+          })
+          .returning({ id: transactions.id });
+        await rebuildPostingsForTransaction(tx, userId, openingTxn!.id);
       } else if (plan.txn.kind === "update") {
         await tx
           .update(transactions)
@@ -442,12 +459,15 @@ export async function updateAccount(
               eq(transactions.userId, userId),
             ),
           );
+        await rebuildPostingsForTransaction(tx, userId, plan.txn.id);
       } else if (plan.txn.kind === "delete") {
         // Soft-delete, like every other user-transaction removal (see
         // transactions.ts) — a hard delete would cascade away the row's splits,
         // transfer link and attachment metadata while leaving the stored
         // attachment files orphaned. Every balance surface filters
         // `deleted_at is null`, so the amount stops counting either way.
+        // NO posting change here: postings are retained on soft-delete, same
+        // as softDeleteTransaction (readers exclude via deleted_at).
         await tx
           .update(transactions)
           .set({ deletedAt: new Date(), updatedAt: new Date() })
@@ -500,11 +520,14 @@ export async function deleteAccount(db: Db, userId: string, id: string): Promise
     // lockedAccountForSip) before it counts/relies on this account, so
     // whichever side commits first is what the other sees.
     const currentRows = await tx
-      .select({ id: accounts.id })
+      .select({ id: accounts.id, systemKind: accounts.systemKind })
       .from(accounts)
       .where(and(eq(accounts.id, id), eq(accounts.userId, userId)))
       .for("update");
     if (currentRows.length === 0) throw new HttpError(404, "Account not found");
+    // System accounts are internal to the postings model — invisible to
+    // account management.
+    if (currentRows[0]!.systemKind !== null) throw new HttpError(404, "Account not found");
 
     // Any transaction counts, including soft-deleted ones: they still hold a
     // (non-cascading) FK to the account, so deleting would hit a constraint error

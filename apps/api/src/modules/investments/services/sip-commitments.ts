@@ -4,6 +4,7 @@ import type { Db } from "../../../db/index.ts";
 import { accounts } from "../../../db/schema.ts";
 import { holdings, sips } from "../schema.ts";
 import { accountAllocationClass, holdingAllocationClass, type GoalAllocationClass } from "../../planning/services/goal-allocation.ts";
+import { assertPublicAccountType } from "../../../lib/account-type.ts";
 
 // ---------- Committed monthly (goal-plan gap) ----------
 
@@ -86,7 +87,7 @@ export async function committedForGoal(
         r.holdingAssetClass && r.holdingGainsTaxClass
           ? { assetClass: r.holdingAssetClass, gainsTaxClass: r.holdingGainsTaxClass }
           : null,
-      account: r.accountType ? { type: r.accountType } : null,
+      account: r.accountType ? { type: assertPublicAccountType(r.accountType) } : null,
     }),
   }));
   return committedSplit(classified);

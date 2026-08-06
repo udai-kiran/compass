@@ -470,6 +470,13 @@
       "when": 1785655874565,
       "tag": "0066_eager_spectrum",
       "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "7",
+      "when": 1786009555933,
+      "tag": "0067_illegal_shocker",
+      "breakpoints": true
     }
   ]
 }

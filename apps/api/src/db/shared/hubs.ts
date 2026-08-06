@@ -43,6 +43,23 @@ export const accountType = pgEnum("account_type", [
   // not an account. This enum value is retained only because Postgres cannot drop
   // an enum value; no account uses it and the UI no longer offers it.
   "insurance",
+  // A system-owned account used internally by the postings model (e.g. the
+  // per-user Expenses/Income/Opening/Clearing accounts) — never shown or
+  // selectable as a regular user account. Appended at the end because
+  // Postgres cannot reorder an enum's existing values.
+  "system",
+]);
+
+/**
+ * Distinguishes the small, fixed set of per-user system accounts the postings
+ * model dual-writes against (Expenses/Income/Opening/Clearing) from ordinary
+ * user accounts, where this column is null. See PLAN-dualwrite.md.
+ */
+export const accountSystemKind = pgEnum("account_system_kind", [
+  "expenses",
+  "income",
+  "opening",
+  "clearing",
 ]);
 
 export const accounts = pgTable(
@@ -92,10 +109,21 @@ export const accounts = pgTable(
     goalId: uuid("goal_id").references((): AnyPgColumn => goals.id, { onDelete: "set null" }),
     sortOrder: integer("sort_order").notNull().default(0),
     archivedAt: timestamp("archived_at", { withTimezone: true }),
+    /**
+     * Non-null only for the small set of per-user system accounts the
+     * postings model dual-writes against (Expenses/Income/Opening/Clearing);
+     * null for every ordinary user account. See accountSystemKind.
+     */
+    systemKind: accountSystemKind("system_kind"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("accounts_user_idx").on(t.userId)],
+  (t) => [
+    index("accounts_user_idx").on(t.userId),
+    uniqueIndex("accounts_system_kind_idx")
+      .on(t.userId, t.systemKind)
+      .where(sql`system_kind is not null`),
+  ],
 );
 
 export const emailClass = pgEnum("email_class", [
