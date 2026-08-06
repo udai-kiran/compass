@@ -16,6 +16,7 @@ import { accounts, transactions } from "../../../db/schema.ts";
 import { holdingEvents, holdings, sips } from "../schema.ts";
 import { HttpError, pgError } from "../../../lib/errors.ts";
 import { assertOwnedGoal } from "../../../lib/ownership.ts";
+import { assertPublicAccountType } from "../../../lib/account-type.ts";
 import { dueInstallmentDate } from "./sip-schedule.ts";
 
 type SipRow = typeof sips.$inferSelect;
@@ -136,7 +137,8 @@ async function lockedAccountForSip(
     .from(accounts)
     .where(and(eq(accounts.id, accountId), eq(accounts.userId, userId)))
     .for("update");
-  return rows[0] ?? null;
+  const row = rows[0];
+  return row ? { ...row, type: assertPublicAccountType(row.type) } : null;
 }
 
 /**

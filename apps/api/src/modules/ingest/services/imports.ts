@@ -18,6 +18,7 @@ import { parseHdfcStatement } from "../../../lib/hdfc-statement.ts";
 import { getMerchantRules, normalizeMerchant } from "../../ledger/services/merchants.ts";
 import { reconcileStatementTransactions } from "./import-reconciliation.ts";
 import { autoLinkTransfers } from "../../ledger/services/transfers.ts";
+import { rebuildPostingsForTransaction } from "../../ledger/services/transactions.ts";
 
 export const MAX_IMPORT_BYTES = 25 * 1024 * 1024;
 const BATCH = 1000;
@@ -667,6 +668,30 @@ export async function commitImport(
       }
       const updatedIds = updates.map((item) => item.transactionId);
       if (updatedIds.length > 0) {
+        // Capture the auto links about to be removed BEFORE deleting them:
+        // each severed pair's counterpart leg is being orphaned from its
+        // Clearing postings, so it must be rebuilt to ordinary below.
+        const severedAutoLinks = await t
+          .select({
+            out: transferLinks.outTransactionId,
+            in: transferLinks.inTransactionId,
+          })
+          .from(transferLinks)
+          .where(
+            and(
+              eq(transferLinks.userId, userId),
+              eq(transferLinks.auto, true),
+              or(
+                inArray(transferLinks.outTransactionId, updatedIds),
+                inArray(transferLinks.inTransactionId, updatedIds),
+              ),
+            ),
+          );
+        const severedLegTxIds = new Set<string>();
+        for (const link of severedAutoLinks) {
+          severedLegTxIds.add(link.out);
+          severedLegTxIds.add(link.in);
+        }
         // A statement correction can invalidate an inferred card payment.
         // Preserve manual transfer links and let auto-linking rebuild its own.
         await t
@@ -681,6 +706,13 @@ export async function commitImport(
               ),
             ),
           );
+        // Rebuild every affected leg's postings in the same tx, and only
+        // AFTER the delete: a severed leg reverts to ordinary, an updated leg
+        // with a surviving MANUAL link re-mirrors Clearing with the new
+        // amount, a plain updated leg re-mirrors ordinary with the new amount.
+        for (const id of new Set([...updatedIds, ...severedLegTxIds])) {
+          await rebuildPostingsForTransaction(t, userId, id);
+        }
       }
 
       matchedExisting = plan.filter((item) => item.action === "matched").length;
@@ -722,6 +754,10 @@ export async function commitImport(
         from (select unnest(${pgArray(rowIds)}::uuid[]) as id, unnest(${pgArray(txIds)}::uuid[]) as tx) u
         where ir.id = u.id
       `);
+      // Fresh ordinary import rows: mirror each into postings in the same tx.
+      for (const x of inserted) {
+        await rebuildPostingsForTransaction(t, userId, x.id);
+      }
     }
   });
 
@@ -827,6 +863,34 @@ export async function rollbackImport(
       }
     }
 
+    // Capture transfer counterparts BEFORE the delete loop: hard-deleting a
+    // transaction cascades its transfer_links rows, so a surviving counterpart
+    // that is NOT itself being deleted would be orphaned from its Clearing
+    // postings — it must be rebuilt to ordinary after the delete.
+    const survivingPartners = new Set<string>();
+    if (ids.length > 0) {
+      const links = await t
+        .select({
+          out: transferLinks.outTransactionId,
+          in: transferLinks.inTransactionId,
+        })
+        .from(transferLinks)
+        .where(
+          and(
+            eq(transferLinks.userId, userId),
+            or(
+              inArray(transferLinks.outTransactionId, ids),
+              inArray(transferLinks.inTransactionId, ids),
+            ),
+          ),
+        );
+      const deleted = new Set(ids);
+      for (const link of links) {
+        if (!deleted.has(link.out)) survivingPartners.add(link.out);
+        if (!deleted.has(link.in)) survivingPartners.add(link.in);
+      }
+    }
+
     for (let i = 0; i < ids.length; i += BATCH) {
       await t
         .delete(transactions)
@@ -847,6 +911,14 @@ export async function rollbackImport(
           updatedAt: new Date(),
         })
         .where(and(eq(transactions.id, s.transactionId), eq(transactions.userId, userId)));
+    }
+    // Rebuild postings in the same tx for every restored (snapshot) row and
+    // every surviving transfer counterpart whose pair was hard-deleted (the
+    // latter revert to ordinary now that their Clearing partner is gone). A
+    // deleted row's own postings vanish via the transaction_id cascade — never
+    // rebuild a deleted row.
+    for (const id of new Set([...survivingPartners, ...snapshots.map((s) => s.transactionId)])) {
+      await rebuildPostingsForTransaction(t, userId, id);
     }
     await t
       .update(importRows)

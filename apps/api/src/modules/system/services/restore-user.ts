@@ -2,16 +2,22 @@ import type pg from "pg";
 import { HttpError } from "../../../lib/errors.ts";
 import type { Storage } from "../../../lib/storage.ts";
 import { openArchive, type ArchiveHeader } from "../../../lib/backup-archive.ts";
+import { createDb } from "../../../db/index.ts";
+import { reconcileUserPostings } from "../../ledger/services/reconcile-postings.ts";
 import { DEFERRED_RESTORE_COLUMNS, firstPassRow } from "../../../db/restore.ts";
 import { ALL_TABLES, LINKED_TABLES, USER_TABLES } from "./backup.ts";
+
+/**
+ * Tables that must be empty (no user rows) before a restore is allowed.
+ * Seeded data (categories, preferences) is wiped by the delete loop
+ * and does NOT block the restore.
+ */
+const MUST_BE_EMPTY = ["accounts", "transactions", "insurance_policies", "goals", "holdings"] as const;
 
 /** ALL_TABLES order restricted to what a per-user archive contains. */
 export function restorableTables(): string[] {
   return ALL_TABLES.filter((t) => t in USER_TABLES || t in LINKED_TABLES);
 }
-
-/** Tables that must be empty before a restore — the "fresh account" guard. */
-const MUST_BE_EMPTY = ["accounts", "transactions", "insurance_policies", "goals", "holdings"] as const;
 
 /** The MIME a restored object is stored under, from its owning row. */
 function mimeOf(header: ArchiveHeader, table: string, rowId: string): string {
@@ -36,10 +42,29 @@ async function insertRow(client: pg.PoolClient, table: string, row: Record<strin
   );
 }
 
+/**
+ * Count rows in a user-scoped table that would block a restore. For accounts
+ * the count excludes system accounts (system_kind is null), so the 4 seeded
+ * system accounts don't trigger the "fresh account" guard.
+ */
+async function countBlockingRows(
+  q: pg.PoolClient | pg.Pool,
+  table: string,
+  userId: string,
+): Promise<number> {
+  const whereSystem = table === "accounts" ? " and system_kind is null" : "";
+  const res = await q.query<{ count: string }>(
+    `select count(*)::bigint as count from ${ident(table)} where user_id = $1${whereSystem}`,
+    [userId],
+  );
+  return Number(res.rows[0]?.count ?? 0);
+}
+
 export interface RestoreSummary {
   tables: number;
   rows: number;
   files: number;
+  postings?: { repaired: number; failed: number };
 }
 
 /**
@@ -52,25 +77,32 @@ export interface RestoreSummary {
  * so the restored account never points at objects that don't exist. Row inserts
  * run in one transaction; if it fails, the freshly uploaded objects are removed
  * again best-effort.
+ *
+ * Archived posting rows are deliberately discarded (skipped during insert) —
+ * postings are derived data, re-synthesized post-commit via the `reconcile`
+ * callback. A throw from `reconcile` does NOT trigger DB rollback or blob
+ * deletion (the DB already committed).
  */
 export async function restoreUserBackup(
   pool: pg.Pool,
   storage: Storage,
   userId: string,
   archivePath: string,
+  reconcile: (pool: pg.Pool, userId: string) => Promise<{ repaired: number; failures: unknown[] }> = (
+    p,
+    uid,
+  ) => reconcileUserPostings(createDb(p), uid),
 ): Promise<RestoreSummary> {
   const archive = await openArchive(archivePath);
   const uploaded: string[] = [];
+  let summary!: RestoreSummary;
   try {
     const { header } = archive;
 
     // Fast-fail before uploading anything; the transaction re-checks authoritatively.
     for (const table of MUST_BE_EMPTY) {
-      const res = await pool.query<{ count: string }>(
-        `select count(*)::bigint as count from ${ident(table)} where user_id = $1`,
-        [userId],
-      );
-      if (Number(res.rows[0]?.count ?? 0) !== 0) {
+      const count = await countBlockingRows(pool, table, userId);
+      if (count > 0) {
         throw new HttpError(409, "This account already has data — restore needs a fresh account");
       }
     }
@@ -92,12 +124,10 @@ export async function restoreUserBackup(
     try {
       await client.query("begin");
 
+      // Re-check inside the transaction that the destination is still fresh.
       for (const table of MUST_BE_EMPTY) {
-        const res = await client.query<{ count: string }>(
-          `select count(*)::bigint as count from ${ident(table)} where user_id = $1`,
-          [userId],
-        );
-        if (Number(res.rows[0]?.count ?? 0) !== 0) {
+        const count = await countBlockingRows(client, table, userId);
+        if (count > 0) {
           throw new HttpError(409, "This account already has data — restore needs a fresh account");
         }
       }
@@ -116,6 +146,9 @@ export async function restoreUserBackup(
       let rowCount = 0;
       let tableCount = 0;
       for (const table of tables) {
+        // Archived posting rows are deliberately discarded — they are re-derived
+        // post-commit via reconcileUserPostings.
+        if (table === "postings") continue;
         const rows = header.tables[table];
         if (!Array.isArray(rows)) continue; // older archive without this table
         if (rows.length > 0) tableCount++;
@@ -149,7 +182,7 @@ export async function restoreUserBackup(
       }
 
       await client.query("commit");
-      return { tables: tableCount, rows: rowCount, files: keyMap.size };
+      summary = { tables: tableCount, rows: rowCount, files: keyMap.size };
     } catch (error) {
       await client.query("rollback");
       throw error;
@@ -163,4 +196,16 @@ export async function restoreUserBackup(
   } finally {
     await archive.close();
   }
+
+  // Post-commit reconcile (only runs when the transaction committed — if the
+  // outer catch re-threw this code is unreachable). A throw from reconcile
+  // MUST NOT trigger DB rollback or blob deletion (the DB already committed).
+  try {
+    const r = await reconcile(pool, userId);
+    summary.postings = { repaired: r.repaired, failed: r.failures.length };
+  } catch {
+    summary.postings = { repaired: 0, failed: 1 };
+  }
+
+  return summary;
 }

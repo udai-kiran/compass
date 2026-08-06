@@ -28,6 +28,7 @@ import { invalidateUserCache } from "./lib/cache.ts";
 import { enqueueBudgetEvaluation } from "./jobs/index.ts";
 import { createStorage, type Storage } from "./lib/storage.ts";
 import { EventBus } from "./lib/event-bus.ts";
+import { reconcileAllPostings } from "./modules/ledger/services/reconcile-postings.ts";
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -177,6 +178,19 @@ export async function buildApp(config: Config): Promise<FastifyInstance> {
   // there's no URL-based catch-all — new ledger-writing call sites must emit
   // it themselves (see EventMap in lib/event-bus.ts).
   registerLedgerCacheSubscriber(app);
+
+  // Dual-write postings backfill/repair over ALL existing data, in the quiescent
+  // window BEFORE any BullMQ worker (startJobs) or HTTP traffic. PR-A non-blocking:
+  // every reader is still legacy-derived, so a failure cannot surface posting-derived
+  // wrong data — but log it loudly (PR-B's reader-cutover gate depends on this being clean).
+  await reconcileAllPostings(app.db)
+    .then((pass) => {
+      if (pass.failures.length > 0)
+        app.log.error({ users: pass.users, checked: pass.checked, repaired: pass.repaired, failed: pass.failures.length, failures: pass.failures.slice(0, 20) }, "boot: postings reconciliation had failures (PR-B reader gate NOT satisfied)");
+      else if (pass.repaired > 0)
+        app.log.info({ users: pass.users, checked: pass.checked, repaired: pass.repaired }, "boot: postings reconciliation repaired drift");
+    })
+    .catch((err: unknown) => app.log.error({ err }, "boot postings reconciliation failed"));
 
   await startJobs(app);
   await setupAuth(app);

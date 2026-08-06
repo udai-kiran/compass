@@ -123,3 +123,31 @@ export const transactions = pgTable(
       .where(sql`sip_id is not null and deleted_at is null`),
   ],
 );
+
+/**
+ * A zero-sum-per-transaction leg of the double-entry postings model, dual-written
+ * alongside the legacy single-entry `transactions` row (see PLAN-dualwrite.md).
+ * Not yet read by any aggregation/reader in PR-A — purely additive shadow data.
+ */
+export const postings = pgTable(
+  "postings",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    transactionId: uuid("transaction_id")
+      .notNull()
+      .references(() => transactions.id, { onDelete: "cascade" }),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id),
+    categoryId: uuid("category_id").references(() => categories.id),
+    amountPaise: bigint("amount_paise", { mode: "number" }).notNull(),
+    necessity: expenseNecessity("necessity"),
+    note: text("note").notNull().default(""),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("postings_tx_idx").on(t.transactionId),
+    index("postings_account_idx").on(t.accountId),
+    index("postings_category_idx").on(t.categoryId),
+  ],
+);

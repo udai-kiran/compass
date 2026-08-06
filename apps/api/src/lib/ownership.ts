@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import type { DbOrTx } from "../db/index.ts";
 import { accounts, categories, goals, holdings } from "../db/schema.ts";
 import { HttpError } from "./errors.ts";
@@ -22,6 +22,25 @@ export async function assertOwnedAccount(
   if (!accountId) return;
   const row = await db.query.accounts.findFirst({
     where: and(eq(accounts.id, accountId), eq(accounts.userId, userId)),
+    columns: { id: true },
+  });
+  if (!row) throw new HttpError(404, "Account not found");
+}
+
+/**
+ * Same shape as `assertOwnedAccount`, but ALSO requires the account is not one of
+ * the internal system accounts (`accounts.system_kind` non-null). Public-facing
+ * writes that accept a client-supplied real-account id use this guard so a
+ * system-account id (Expenses/Income/Opening/Clearing) is treated as not-found.
+ */
+export async function assertOwnedRealAccount(
+  db: DbOrTx,
+  userId: string,
+  accountId: string | null | undefined,
+): Promise<void> {
+  if (!accountId) return;
+  const row = await db.query.accounts.findFirst({
+    where: and(eq(accounts.id, accountId), eq(accounts.userId, userId), isNull(accounts.systemKind)),
     columns: { id: true },
   });
   if (!row) throw new HttpError(404, "Account not found");

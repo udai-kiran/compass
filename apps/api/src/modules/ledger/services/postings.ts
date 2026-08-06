@@ -13,7 +13,23 @@ export interface PostingDraft {
   note: string;
 }
 
-export type SystemKind = "expenses" | "income" | "opening";
+export type SystemKind = "expenses" | "income" | "opening" | "clearing";
+
+// ---------------------------------------------------------------------------
+// Errors
+// ---------------------------------------------------------------------------
+
+/**
+ * A typed marker for an unrepairable posting shape — e.g. a split
+ * transaction whose split amounts do not sum to the parent row's amount.
+ * This is a data-integrity violation, not a validation error.
+ */
+export class PostingShapeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PostingShapeError";
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Primitives
@@ -207,6 +223,40 @@ export function buildOpeningPostings(input: {
   return postings;
 }
 
+/**
+ * Builds a zero-sum pair for a SINGLE leg of a dual-write Clearing transfer.
+ * Each side of a legacy transfer (which is its own `transactions` row with its
+ * own signed legacy `amountPaise`) gets its own real+Clearing posting pair —
+ * the two legs are stitched together only via `transfer_links`, not via a
+ * shared posting set. `amountPaise` is the signed legacy amount for THIS leg
+ * (outflow leg negative, inflow leg positive).
+ */
+export function buildTransferLegPostings(input: {
+  accountId: string;
+  amountPaise: number;
+  clearingAccountId: string;
+  note: string;
+}): PostingDraft[] {
+  const postings: PostingDraft[] = [
+    {
+      accountId: input.accountId,
+      amountPaise: input.amountPaise,
+      categoryId: null,
+      necessity: null,
+      note: input.note,
+    },
+    {
+      accountId: input.clearingAccountId,
+      amountPaise: -input.amountPaise,
+      categoryId: null,
+      necessity: null,
+      note: input.note,
+    },
+  ];
+  assertZeroSum(postings);
+  return postings;
+}
+
 // ---------------------------------------------------------------------------
 // Classifiers & projections
 // ---------------------------------------------------------------------------
@@ -214,6 +264,12 @@ export function buildOpeningPostings(input: {
 /**
  * Classifies a set of postings into one of four shapes.
  * Throws HttpError(400) for unrecognised / degenerate shapes.
+ *
+ * NOTE (PR-A→PR-B): a 1-real + 1-Clearing leg pair (from
+ * `buildTransferLegPostings`, the dual-write per-leg transfer shape) is not
+ * one of the four shapes classified here — recognising/reading it back is a
+ * PR-B reader concern. This function is not called against Clearing legs
+ * during PR-A.
  */
 export function classifyShape(
   postings: readonly PostingDraft[],

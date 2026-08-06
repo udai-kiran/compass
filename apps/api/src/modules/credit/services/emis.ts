@@ -11,6 +11,7 @@ import { accounts, recurringTemplates, transactions } from "../../../db/schema.t
 import { emiDetails } from "../schema.ts";
 import { HttpError } from "../../../lib/errors.ts";
 import { assertOwnedCategory } from "../../../lib/ownership.ts";
+import { assertPublicAccountType } from "../../../lib/account-type.ts";
 
 function monthsSince(startDate: string, today: string): number {
   const [sy, sm, sd] = startDate.split("-").map(Number) as [number, number, number];
@@ -203,7 +204,9 @@ export async function lockAccountPair(
     .where(and(eq(accounts.userId, userId), inArray(accounts.id, [idA, idB])))
     .orderBy(asc(accounts.id))
     .for("update");
-  return new Map(rows.map((r) => [r.id, { type: r.type, archivedAt: r.archivedAt }]));
+  return new Map(
+    rows.map((r) => [r.id, { type: assertPublicAccountType(r.type), archivedAt: r.archivedAt }]),
+  );
 }
 
 /**

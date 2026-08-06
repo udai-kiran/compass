@@ -2,7 +2,7 @@
  * Decomposition test — verifies that the `db/schema.ts` barrel is a pure
  * re-export barrel with no inline definitions, that every table/enum is
  * `Object.is`-identical to its defining file, and that the export set is
- * exactly 50 tables + 38 enums (plus `users` from core) with no duplicates.
+ * exactly 51 tables + 39 enums (plus `users` from core) with no duplicates.
  *
  * Importing the barrel, all shared layers, and all module schemas also
  * exercises runtime module initialisation (ESM graph resolution, TDZ checks).
@@ -97,8 +97,8 @@ const automationResidents = new Set([
 
 describe("db/schema.ts decomposition", () => {
 
-  // T3c: barrel exports exactly 50 tables + 38 enums + users, no duplicates
-  it("exports exactly 50 tables + 38 enums + users with no duplicates", () => {
+  // T3c: barrel exports exactly 51 tables + 39 enums + users, no duplicates
+  it("exports exactly 51 tables + 39 enums + users with no duplicates", () => {
     const tables: string[] = [];
     const enums: string[] = [];
     // Postgres-level object names — JS export keys are unique by construction,
@@ -130,8 +130,8 @@ describe("db/schema.ts decomposition", () => {
       `duplicate enum DB names: ${enumDbNames.filter((n, i) => enumDbNames.indexOf(n) !== i)}`,
     );
 
-    assert.equal(tables.length, 50, `expected 50 tables, got ${tables.length}: ${tables.join(", ")}`);
-    assert.equal(enums.length, 38, `expected 38 enums, got ${enums.length}: ${enums.join(", ")}`);
+    assert.equal(tables.length, 51, `expected 51 tables, got ${tables.length}: ${tables.join(", ")}`);
+    assert.equal(enums.length, 39, `expected 39 enums, got ${enums.length}: ${enums.join(", ")}`);
 
     // users is also in the barrel
     assert.ok(isPgTable(barrel.users), "users should be a pgTable in the barrel");
@@ -181,7 +181,7 @@ describe("db/schema.ts decomposition", () => {
       { name: "hubs", mod: hubs as unknown as Record<string, unknown>, keys: ["accounts", "emailIngestions"] },
       { name: "recurring", mod: recurring as unknown as Record<string, unknown>, keys: ["recurringTemplates"] },
       { name: "spines", mod: spines as unknown as Record<string, unknown>, keys: ["holdings", "insurancePolicies", "statementReconciliations", "sips"] },
-      { name: "ledger", mod: ledgerShared as unknown as Record<string, unknown>, keys: ["transactions"] },
+      { name: "ledger", mod: ledgerShared as unknown as Record<string, unknown>, keys: ["transactions", "postings"] },
     ];
 
     for (const layer of sharedLayers) {
@@ -210,7 +210,7 @@ describe("db/schema.ts decomposition", () => {
     // Shared enums in shared layers
     const sharedEnumLayers: Array<{ name: string; mod: Record<string, unknown>; keys: string[] }> = [
       { name: "foundation", mod: foundation as unknown as Record<string, unknown>, keys: ["goalType", "categoryKind", "expenseNecessity", "resourceKind", "mailboxProvider", "mailboxStatus"] },
-      { name: "hubs", mod: hubs as unknown as Record<string, unknown>, keys: ["accountType", "emailClass", "emailIngestStatus"] },
+      { name: "hubs", mod: hubs as unknown as Record<string, unknown>, keys: ["accountType", "emailClass", "emailIngestStatus", "accountSystemKind"] },
       { name: "recurring", mod: recurring as unknown as Record<string, unknown>, keys: ["recurringFrequency", "recurringKind"] },
       { name: "spines", mod: spines as unknown as Record<string, unknown>, keys: ["assetClass", "gainsTaxClass", "insuranceKind", "vehicleKind", "healthType", "premiumFrequency", "sipTargetKind", "sipStatus", "sipFundingSource", "sipFrequency"] },
       { name: "ledger", mod: ledgerShared as unknown as Record<string, unknown>, keys: ["transactionSource"] },

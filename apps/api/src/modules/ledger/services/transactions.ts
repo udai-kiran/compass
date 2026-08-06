@@ -13,9 +13,19 @@ import type { Db, DbOrTx } from "../../../db/index.ts";
 import { recurringTemplates, transactions, transactionSplits, transferLinks } from "../schema.ts";
 import { HttpError } from "../../../lib/errors.ts";
 import { getMerchantRules, normalizeMerchant } from "./merchants.ts";
-import { assertOwnedAccount, assertOwnedCategory } from "../../../lib/ownership.ts";
+import { assertOwnedRealAccount, assertOwnedCategory } from "../../../lib/ownership.ts";
 import { assertOwnedResource } from "./resources.ts";
 import { isUniqueViolation } from "../../investments/services/sip-lifecycle.ts";
+import {
+  buildOpeningPostings,
+  buildOrdinaryPostings,
+  buildSplitPostings,
+  buildTransferLegPostings,
+  PostingShapeError,
+  type PostingDraft,
+  sumPaise,
+} from "./postings.ts";
+import { replacePostings, resolveSystemAccounts, type ResolvedSystemAccounts } from "./post-entry.ts";
 
 type TxRow = typeof transactions.$inferSelect;
 
@@ -163,6 +173,118 @@ async function hydrate(db: DbOrTx, rows: TxRow[]): Promise<Transaction[]> {
   }));
 }
 
+/**
+ * Computes the posting drafts that mirror a transaction's CURRENT resulting
+ * shape (the row + any transaction_splits, re-read on the passed handle).
+ * Branches on the row's shape FIRST, in order: (a) an opening row
+ * (`is_opening = true`, bank/cash accounts only) mirrors Opening postings;
+ * (b) a row that is a member of `transfer_links` (as either `out_transaction_id`
+ * or `in_transaction_id`) mirrors a per-leg Clearing pair via
+ * `buildTransferLegPostings`; (c) a row with `transaction_splits` mirrors
+ * split postings; (d) otherwise ordinary postings. `linkTransfer`/
+ * `unlinkTransfer` (`transfers.ts`) call this after changing `transfer_links`
+ * membership so both legs flip between Clearing and ordinary shape.
+ *
+ * `transaction_splits` carries no `necessity` column of its own (see schema
+ * in `modules/ledger/schema.ts`) — each split posting's necessity is the
+ * parent transaction's `necessity`, applied uniformly to every split.
+ *
+ * Tenant-scoped: returns `null` when no row exists for `id` owned by `userId`
+ * (soft-deleted rows still count — their postings are retained). The SPLIT
+ * branch enforces the split-sum invariant: if the split amounts do not sum to
+ * the parent row's amount, a `PostingShapeError` is thrown — the shape is
+ * unrepairable, not re-derivable.
+ *
+ * `systemAccounts` may be passed in to reuse an already-resolved set (e.g.
+ * from `resolveSystemAccounts`); otherwise they are resolved here.
+ */
+export async function computePostingDraftsForTransaction(
+  t: DbOrTx,
+  userId: string,
+  id: string,
+  systemAccounts?: ResolvedSystemAccounts,
+): Promise<PostingDraft[] | null> {
+  const row = await t.query.transactions.findFirst({
+    where: and(eq(transactions.id, id), eq(transactions.userId, userId)),
+  });
+  if (!row) return null;
+  const resolved = systemAccounts ?? (await resolveSystemAccounts(t, userId));
+
+  if (row.isOpening === true) {
+    return buildOpeningPostings({
+      accountId: row.accountId,
+      amountPaise: row.amountPaise,
+      systemOpeningAccountId: resolved.opening,
+    });
+  }
+
+  const transferLink = await t.query.transferLinks.findFirst({
+    where: or(eq(transferLinks.outTransactionId, id), eq(transferLinks.inTransactionId, id)),
+  });
+  if (transferLink) {
+    return buildTransferLegPostings({
+      accountId: row.accountId,
+      amountPaise: row.amountPaise,
+      clearingAccountId: resolved.clearing,
+      note: "",
+    });
+  }
+
+  const splitRows = await t.query.transactionSplits.findMany({
+    where: eq(transactionSplits.transactionId, id),
+  });
+  if (splitRows.length > 0) {
+    const splitSum = sumPaise(splitRows.map((s) => s.amountPaise));
+    if (splitSum !== row.amountPaise) {
+      throw new PostingShapeError(
+        `transaction ${id}: split sum ${splitSum} paise does not match transaction amount ${row.amountPaise} paise`,
+      );
+    }
+    return buildSplitPostings({
+      accountId: row.accountId,
+      splits: splitRows.map((s) => ({
+        categoryId: s.categoryId,
+        amountPaise: s.amountPaise,
+        necessity: row.necessity,
+        note: s.note,
+      })),
+      systemExpensesAccountId: resolved.expenses,
+      systemIncomeAccountId: resolved.income,
+    });
+  }
+
+  return buildOrdinaryPostings({
+    accountId: row.accountId,
+    amountPaise: row.amountPaise,
+    categoryId: row.categoryId,
+    necessity: row.necessity,
+    systemExpensesAccountId: resolved.expenses,
+    systemIncomeAccountId: resolved.income,
+  });
+}
+
+/**
+ * Rebuilds a transaction's posting mirror from its CURRENT resulting shape
+ * (the row + any transaction_splits, re-read on the passed handle) and
+ * replaces the postings via `replacePostings`. Shared by every writer that
+ * needs to re-derive postings after a legacy mutation rather than construct
+ * drafts inline: `updateTransaction`, `setSplits`, `bulkAction`
+ * (restore/setCategory), and the opening-balance row writers in
+ * `accounts.ts` (createAccount, updateAccount's opening-plan apply). Must be
+ * called on the SAME tx as the legacy write it follows (ATOMICITY LAW) —
+ * callers pass their `t` handle, never a bare `db`.
+ *
+ * Delegates the shape computation to `computePostingDraftsForTransaction`
+ * (see there for the branch order and the split-sum invariant), then replaces
+ * the postings via `replacePostings`. Returns without writing when no row
+ * exists for `id` under `userId`.
+ */
+export async function rebuildPostingsForTransaction(t: DbOrTx, userId: string, id: string): Promise<void> {
+  const drafts = await computePostingDraftsForTransaction(t, userId, id);
+  if (!drafts) return;
+  await replacePostings(t, id, userId, drafts);
+}
+
 export async function listTransactions(
   db: Db,
   userId: string,
@@ -261,7 +383,7 @@ export async function createTransaction(
     occurredAt?: Date | null;
   },
 ): Promise<Transaction> {
-  await assertOwnedAccount(db, userId, input.accountId);
+  await assertOwnedRealAccount(db, userId, input.accountId);
   await assertOwnedCategory(db, userId, input.categoryId);
   await assertOwnedResource(db, userId, input.resourceId);
   if (input.recurringTemplateId) {
@@ -278,10 +400,28 @@ export async function createTransaction(
   // (manual entry now, AI-assisted categorization later)
   const merchantRulesList = await getMerchantRules(db, userId);
   const merchant = input.merchant ? normalizeMerchant(input.merchant, merchantRulesList) : "";
-  const rows = await db
-    .insert(transactions)
-    .values({ ...input, merchant, userId })
-    .returning();
+  // Legacy insert + posting mirror share ONE db transaction (ATOMICITY LAW).
+  // `db.transaction(...)` opens a real transaction when `db` is a bare `Db`,
+  // or a nested savepoint when `db` is already a `Tx` (this fn is `DbOrTx`) —
+  // either way the legacy row and its postings commit/rollback together.
+  const rows = await db.transaction(async (t) => {
+    const inserted = await t
+      .insert(transactions)
+      .values({ ...input, merchant, userId })
+      .returning();
+    const newRow = inserted[0]!;
+    const systemAccounts = await resolveSystemAccounts(t, userId);
+    const drafts = buildOrdinaryPostings({
+      accountId: newRow.accountId,
+      amountPaise: newRow.amountPaise,
+      categoryId: newRow.categoryId,
+      necessity: newRow.necessity,
+      systemExpensesAccountId: systemAccounts.expenses,
+      systemIncomeAccountId: systemAccounts.income,
+    });
+    await replacePostings(t, newRow.id, userId, drafts);
+    return inserted;
+  });
   return (await hydrate(db, [rows[0]!]))[0]!;
 }
 
@@ -291,7 +431,7 @@ export async function updateTransaction(
   id: string,
   input: UpdateTransaction,
 ): Promise<Transaction> {
-  if (input.accountId !== undefined) await assertOwnedAccount(db, userId, input.accountId);
+  if (input.accountId !== undefined) await assertOwnedRealAccount(db, userId, input.accountId);
   if (input.categoryId !== undefined) await assertOwnedCategory(db, userId, input.categoryId);
   if (input.resourceId !== undefined) await assertOwnedResource(db, userId, input.resourceId);
   if (input.recurringTemplateId) {
@@ -306,13 +446,62 @@ export async function updateTransaction(
   }
   let rows;
   try {
-    rows = await db
-      .update(transactions)
-      .set({ ...input, updatedAt: new Date() })
-      .where(
-        and(eq(transactions.id, id), eq(transactions.userId, userId), isNull(transactions.deletedAt)),
-      )
-      .returning();
+    // Legacy update + posting rebuild share ONE db transaction (ATOMICITY LAW).
+    rows = await db.transaction(async (t) => {
+      // 1. Lock the target row under FOR UPDATE to serialize concurrent edits.
+      const [locked] = await t
+        .select({ id: transactions.id })
+        .from(transactions)
+        .where(
+          and(eq(transactions.id, id), eq(transactions.userId, userId), isNull(transactions.deletedAt)),
+        )
+        .for("update");
+      if (!locked) return [];
+
+      // 2. Transfer-leg guard: reject account/amount edits on a linked leg.
+      if (input.accountId !== undefined || input.amountPaise !== undefined) {
+        const linkRow = await t.query.transferLinks.findFirst({
+          where: or(eq(transferLinks.outTransactionId, id), eq(transferLinks.inTransactionId, id)),
+        });
+        if (linkRow) {
+          throw new HttpError(
+            409,
+            "Unlink the transfer before changing a transfer leg's account or amount",
+          );
+        }
+      }
+
+      // 3. Split-amount guard: reject amountPaise change that doesn't match existing splits.
+      if (input.amountPaise !== undefined) {
+        const splitRows = await t.query.transactionSplits.findMany({
+          where: eq(transactionSplits.transactionId, id),
+          columns: { amountPaise: true },
+        });
+        if (splitRows.length > 0) {
+          const splitSum = sumPaise(splitRows.map((s) => s.amountPaise));
+          if (splitSum !== input.amountPaise) {
+            throw new HttpError(
+              409,
+              "Update the transaction's splits to match the new amount",
+            );
+          }
+        }
+      }
+
+      const updated = await t
+        .update(transactions)
+        .set({ ...input, updatedAt: new Date() })
+        .where(
+          and(eq(transactions.id, id), eq(transactions.userId, userId), isNull(transactions.deletedAt)),
+        )
+        .returning();
+      if (updated.length === 0) return updated;
+      // Re-read the RESULTING shape (row + any transaction_splits) and rebuild
+      // postings from it — account/amount/category/necessity can all change
+      // via the spread update, and this covers every case uniformly (D15).
+      await rebuildPostingsForTransaction(t, userId, id);
+      return updated;
+    });
   } catch (err) {
     // A SIP's linked installment holds (sip_id, date) uniquely, so moving this
     // transaction onto the date of another installment of the same SIP collides.
@@ -329,6 +518,8 @@ export async function updateTransaction(
 }
 
 export async function softDeleteTransaction(db: Db, userId: string, id: string): Promise<void> {
+  // NO posting change: readers exclude via the parent's deleted_at, and postings
+  // are intentionally retained (see PLAN-dualwrite.md; review-8 carry-forward).
   const rows = await db
     .update(transactions)
     .set({ deletedAt: new Date() })
@@ -345,20 +536,32 @@ export async function setSplits(
   id: string,
   splits: Array<{ categoryId: string; amountPaise: number; note: string }>,
 ): Promise<Transaction> {
-  const tx = await db.query.transactions.findFirst({
-    where: and(eq(transactions.id, id), eq(transactions.userId, userId), isNull(transactions.deletedAt)),
-  });
-  if (!tx) throw new HttpError(404, "Transaction not found");
   for (const s of splits) await assertOwnedCategory(db, userId, s.categoryId);
-  const total = splits.reduce((s, x) => s + x.amountPaise, 0);
-  if (splits.length > 0 && total !== tx.amountPaise) {
-    throw new HttpError(400, `Splits must sum to the transaction amount (${tx.amountPaise})`);
-  }
   await db.transaction(async (t) => {
+    // Lock the parent row and validate the sum INSIDE the write tx (ATOMICITY
+    // LAW / concurrency safety) — a concurrent amount edit can't race this
+    // check between read and write. BigInt-safe sum via sumPaise.
+    const parentRows = await t
+      .select()
+      .from(transactions)
+      .where(
+        and(eq(transactions.id, id), eq(transactions.userId, userId), isNull(transactions.deletedAt)),
+      )
+      .for("update");
+    const parent = parentRows[0];
+    if (!parent) throw new HttpError(404, "Transaction not found");
+    const total = sumPaise(splits.map((s) => s.amountPaise));
+    if (splits.length > 0 && total !== parent.amountPaise) {
+      throw new HttpError(400, `Splits must sum to the transaction amount (${parent.amountPaise})`);
+    }
     await t.delete(transactionSplits).where(eq(transactionSplits.transactionId, id));
     if (splits.length > 0) {
       await t.insert(transactionSplits).values(splits.map((s) => ({ ...s, transactionId: id })));
     }
+    // Rebuild postings from the RESULTING shape in the SAME tx (ATOMICITY LAW):
+    // split postings when splits remain, else ordinary postings from the txn's
+    // own amount/category/necessity (reverting to ordinary).
+    await rebuildPostingsForTransaction(t, userId, id);
   });
   return getTransaction(db, userId, id);
 }
@@ -379,6 +582,9 @@ export async function bulkAction(db: Db, userId: string, action: BulkAction): Pr
             updatedAt: new Date(),
           })
           .where(and(eq(transactions.id, item.id), eq(transactions.userId, userId)));
+        // Restore can change the category and un-delete the row — rebuild this
+        // row's postings from its resulting shape in the SAME tx.
+        await rebuildPostingsForTransaction(t, userId, item.id);
       }
       return { affected: action.snapshot.length, snapshot: [] };
     });
@@ -416,8 +622,13 @@ export async function bulkAction(db: Db, userId: string, action: BulkAction): Pr
           .update(transactions)
           .set({ categoryId: action.categoryId, updatedAt: new Date() })
           .where(where);
+        // Re-category changes the affected rows' Expenses/Income counter
+        // posting's category — rebuild each row's postings from its resulting
+        // shape (never touches Clearing/Opening) in the SAME tx.
+        for (const id of ids) await rebuildPostingsForTransaction(t, userId, id);
         break;
       case "addTag":
+        // Header-only (tags array) — NO posting change.
         await t
           .update(transactions)
           .set({
@@ -427,12 +638,15 @@ export async function bulkAction(db: Db, userId: string, action: BulkAction): Pr
           .where(where);
         break;
       case "removeTag":
+        // Header-only (tags array) — NO posting change.
         await t
           .update(transactions)
           .set({ tags: sql`array_remove(${transactions.tags}, ${action.tag})`, updatedAt: new Date() })
           .where(where);
         break;
       case "delete":
+        // NO posting change: same as softDeleteTransaction — readers exclude
+        // via deleted_at; postings are intentionally retained.
         await t.update(transactions).set({ deletedAt: new Date() }).where(where);
         break;
     }

@@ -24,9 +24,13 @@ import type { Storage } from "../../../lib/storage.ts";
  * by ordering instead. It must also come *before* `holding_events`:
  * holding_events.sip_id references sips (the SIP installment a buy booked),
  * so sips has to exist first or that FK would target a not-yet-inserted row.
+ *
+ * `postings` is placed immediately after `transactions` (not with the other
+ * ledger-linked children further down) because it FKs accounts, categories,
+ * AND transactions — it has to restore after all three of its parents.
  */
 export const ALL_TABLES = [
-  "users", "accounts", "categories", "resources", "transactions", "user_tasks", "transaction_splits", "transfer_links",
+  "users", "accounts", "categories", "resources", "transactions", "postings", "user_tasks", "transaction_splits", "transfer_links",
   "attachments", "transaction_links", "imports", "import_rows", "import_presets", "merchant_rules",
   "budgets", "budget_lines", "budget_alerts", "notifications", "recurring_templates",
   "goals", "alert_ledger", "subscription_dismissals", "notification_prefs", "projection_settings",
@@ -65,6 +69,7 @@ export const USER_TABLES: Record<string, string> = {
  */
 export const LINKED_TABLES: Record<string, { fk: string; parent: string }> = {
   transaction_splits: { fk: "transaction_id", parent: "transactions" },
+  postings: { fk: "transaction_id", parent: "transactions" },
   attachments: { fk: "transaction_id", parent: "transactions" },
   transaction_links: { fk: "transaction_id", parent: "transactions" },
   import_rows: { fk: "import_id", parent: "imports" },

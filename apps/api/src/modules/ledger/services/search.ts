@@ -16,7 +16,7 @@ export async function search(db: Db, userId: string, q: string): Promise<SearchR
       order by date desc limit 8
     `),
     db.execute(sql`select id, name from categories where user_id = ${userId} and lower(name) like ${like} order by name limit 6`),
-    db.execute(sql`select id, name from accounts where user_id = ${userId} and lower(name) like ${like} order by name limit 6`),
+    db.execute(sql`select id, name from accounts where user_id = ${userId} and lower(name) like ${like} and system_kind is null order by name limit 6`),
     db.execute(sql`select id, name from goals where user_id = ${userId} and archived_at is null and lower(name) like ${like} order by name limit 6`),
   ]);
 

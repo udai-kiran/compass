@@ -1283,7 +1283,7 @@ test("acceptRepayment AC4b: a candidate linked by a concurrent request between d
   await assert.rejects(
     bPromise,
     (e: unknown) =>
-      e instanceof HttpError && e.statusCode === 409 && e.message.includes("linked to another transfer"),
+      e instanceof HttpError && e.statusCode === 409 && (e.message.includes("already part of a transfer") || e.message.includes("linked to another transfer")),
   );
 
   const row = await draftRow(draftId);

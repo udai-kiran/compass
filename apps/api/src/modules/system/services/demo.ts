@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import argon2 from "argon2";
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import type { Config } from "../../../config.ts";
 import type { Db } from "../../../db/index.ts";
 import {
@@ -25,6 +25,8 @@ import {
   users,
 } from "../../../db/schema.ts";
 import { seedDefaultCategories } from "../../ledger/services/categories.ts";
+import { rebuildPostingsForTransaction } from "../../ledger/services/transactions.ts";
+import { seedSystemAccounts } from "../../ledger/services/post-entry.ts";
 import { findUserByEmail } from "./users.ts";
 
 /** ₹ → paise. Amounts throughout the seed are written in rupees for readability. */
@@ -66,7 +68,7 @@ export async function ensureDemoData(db: Db, config: Config): Promise<string> {
   const existing = await findUserByEmail(db, config.DEMO_EMAIL.toLowerCase());
   if (existing) {
     const hasData = await db.query.accounts.findFirst({
-      where: eq(accounts.userId, existing.id),
+      where: and(eq(accounts.userId, existing.id), isNull(accounts.systemKind)),
       columns: { id: true },
     });
     if (hasData) return existing.id;
@@ -111,6 +113,11 @@ async function seedInto(db: Db, userId: string): Promise<void> {
   };
 
   await db.transaction(async (tx) => {
+    // Seed the 4 system accounts (Expenses/Income/Opening Balances/Clearing)
+    // alongside the demo user's real accounts. Idempotent, so a repopulation
+    // of an interrupted seed (see ensureDemoData) never double-seeds these.
+    await seedSystemAccounts(tx, userId);
+
     // ---- Accounts ----
     const [hdfc, cash, _zerodha, hdfcCard, iciciCard, _homeLoan, ppf, epf] = await tx
       .insert(accounts)
@@ -206,7 +213,13 @@ async function seedInto(db: Db, userId: string): Promise<void> {
       spend(hdfc!.id, m, 6, 9000, "Other Expense", "HDFC Card Payment");
       earn(hdfcCard!.id, m, 6, 9000, "Refunds", "Card Payment Received");
     }
-    await tx.insert(transactions).values(txns);
+    const insertedTxns = await tx.insert(transactions).values(txns).returning({ id: transactions.id });
+    // Rebuild postings for each demo row. rebuild handles ordinary/opening/
+    // split shapes; demo card-payment pairs are NOT transfer-linked so they
+    // stay ordinary (matching legacy demo behavior).
+    for (const row of insertedTxns) {
+      await rebuildPostingsForTransaction(tx, userId, row.id);
+    }
 
     // ---- Budget for the current month ----
     const [budget] = await tx
