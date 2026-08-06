@@ -7,7 +7,7 @@ import type {
 } from "@compass/shared";
 import { accountCanHaveGoal, isBankAccount, type AccountType } from "@compass/shared";
 import type { Db } from "../../../db/index.ts";
-import { accounts, transactions } from "../schema.ts";
+import { accounts, postings, transactions } from "../schema.ts";
 import { bankDetails, retirementDetails, sips } from "../../../db/schema.ts";
 import { HttpError } from "../../../lib/errors.ts";
 import { assertOwnedGoal } from "../../../lib/ownership.ts";
@@ -162,20 +162,32 @@ export async function accountBalancesAtDate(
   asOf: string,
 ): Promise<AccountBalanceAtDate[]> {
   const res = await db.execute(sql`
-    select a.type, coalesce(a.opening_balance_paise + coalesce(t.total, 0), 0)::bigint as balance
+    select a.type,
+           a.opening_balance_paise as opening,
+           coalesce(p.total, 0) as posting_total
     from accounts a
     left join (
-      select account_id, sum(amount_paise) as total
-      from transactions
-      where user_id = ${userId} and deleted_at is null and date <= ${asOf}
-      group by account_id
-    ) t on t.account_id = a.id
+      select po.account_id, sum(po.amount_paise) as total
+      from postings po
+      join transactions t on t.id = po.transaction_id
+      where t.user_id = ${userId} and t.deleted_at is null and t.date <= ${asOf}
+      group by po.account_id
+    ) p on p.account_id = a.id
     where a.user_id = ${userId} and a.archived_at is null and a.system_kind is null
   `);
-  return (res.rows as Array<{ type: string; balance: string }>).map((r) => ({
-    type: assertPublicAccountType(r.type),
-    balancePaise: Number(r.balance),
-  }));
+  return (
+    res.rows as Array<{ type: string; opening: string; posting_total: string }>
+  ).map((r) => {
+    const postingTotal = Number(r.posting_total);
+    if (!Number.isSafeInteger(postingTotal)) {
+      throw new HttpError(500, "Balance aggregate exceeded a safe integer — refusing to lose paise");
+    }
+    const balancePaise = Number(r.opening) + postingTotal;
+    if (!Number.isSafeInteger(balancePaise)) {
+      throw new HttpError(500, "Balance aggregate exceeded a safe integer — refusing to lose paise");
+    }
+    return { type: assertPublicAccountType(r.type), balancePaise };
+  });
 }
 
 export async function listAccounts(db: Db, userId: string): Promise<AccountWithBalance[]> {
@@ -185,20 +197,33 @@ export async function listAccounts(db: Db, userId: string): Promise<AccountWithB
       // Current balance is posted, not projected: a future-dated transaction
       // must not move it. computeNetWorth applies the same date <= today cut, so
       // the account list and net worth can never disagree about what's posted.
-      txSum: sql<number>`coalesce(sum(${transactions.amountPaise}) filter (where ${transactions.deletedAt} is null and ${transactions.date} <= current_date), 0)::bigint`,
+      // The date/deleted/userId predicates live inside the aggregate FILTER (not
+      // the outer WHERE) so the left join doesn't collapse zero-activity accounts.
+      postingSum: sql<number>`coalesce(sum(${postings.amountPaise}) filter (where ${transactions.deletedAt} is null and ${transactions.date} <= current_date and ${transactions.userId} = ${userId}), 0)::bigint`,
       subtype: bankDetails.subtype,
     })
     .from(accounts)
-    .leftJoin(transactions, eq(transactions.accountId, accounts.id))
+    .leftJoin(postings, eq(postings.accountId, accounts.id))
+    .leftJoin(transactions, eq(transactions.id, postings.transactionId))
     .leftJoin(bankDetails, eq(bankDetails.accountId, accounts.id))
     .where(and(eq(accounts.userId, userId), isNull(accounts.systemKind)))
     .groupBy(accounts.id, bankDetails.subtype)
     .orderBy(accounts.sortOrder, accounts.createdAt);
-  return rows.map(({ account, txSum, subtype }) => ({
-    ...toAccount(account),
-    balancePaise: account.openingBalancePaise + Number(txSum),
-    subtype: subtype ?? null,
-  }));
+  return rows.map(({ account, postingSum, subtype }) => {
+    const sum = Number(postingSum);
+    if (!Number.isSafeInteger(sum)) {
+      throw new HttpError(500, "Balance aggregate exceeded a safe integer — refusing to lose paise");
+    }
+    const balancePaise = account.openingBalancePaise + sum;
+    if (!Number.isSafeInteger(balancePaise)) {
+      throw new HttpError(500, "Balance aggregate exceeded a safe integer — refusing to lose paise");
+    }
+    return {
+      ...toAccount(account),
+      balancePaise,
+      subtype: subtype ?? null,
+    };
+  });
 }
 
 export async function createAccount(

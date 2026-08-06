@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import { todayInIST } from "@compass/shared";
 import type { AccountAverageBalance, AmbStatus } from "@compass/shared";
 import type { Db } from "../../../db/index.ts";
+import { HttpError } from "../../../lib/errors.ts";
 
 export interface AmbWindow {
   from: string;
@@ -90,7 +91,13 @@ export function sumDailyClosingPaise(
   while (cursor.getTime() <= end) {
     const dateStr = cursor.toISOString().slice(0, 10);
     running += deltas.get(dateStr) ?? 0;
+    if (!Number.isSafeInteger(running)) {
+      throw new HttpError(500, "Balance aggregate exceeded a safe integer — refusing to lose paise");
+    }
     sum += running;
+    if (!Number.isSafeInteger(sum)) {
+      throw new HttpError(500, "Balance aggregate exceeded a safe integer — refusing to lose paise");
+    }
     cursor = new Date(cursor.getTime() + 86_400_000);
   }
   return sum;
@@ -209,13 +216,15 @@ export async function accountAverageBalances(
       coalesce(bd.required_amb_paise, 0) as required_paise,
       (
         select min(t.date)
-        from transactions t
-        where t.account_id = a.id and t.user_id = ${userId} and t.deleted_at is null and t.date <= ${today}
+        from postings po
+        join transactions t on t.id = po.transaction_id
+        where po.account_id = a.id and t.user_id = ${userId} and t.deleted_at is null and t.date <= ${today}
       ) as first_activity,
       (
-        select coalesce(sum(t2.amount_paise), 0)
-        from transactions t2
-        where t2.account_id = a.id and t2.user_id = ${userId} and t2.deleted_at is null and t2.date < ${monthStart}
+        select coalesce(sum(po.amount_paise), 0)
+        from postings po
+        join transactions t on t.id = po.transaction_id
+        where po.account_id = a.id and t.user_id = ${userId} and t.deleted_at is null and t.date < ${monthStart}
       ) as carried_in_delta
     from accounts a
     left join bank_details bd on bd.account_id = a.id and bd.user_id = ${userId}
@@ -224,13 +233,14 @@ export async function accountAverageBalances(
   const accountRows = accountRes.rows as unknown as AccountRow[];
 
   const deltaRes = await db.execute(sql`
-    select account_id, date, sum(amount_paise) as delta
-    from transactions
-    where user_id = ${userId} and deleted_at is null and date >= ${monthStart} and date <= ${today}
-      and account_id in (
+    select po.account_id, t.date, sum(po.amount_paise) as delta
+    from postings po
+    join transactions t on t.id = po.transaction_id
+    where t.user_id = ${userId} and t.deleted_at is null and t.date >= ${monthStart} and t.date <= ${today}
+      and po.account_id in (
         select id from accounts where user_id = ${userId} and archived_at is null and type = 'bank'
       )
-    group by account_id, date
+    group by po.account_id, t.date
   `);
   const deltaRows = deltaRes.rows as unknown as DeltaRow[];
 
@@ -241,20 +251,41 @@ export async function accountAverageBalances(
       m = new Map();
       deltasByAccount.set(row.account_id, m);
     }
-    m.set(row.date, Number(row.delta));
+    const delta = Number(row.delta);
+    if (!Number.isSafeInteger(delta)) {
+      throw new HttpError(500, "Balance aggregate exceeded a safe integer — refusing to lose paise");
+    }
+    m.set(row.date, delta);
   }
 
   const results: AccountAverageBalance[] = [];
   for (const row of accountRows) {
+    const openingBalancePaise = Number(row.opening_balance_paise);
+    if (!Number.isSafeInteger(openingBalancePaise)) {
+      throw new HttpError(500, "Balance aggregate exceeded a safe integer — refusing to lose paise");
+    }
+    const carriedInDelta = Number(row.carried_in_delta);
+    if (!Number.isSafeInteger(carriedInDelta)) {
+      throw new HttpError(500, "Balance aggregate exceeded a safe integer — refusing to lose paise");
+    }
+    const carriedInPaise = openingBalancePaise + carriedInDelta;
+    if (!Number.isSafeInteger(carriedInPaise)) {
+      throw new HttpError(500, "Balance aggregate exceeded a safe integer — refusing to lose paise");
+    }
     const input: AmbInputs = {
       accountId: row.account_id,
-      carriedInPaise: Number(row.opening_balance_paise) + Number(row.carried_in_delta),
+      carriedInPaise,
       requiredPaise: Number(row.required_paise),
       firstActivity: row.first_activity,
     };
     const deltas = deltasByAccount.get(row.account_id) ?? new Map<string, number>();
     const result = buildAverageBalance(input, deltas, today);
-    if (result) results.push(result);
+    if (result) {
+      if (!Number.isSafeInteger(result.averagePaise)) {
+        throw new HttpError(500, "Balance aggregate exceeded a safe integer — refusing to lose paise");
+      }
+      results.push(result);
+    }
   }
 
   return results;
