@@ -1,0 +1,26 @@
+feat(api): postings model SP0 — pure zero-sum builders + projection helpers (roadmap 2.1)
+
+SP0 of the single-entry -> double-entry conversion (roadmap 2.1): the pure,
+additive, behavior-neutral foundation, wired to nothing yet.
+
+- modules/ledger/services/postings.ts: PostingDraft/SystemKind; assertSafePaise
+  /sumPaise/assertZeroSum computed in BigInt, so a one-paisa imbalance is
+  detectable even near Number.MAX_SAFE_INTEGER; buildOrdinary/Split/Transfer/
+  Opening produce zero-sum posting sets with mechanical signs; classifyShape +
+  projectRealLeg/projectCounter/projectSplits reconstruct the legacy
+  transaction DTO (split notes and signed amounts preserved).
+- postings.test.ts: 17 tests — seeded 500-case balanced/+-1-perturbation
+  property loop, +-MAX_SAFE_INTEGER boundaries, builder sign/account checks,
+  and projection round-trips.
+- SafePaiseSchema added additively in packages/shared (replaces no field yet).
+
+Board bookkeeping folded in: mark 1.7/1.8/1.10 done (code shipped in
+cfc36b5/825705d; frontmatter lagged); record the Phase-2 rescope in 2.2-2.5
+(the zero-sum invariant forces the functional transfer/split/consumer remodel
+into 2.1, leaving those as cleanup); full task-021 plan + investigation +
+four Codex reviews under tasks/021-postings-model/.
+
+Verification: typecheck + lint clean; apps/api 902 pass / 0 fail / 1 pre-existing
+skip; targeted postings.test.ts 17/17. Zero behavior change (pure, unwired).
+
+Co-Authored-By: Claude <noreply@anthropic.com>

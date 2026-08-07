@@ -1,0 +1,29 @@
+feat(api): postings model PR-B — balance readers read from postings (roadmap 2.1)
+
+Second dual-write increment after PR-A (v2.2.0). Convert the balance-reader group
+to compute each real account's activity from the `postings` mirror instead of
+`transactions.amount_paise`, keeping `accounts.opening_balance_paise` as an
+explicit addend (column-based openings still have no postings until PR-G):
+
+- balances.ts: bankCashBalances / bankCashTotal
+- accounts.ts: accountBalancesAtDate, listAccounts
+- average-balance.ts: accountAverageBalances (first-activity, carried-in, deltas)
+
+Each converted query sums postings on the real account joined to the non-deleted
+parent transaction under the same date cut, restricted to real accounts
+(system_kind is null) so Clearing/Expenses/Income/Opening postings never enter a
+balance. Because every posting builder's real leg equals the legacy row amount,
+this is parity-identical to the legacy formula given the consistent mirror PR-A's
+invariant guarantees. A new DB-backed postings-balance-parity.test.ts proves
+per-account and total parity (expected values computed directly from the legacy
+tables, plus findInconsistentPostings == [] to catch drift) across ordinary,
+split, transfer, opening, soft-deleted, future-dated, zero-activity, archived,
+column-opening, and tenant-isolation cases.
+
+Monetary aggregates and every derived combination are range-checked before
+Number(), refusing out-of-range results with HttpError(500) rather than silently
+rounding (mirrors reconciliation-reads.ts). No writer, schema, migration, shared
+contract, web, or out-of-scope reader changed; legacy columns and dual-write stay.
+Green + releasable.
+
+Co-Authored-By: Claude <noreply@anthropic.com>
