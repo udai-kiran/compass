@@ -7,7 +7,7 @@ on:
 
 jobs:
   check:
-    runs-on: [self-hosted, docker]
+    runs-on: ubuntu-latest
     services:
       postgres:
         image: postgres:18
@@ -33,12 +33,10 @@ jobs:
           --health-retries 10
     steps:
       - uses: actions/checkout@v5
-      # No `cache: npm` — these runners are persistent, so ~/.npm survives
-      # between jobs. Restoring it from the Actions cache meant downloading a
-      # 1.6GB archive at ~2MB/s (~7min) to replace a cache already on disk.
       - uses: actions/setup-node@v5
         with:
           node-version: 24
+          cache: npm
       - run: npm ci
       - run: npm run typecheck
       - run: npm run lint
@@ -54,13 +52,13 @@ jobs:
       - run: npm run build -w apps/docs
 
   audit:
-    runs-on: [self-hosted, docker]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      # See note in `check` — persistent runners already have ~/.npm.
       - uses: actions/setup-node@v5
         with:
           node-version: 24
+          cache: npm
       - run: npm ci
       # Hard gate: anything that ships in a runtime image.
       - run: npm audit --omit=dev --audit-level=high
