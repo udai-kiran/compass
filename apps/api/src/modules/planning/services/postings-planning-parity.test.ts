@@ -534,9 +534,9 @@ test("postings-planning-parity: 5 — buildReport merchants match legacy SQL", a
       `merchant[${i}] spent must match`,
     );
   }
-  // Spot check: MerchantX = 50000, MerchantY = 18000
-  const mx = report.topMerchants.find((m) => m.merchant === "MerchantX");
-  assert.equal(mx?.spentPaise, 50000, "MerchantX spend must be 50000");
+  // Spot check: MerchantX = 50000 (stored as "Merchantx" after heuristicNormalize title-case), MerchantY = 18000
+  const mx = report.topMerchants.find((m) => m.merchant === "Merchantx");
+  assert.equal(mx?.spentPaise, 50000, "Merchantx spend must be 50000");
 
   assert.deepEqual(await findInconsistentPostings(db, userId), []);
 });
