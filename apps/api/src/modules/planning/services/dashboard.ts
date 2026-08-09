@@ -4,6 +4,7 @@ import type { Dashboard, Trends } from "@compass/shared";
 import type { Db } from "../../../db/index.ts";
 import { bankCashTotal } from "../../ledger/services/balances.ts";
 import { cached } from "../../../lib/cache.ts";
+import { HttpError } from "../../../lib/errors.ts";
 import { getUtilization } from "./budgets.ts";
 import {
   currentPeriodKey,
@@ -58,37 +59,41 @@ export async function getTrends(db: Db, redis: Redis, userId: string, months: nu
     const from = `${start}-01`;
     const { to } = periodRange("monthly", end);
 
-    // Opening-balance seed rows are not activity — excluded alongside transfers.
-    const notTransfer = sql`not t.is_opening and not exists (select 1 from transfer_links tl
-      where tl.out_transaction_id = t.id or tl.in_transaction_id = t.id)`;
-
+    // Transfers and opening rows are excluded via the NOT EXISTS (Clearing/Opening posting) guard.
     const totals = await db.execute(sql`
       select to_char(t.date, 'YYYY-MM') as month,
-        coalesce(sum(case when t.amount_paise > 0 and a.type not in (${LIABILITY_TYPES_SQL})
-          then t.amount_paise else 0 end), 0)::bigint as income,
-        coalesce(sum(case when t.amount_paise < 0 then -t.amount_paise else 0 end), 0)::bigint as expense
-      from transactions t
-      join accounts a on a.id = t.account_id
+        coalesce(sum(case when p.amount_paise > 0 and a.type not in (${LIABILITY_TYPES_SQL})
+          then p.amount_paise else 0 end), 0)::bigint as income,
+        coalesce(sum(case when p.amount_paise < 0 then -p.amount_paise else 0 end), 0)::bigint as expense
+      from postings p
+      join accounts a on a.id = p.account_id
+      join transactions t on t.id = p.transaction_id
       where t.user_id = ${userId} and t.deleted_at is null
-        and t.date >= ${from} and t.date <= ${to} and ${notTransfer}
+        and t.date >= ${from} and t.date <= ${to}
+        and a.system_kind is null
+        and not exists (
+          select 1 from postings p2
+          join accounts a2 on a2.id = p2.account_id
+          where p2.transaction_id = t.id
+            and a2.system_kind in ('clearing', 'opening')
+        )
       group by 1
     `);
-    const nonSplitCat = await db.execute(sql`
-      select to_char(t.date, 'YYYY-MM') as month, t.category_id as cid,
-        coalesce(sum(-t.amount_paise), 0)::bigint as spent
-      from transactions t
+    const byCategory = await db.execute(sql`
+      select to_char(t.date, 'YYYY-MM') as month, p.category_id as cid,
+        coalesce(sum(p.amount_paise), 0)::bigint as spent
+      from postings p
+      join accounts a on a.id = p.account_id
+      join transactions t on t.id = p.transaction_id
       where t.user_id = ${userId} and t.deleted_at is null
-        and t.date >= ${from} and t.date <= ${to} and t.amount_paise < 0 and ${notTransfer}
-        and not exists (select 1 from transaction_splits s where s.transaction_id = t.id)
-      group by 1, 2
-    `);
-    const splitCat = await db.execute(sql`
-      select to_char(t.date, 'YYYY-MM') as month, s.category_id as cid,
-        coalesce(sum(-s.amount_paise), 0)::bigint as spent
-      from transaction_splits s
-      join transactions t on t.id = s.transaction_id
-      where t.user_id = ${userId} and t.deleted_at is null
-        and t.date >= ${from} and t.date <= ${to} and s.amount_paise < 0 and ${notTransfer}
+        and t.date >= ${from} and t.date <= ${to}
+        and a.system_kind = 'expenses'
+        and p.amount_paise > 0
+        and not exists (
+          select 1 from postings p2
+          join accounts a2 on a2.id = p2.account_id
+          where p2.transaction_id = t.id and a2.system_kind = 'clearing'
+        )
       group by 1, 2
     `);
 
@@ -104,13 +109,27 @@ export async function getTrends(db: Db, redis: Redis, userId: string, months: nu
     for (const r of totals.rows as Array<{ month: string; income: string; expense: string }>) {
       const m = byMonth.get(r.month);
       if (m) {
-        m.incomePaise = Number(r.income);
-        m.expensePaise = Number(r.expense);
+        const income = Number(r.income);
+        if (!Number.isSafeInteger(income)) {
+          throw new HttpError(500, "Income aggregate exceeded a safe integer — refusing to lose paise");
+        }
+        const expense = Number(r.expense);
+        if (!Number.isSafeInteger(expense)) {
+          throw new HttpError(500, "Expense aggregate exceeded a safe integer — refusing to lose paise");
+        }
+        m.incomePaise = income;
+        m.expensePaise = expense;
       }
     }
-    for (const r of [...nonSplitCat.rows, ...splitCat.rows] as Array<{ month: string; cid: string | null; spent: string }>) {
+    for (const r of byCategory.rows as Array<{ month: string; cid: string | null; spent: string }>) {
       const m = byMonth.get(r.month);
-      if (m) m.cats.set(r.cid, (m.cats.get(r.cid) ?? 0) + Number(r.spent));
+      if (m) {
+        const spent = Number(r.spent);
+        if (!Number.isSafeInteger(spent)) {
+          throw new HttpError(500, "Category spend aggregate exceeded a safe integer — refusing to lose paise");
+        }
+        m.cats.set(r.cid, (m.cats.get(r.cid) ?? 0) + spent);
+      }
     }
 
     return {
