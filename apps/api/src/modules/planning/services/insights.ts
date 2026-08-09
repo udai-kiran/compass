@@ -2,6 +2,8 @@ import { sql } from "drizzle-orm";
 import type { HealthScore, InsightCard, Insights } from "@compass/shared";
 import type { Db } from "../../../db/index.ts";
 import { incomeExpense, periodRange, prevPeriodKey } from "../../../lib/periods.ts";
+import { HttpError } from "../../../lib/errors.ts";
+import { accountBalancesAtDate } from "../../ledger/services/accounts.ts";
 
 // ---------- pure, tested helpers ----------
 
@@ -99,24 +101,24 @@ async function cashAndLiabilities(
   userId: string,
   asOf: string,
 ): Promise<{ cashPaise: number; liabilitiesPaise: number }> {
-  const res = await db.execute(sql`
-    select a.type, coalesce(sum(a.opening_balance_paise + coalesce(t.total, 0)), 0)::bigint as balance
-    from accounts a
-    left join (
-      select account_id, sum(amount_paise) as total from transactions
-      where user_id = ${userId} and deleted_at is null and date <= ${asOf}
-      group by account_id
-    ) t on t.account_id = a.id
-    where a.user_id = ${userId} and a.archived_at is null
-    group by a.type
-  `);
-  const byType = new Map((res.rows as Array<{ type: string; balance: string }>).map((r) => [r.type, Number(r.balance)]));
+  const rows = await accountBalancesAtDate(db, userId, asOf);
+  const byType = new Map<string, number>();
+  for (const r of rows) {
+    byType.set(r.type, (byType.get(r.type) ?? 0) + r.balancePaise);
+  }
   const cash = (byType.get("bank") ?? 0) + (byType.get("cash") ?? 0);
   const liabilities =
     Math.max(0, -(byType.get("credit_card") ?? 0)) +
     Math.max(0, -(byType.get("loan") ?? 0)) +
     Math.max(0, -(byType.get("overdraft") ?? 0)) +
     Math.max(0, -(byType.get("home_loan_od") ?? 0));
+  // Guard the JS-level aggregations (per-account guards are already inside accountBalancesAtDate)
+  if (!Number.isSafeInteger(cash)) {
+    throw new HttpError(500, "Cash aggregate exceeded a safe integer — refusing to lose paise");
+  }
+  if (!Number.isSafeInteger(liabilities)) {
+    throw new HttpError(500, "Liabilities aggregate exceeded a safe integer — refusing to lose paise");
+  }
   return { cashPaise: cash, liabilitiesPaise: liabilities };
 }
 
@@ -128,19 +130,32 @@ async function topMerchants(
   limit: number,
 ): Promise<Array<{ merchant: string; spentPaise: number; n: number }>> {
   const res = await db.execute(sql`
-    select t.merchant, coalesce(sum(-t.amount_paise), 0)::bigint as spent, count(*)::int as n
-    from transactions t
+    select t.merchant,
+      coalesce(sum(-p.amount_paise), 0)::bigint as spent,
+      count(*)::int as n
+    from postings p
+    join accounts a on a.id = p.account_id
+    join transactions t on t.id = p.transaction_id
     where t.user_id = ${userId} and t.deleted_at is null
-      and t.date >= ${from} and t.date <= ${to} and t.amount_paise < 0 and t.merchant <> ''
-      and not t.is_opening
-      and not exists (select 1 from transfer_links tl where tl.out_transaction_id = t.id or tl.in_transaction_id = t.id)
+      and t.date >= ${from} and t.date <= ${to}
+      and p.amount_paise < 0
+      and t.merchant <> ''
+      and a.system_kind is null
+      and not exists (
+        select 1 from postings p2
+        join accounts a2 on a2.id = p2.account_id
+        where p2.transaction_id = t.id
+          and a2.system_kind in ('clearing', 'opening')
+      )
     group by t.merchant order by spent desc limit ${limit}
   `);
-  return (res.rows as Array<{ merchant: string; spent: string; n: number }>).map((r) => ({
-    merchant: r.merchant,
-    spentPaise: Number(r.spent),
-    n: r.n,
-  }));
+  return (res.rows as Array<{ merchant: string; spent: string; n: number }>).map((r) => {
+    const spentPaise = Number(r.spent);
+    if (!Number.isSafeInteger(spentPaise)) {
+      throw new HttpError(500, "Merchant spend aggregate exceeded a safe integer — refusing to lose paise");
+    }
+    return { merchant: r.merchant, spentPaise, n: r.n };
+  });
 }
 
 export async function getInsights(db: Db, userId: string, periodKey: string): Promise<Insights> {
@@ -175,22 +190,35 @@ export async function getInsights(db: Db, userId: string, periodKey: string): Pr
 
   // largest expense
   const largest = await db.execute(sql`
-    select t.id, t.merchant, -t.amount_paise as amt, t.date from transactions t
-    where t.user_id = ${userId} and t.deleted_at is null and t.date >= ${from} and t.date <= ${to}
-      and t.amount_paise < 0
-      and not t.is_opening
-      and not exists (select 1 from transfer_links tl where tl.out_transaction_id = t.id or tl.in_transaction_id = t.id)
-    order by t.amount_paise asc limit 1
+    select t.id, t.merchant, -p.amount_paise as amt, t.date
+    from postings p
+    join accounts a on a.id = p.account_id
+    join transactions t on t.id = p.transaction_id
+    where t.user_id = ${userId} and t.deleted_at is null
+      and t.date >= ${from} and t.date <= ${to}
+      and p.amount_paise < 0
+      and a.system_kind is null
+      and not exists (
+        select 1 from postings p2
+        join accounts a2 on a2.id = p2.account_id
+        where p2.transaction_id = t.id
+          and a2.system_kind in ('clearing', 'opening')
+      )
+    order by p.amount_paise asc limit 1
   `);
   const lg = largest.rows[0] as { id: string; merchant: string; amt: string; date: string } | undefined;
   if (lg) {
+    const valuePaise = Number(lg.amt);
+    if (!Number.isSafeInteger(valuePaise)) {
+      throw new HttpError(500, "Largest expense value exceeded a safe integer — refusing to lose paise");
+    }
     cards.push({
       id: "largest-expense",
       kind: "largest_expense",
       title: "Largest expense",
       detail: `${lg.merchant || "Uncategorized"} on ${lg.date}`,
       sentiment: "neutral",
-      valuePaise: Number(lg.amt),
+      valuePaise,
       deltaPct: null,
       spark: [],
       link: `/transactions?from=${from}&to=${to}`,

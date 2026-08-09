@@ -91,13 +91,21 @@ const YEARLY_GAP = [350, 380] as const;
  */
 export async function suggestSubscriptions(db: Db, userId: string): Promise<SubscriptionSuggestion[]> {
   const res = await db.execute(sql`
-    select t.merchant, t.date, t.amount_paise, t.account_id, t.category_id
-    from transactions t
-    where t.user_id = ${userId} and t.deleted_at is null and t.amount_paise < 0
-      and t.merchant <> '' and t.date >= current_date - interval '400 days'
-      and not t.is_opening
-      and not exists (select 1 from transfer_links tl
-        where tl.out_transaction_id = t.id or tl.in_transaction_id = t.id)
+    select t.merchant, t.date, p.amount_paise, a.id as account_id, t.category_id
+    from postings p
+    join accounts a on a.id = p.account_id
+    join transactions t on t.id = p.transaction_id
+    where t.user_id = ${userId} and t.deleted_at is null
+      and p.amount_paise < 0
+      and t.merchant <> ''
+      and t.date >= current_date - interval '400 days'
+      and a.system_kind is null
+      and not exists (
+        select 1 from postings p2
+        join accounts a2 on a2.id = p2.account_id
+        where p2.transaction_id = t.id
+          and a2.system_kind in ('clearing', 'opening')
+      )
     order by t.merchant, t.date
   `);
   const rows = res.rows as Array<{

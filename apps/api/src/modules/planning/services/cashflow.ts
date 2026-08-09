@@ -6,6 +6,7 @@ import { accounts, holdings, recurringTemplates, sips } from "../../../db/schema
 import { toCsv } from "../../../lib/csv.ts";
 import { bankCashTotal } from "../../ledger/services/balances.ts";
 import { cached } from "../../../lib/cache.ts";
+import { HttpError } from "../../../lib/errors.ts";
 import { getTrends } from "./dashboard.ts";
 import { LIABILITY_TYPES_SQL } from "../../../lib/periods.ts";
 import { advanceDate } from "../../ledger/services/recurring.ts";
@@ -59,26 +60,45 @@ export async function getForecast(db: Db, redis: Redis, userId: string): Promise
     const now = new Date();
     const today = now.toISOString().slice(0, 10);
     const from90 = isoPlusDays(now, -90);
-    // Opening-balance seed rows are not activity — excluded alongside transfers.
-    const notTransfer = sql`not t.is_opening and not exists (select 1 from transfer_links tl
-      where tl.out_transaction_id = t.id or tl.in_transaction_id = t.id)`;
 
     // trailing net burn (all sources) for runway, and discretionary spend
-    // (excluding recurring-sourced rows, which the schedule below re-adds)
+    // (excluding recurring-sourced rows, which the schedule below re-adds).
+    // Transfers and opening rows are excluded via the NOT EXISTS (Clearing/Opening posting) guard.
     const burnRes = await db.execute(sql`
       select
-        coalesce(sum(case when t.amount_paise < 0 then -t.amount_paise else 0 end), 0)::bigint as expense,
-        coalesce(sum(case when t.amount_paise > 0 and a.type not in (${LIABILITY_TYPES_SQL})
-          then t.amount_paise else 0 end), 0)::bigint as income,
-        coalesce(sum(case when t.amount_paise < 0 and t.source <> 'recurring' then -t.amount_paise else 0 end), 0)::bigint as discretionary
-      from transactions t
-      join accounts a on a.id = t.account_id
+        coalesce(sum(case when p.amount_paise < 0 then -p.amount_paise else 0 end), 0)::bigint as expense,
+        coalesce(sum(case when p.amount_paise > 0 and a.type not in (${LIABILITY_TYPES_SQL})
+          then p.amount_paise else 0 end), 0)::bigint as income,
+        coalesce(sum(case when p.amount_paise < 0 and t.source <> 'recurring'
+          then -p.amount_paise else 0 end), 0)::bigint as discretionary
+      from postings p
+      join accounts a on a.id = p.account_id
+      join transactions t on t.id = p.transaction_id
       where t.user_id = ${userId} and t.deleted_at is null
-        and t.date >= ${from90} and t.date <= ${today} and ${notTransfer}
+        and t.date >= ${from90} and t.date <= ${today}
+        and a.system_kind is null
+        and not exists (
+          select 1 from postings p2
+          join accounts a2 on a2.id = p2.account_id
+          where p2.transaction_id = t.id
+            and a2.system_kind in ('clearing', 'opening')
+        )
     `);
     const burn = burnRes.rows[0] as { expense: string; income: string; discretionary: string };
-    const netBurnMonthly = Math.round((Number(burn.expense) - Number(burn.income)) / 3);
-    const dailyDiscretionary = Math.round(Number(burn.discretionary) / 90);
+    const expense = Number(burn.expense);
+    if (!Number.isSafeInteger(expense)) {
+      throw new HttpError(500, "Expense aggregate exceeded a safe integer — refusing to lose paise");
+    }
+    const income = Number(burn.income);
+    if (!Number.isSafeInteger(income)) {
+      throw new HttpError(500, "Income aggregate exceeded a safe integer — refusing to lose paise");
+    }
+    const discretionary = Number(burn.discretionary);
+    if (!Number.isSafeInteger(discretionary)) {
+      throw new HttpError(500, "Discretionary aggregate exceeded a safe integer — refusing to lose paise");
+    }
+    const netBurnMonthly = Math.round((expense - income) / 3);
+    const dailyDiscretionary = Math.round(discretionary / 90);
 
     // scheduled occurrences inside the window, per template
     const templates = await db.query.recurringTemplates.findMany({

@@ -21,7 +21,7 @@
  * Task 1.9 converts this ad-hoc surface into a declared port interface.
  */
 
-import { and, asc, eq, gt, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type {
   CreateGoal,
   Goal,
@@ -32,7 +32,7 @@ import type {
 } from "@compass/shared";
 import { CreateGoalSchema, isRetirementAccount, ReorderGoalsSchema } from "@compass/shared";
 import type { Db } from "../../../db/index.ts";
-import { alertLedger, holdingEvents, retirementDetails, transactions } from "../../../db/schema.ts";
+import { alertLedger, holdingEvents, retirementDetails } from "../../../db/schema.ts";
 import { goals } from "../schema.ts";
 import { HttpError } from "../../../lib/errors.ts";
 import { listAccounts } from "../../ledger/services/accounts.ts";
@@ -196,20 +196,25 @@ async function mappedContributionRate(
 
   let total = 0;
   if (accountIds.length > 0) {
-    const [row] = await db
-      .select({ total: sql<number>`coalesce(sum(${transactions.amountPaise}), 0)::bigint` })
-      .from(transactions)
-      .where(
-        and(
-          eq(transactions.userId, userId),
-          inArray(transactions.accountId, accountIds),
-          gt(transactions.amountPaise, 0),
-          isNull(transactions.deletedAt),
-          sql`${transactions.date} >= ${cutoffIso}`,
-          sql`${transactions.date} <= ${today}`,
-        ),
-      );
-    total += Number(row?.total ?? 0);
+    const res = await db.execute(sql`
+      select coalesce(sum(p.amount_paise), 0)::bigint as total
+      from postings p
+      join accounts a on a.id = p.account_id
+      join transactions t on t.id = p.transaction_id
+      where t.user_id = ${userId}
+        and a.id in (${sql.join(accountIds.map((id) => sql`${id}`), sql`, `)})
+        and p.amount_paise > 0
+        and a.system_kind is null
+        and t.deleted_at is null
+        and t.date >= ${cutoffIso}
+        and t.date <= ${today}
+    `);
+    const row = (res.rows as Array<{ total: string }>)[0];
+    const branchTotal = Number(row?.total ?? "0");
+    if (!Number.isSafeInteger(branchTotal)) {
+      throw new HttpError(500, "Contribution aggregate exceeded a safe integer — refusing to lose paise");
+    }
+    total += branchTotal;
   }
   if (holdingIds.length > 0) {
     // amount_paise is always positive; the event type carries direction.

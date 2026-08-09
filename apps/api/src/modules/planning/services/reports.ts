@@ -11,6 +11,7 @@ import {
 } from "@compass/shared";
 import type { Db } from "../../../db/index.ts";
 import { toCsv } from "../../../lib/csv.ts";
+import { HttpError } from "../../../lib/errors.ts";
 import { categories } from "../../../db/schema.ts";
 import {
   incomeExpense,
@@ -98,12 +99,23 @@ export async function buildReport(db: Db, userId: string, query: ReportQuery): P
     spentByCategory(db, userId, from, to),
     db.query.categories.findMany({ where: eq(categories.userId, userId) }),
     db.execute(sql`
-      select t.merchant, coalesce(sum(-t.amount_paise), 0)::bigint as spent, count(*)::int as n
-      from transactions t
+      select t.merchant,
+        coalesce(sum(-p.amount_paise), 0)::bigint as spent,
+        count(*)::int as n
+      from postings p
+      join accounts a on a.id = p.account_id
+      join transactions t on t.id = p.transaction_id
       where t.user_id = ${userId} and t.deleted_at is null
-        and t.date >= ${from} and t.date <= ${to} and t.amount_paise < 0 and t.merchant <> ''
-        and not t.is_opening
-        and not exists (select 1 from transfer_links tl where tl.out_transaction_id = t.id or tl.in_transaction_id = t.id)
+        and t.date >= ${from} and t.date <= ${to}
+        and p.amount_paise < 0
+        and t.merchant <> ''
+        and a.system_kind is null
+        and not exists (
+          select 1 from postings p2
+          join accounts a2 on a2.id = p2.account_id
+          where p2.transaction_id = t.id
+            and a2.system_kind in ('clearing', 'opening')
+        )
       group by t.merchant order by spent desc limit 15
     `),
     spendByNecessity(db, userId, from, to),
@@ -128,11 +140,17 @@ export async function buildReport(db: Db, userId: string, query: ReportQuery): P
     savingsRatePct: savingRatePct(incomePaise, expensePaise),
     necessity: splitByNecessity(necessityRows),
     categories: categoriesOut,
-    topMerchants: (merchants.rows as Array<{ merchant: string; spent: string; n: number }>).map((r) => ({
-      merchant: r.merchant,
-      spentPaise: Number(r.spent),
-      count: r.n,
-    })),
+    topMerchants: (merchants.rows as Array<{ merchant: string; spent: string; n: number }>).map((r) => {
+      const spentPaise = Number(r.spent);
+      if (!Number.isSafeInteger(spentPaise)) {
+        throw new HttpError(500, "Merchant spend aggregate exceeded a safe integer — refusing to lose paise");
+      }
+      return {
+        merchant: r.merchant,
+        spentPaise,
+        count: r.n,
+      };
+    }),
   };
 }
 

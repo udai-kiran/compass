@@ -6,6 +6,7 @@ import { alertLedger, notificationPrefs } from "../schema.ts";
 import { bankCashBalances } from "../../ledger/services/balances.ts";
 import { createNotification } from "./notifications.ts";
 import { assertOwnedAccount } from "../../../lib/ownership.ts";
+import { HttpError } from "../../../lib/errors.ts";
 
 type PrefRow = typeof notificationPrefs.$inferSelect;
 
@@ -89,24 +90,33 @@ export async function evaluateLargeTransactions(db: Db, userId: string): Promise
   let fired = 0;
   for (const pref of prefs) {
     const res = await db.execute(sql`
-      select t.id, t.merchant, t.amount_paise, t.date
-      from transactions t
+      select t.id, t.merchant, p.amount_paise, t.date
+      from postings p
+      join accounts a on a.id = p.account_id
+      join transactions t on t.id = p.transaction_id
       where t.user_id = ${userId} and t.deleted_at is null
         and t.date >= current_date - interval '7 days'
-        and abs(t.amount_paise) >= ${pref.thresholdPaise}
-        and not t.is_opening
-        ${pref.accountId === null ? sql`` : sql`and t.account_id = ${pref.accountId}`}
-        and not exists (select 1 from transfer_links tl
-          where tl.out_transaction_id = t.id or tl.in_transaction_id = t.id)
+        and abs(p.amount_paise) >= ${pref.thresholdPaise}
+        and a.system_kind is null
+        ${pref.accountId === null ? sql`` : sql`and a.id = ${pref.accountId}`}
+        and not exists (
+          select 1 from postings p2
+          join accounts a2 on a2.id = p2.account_id
+          where p2.transaction_id = t.id
+            and a2.system_kind in ('clearing', 'opening')
+        )
     `);
     for (const t of res.rows as Array<{ id: string; merchant: string; amount_paise: string; date: string }>) {
+      const amount = Number(t.amount_paise);
+      if (!Number.isSafeInteger(amount)) {
+        throw new HttpError(500, "Transaction amount exceeded a safe integer — refusing to lose paise");
+      }
       const inserted = await db
         .insert(alertLedger)
         .values({ userId, kind: "large-tx", refKey: t.id })
         .onConflictDoNothing()
         .returning({ id: alertLedger.id });
       if (inserted.length === 0) continue;
-      const amount = Number(t.amount_paise);
       await createNotification(db, userId, {
         type: "large_transaction",
         title: `Large ${amount < 0 ? "payment" : "credit"}: ${formatINR(Math.abs(amount))}`,
