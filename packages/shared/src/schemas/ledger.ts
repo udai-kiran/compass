@@ -390,11 +390,17 @@ export const TransactionSchema = z.object({
   notes: z.string(),
   tags: z.array(z.string()),
   source: TransactionSourceSchema,
-  transferLinkId: z.uuid().nullable(),
   /**
-   * When this is one leg of a transfer, the account the other leg sits in — lets
-   * the UI tell a plain account-to-account move from a credit-card payment (and
-   * name the counterpart). Null when the transaction isn't a transfer leg.
+   * True when this transaction is a transfer: ONE header carrying two real
+   * postings. Derived from the postings, not from a link row — `transfer_links`
+   * is gone, and with it the two-row representation it stitched together.
+   */
+  isTransfer: z.boolean(),
+  /**
+   * For a transfer, the account the money moved to — the leg that is NOT the
+   * one `accountId`/`amountPaise` project. Lets the UI tell a plain
+   * account-to-account move from a credit-card payment (and name the
+   * counterpart). Null when the transaction isn't a transfer.
    */
   transferCounterpartAccountId: z.uuid().nullable(),
   /** insurance policy this expense is a premium for; null for ordinary transactions */
@@ -578,11 +584,24 @@ export const CreateTransferSchema = z
   });
 export type CreateTransfer = z.input<typeof CreateTransferSchema>;
 
+/**
+ * A transfer is one transaction, so recording or linking one yields a single
+ * id. Replaces the old `{ transferLinkId, outTransactionId, inTransactionId }`
+ * triple, which described the two-row-plus-link representation.
+ */
 export const TransferResultSchema = z.object({
-  transferLinkId: z.uuid(),
-  outTransactionId: z.uuid(),
-  inTransactionId: z.uuid(),
+  transactionId: z.uuid(),
 });
+
+/**
+ * Unlinking splits a transfer back into two ordinary transactions: the
+ * survivor keeps its id, the destination leg becomes a new row. Both are
+ * returned because the caller cannot predict the second id.
+ */
+export const UnlinkTransferResultSchema = z.object({
+  transactionIds: z.tuple([z.uuid(), z.uuid()]),
+});
+export type UnlinkTransferResult = z.infer<typeof UnlinkTransferResultSchema>;
 export type TransferResult = z.infer<typeof TransferResultSchema>;
 
 // ---------- EPF contributions ----------

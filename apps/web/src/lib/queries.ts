@@ -18,6 +18,7 @@ import {
   TransactionPageSchema,
   TransactionSchema,
   TransferResultSchema,
+  UnlinkTransferResultSchema,
   TransferSuggestionSchema,
   type BulkAction,
   type CreateAccount,
@@ -241,9 +242,15 @@ export function useTransferMutations() {
       apiPost("/api/transfers", z.object({ id: z.uuid() }), body),
     onSuccess: invalidate,
   });
+  // Unlink takes a TRANSACTION id — there is no link row any more — and splits
+  // the transfer back into two ordinary transactions, returning both ids.
   const unlink = useMutation({
-    mutationFn: (id: string) => apiDelete(`/api/transfers/${id}`, OkSchema),
-    onSuccess: invalidate,
+    mutationFn: (transactionId: string) =>
+      apiDelete(`/api/transfers/${transactionId}`, UnlinkTransferResultSchema),
+    onSuccess: () => {
+      invalidate();
+      void qc.invalidateQueries({ queryKey: ["accounts"] });
+    },
   });
   const record = useMutation({
     mutationFn: (body: CreateTransfer) =>

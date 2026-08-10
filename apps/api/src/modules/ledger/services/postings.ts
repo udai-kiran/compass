@@ -339,6 +339,110 @@ export function primaryRealLeg(
   throw new HttpError(400, `expected one or two real postings, found ${reals.length}`);
 }
 
+/** The subset of resolved system accounts a shape rebuild needs. */
+export interface ShapeSystemAccounts {
+  expenses: string;
+  income: string;
+  opening: string;
+}
+
+/** The shape-affecting fields of a transaction update. */
+export interface ShapePatch {
+  accountId?: string;
+  amountPaise?: number;
+  categoryId?: string | null;
+  necessity?: ExpenseNecessity | null;
+}
+
+/**
+ * Rebuilds a transaction's postings from its CURRENT postings plus a patch —
+ * the postings-authoritative replacement for the old
+ * `computePostingDraftsForTransaction`, which re-derived everything from the
+ * legacy columns, `transfer_links` and `transaction_splits`.
+ *
+ * Pure, so the whole shape-transition matrix is unit-testable without a
+ * database. The current postings are the input because they are now the only
+ * record of what the transaction IS.
+ *
+ * Per-shape rules, each chosen to preserve today's observable behaviour:
+ * - ordinary — every field is patchable; rebuilt wholesale.
+ * - split — the counters keep their own categories, so a `categoryId` patch is
+ *   IGNORED (a bulk re-category over a filter that catches a split leaves its
+ *   split categories alone, exactly as the legacy split branch did). A
+ *   `necessity` patch applies to every counter, which is also what the legacy
+ *   branch did — it stamped the parent's necessity onto all of them. An
+ *   `amountPaise` patch that does not equal the split sum is rejected.
+ * - transfer — an `accountId`/`amountPaise` patch is rejected: which of the two
+ *   legs would it mean? Category and necessity are ignored; a transfer has no
+ *   category dimension.
+ * - opening — account and amount are patchable, category and necessity ignored.
+ */
+export function rebuildDrafts(
+  current: readonly PostingDraft[],
+  patch: ShapePatch,
+  sys: ShapeSystemAccounts,
+  systemKindOf: (accountId: string) => SystemKind | null,
+): PostingDraft[] {
+  const shape = classifyShape(current, systemKindOf);
+  const isCounter = (p: PostingDraft): boolean => {
+    const kind = systemKindOf(p.accountId);
+    return kind === "expenses" || kind === "income";
+  };
+
+  if (shape === "transfer") {
+    if (patch.accountId !== undefined || patch.amountPaise !== undefined) {
+      throw new HttpError(
+        409,
+        "Unlink the transfer before changing a transfer leg's account or amount",
+      );
+    }
+    return [...current];
+  }
+
+  const real = primaryRealLeg(current, systemKindOf);
+  const accountId = patch.accountId ?? real.accountId;
+
+  if (shape === "opening") {
+    return buildOpeningPostings({
+      accountId,
+      amountPaise: patch.amountPaise ?? real.amountPaise,
+      systemOpeningAccountId: sys.opening,
+    });
+  }
+
+  if (shape === "split") {
+    const counters = current.filter(isCounter);
+    const splits = counters.map((c) => ({
+      categoryId: c.categoryId!,
+      amountPaise: -c.amountPaise,
+      necessity: patch.necessity !== undefined ? patch.necessity : c.necessity,
+      note: c.note,
+    }));
+    if (patch.amountPaise !== undefined) {
+      const splitSum = sumPaise(splits.map((s) => s.amountPaise));
+      if (splitSum !== patch.amountPaise) {
+        throw new HttpError(409, "Update the transaction's splits to match the new amount");
+      }
+    }
+    return buildSplitPostings({
+      accountId,
+      splits,
+      systemExpensesAccountId: sys.expenses,
+      systemIncomeAccountId: sys.income,
+    });
+  }
+
+  const counter = current.find(isCounter);
+  return buildOrdinaryPostings({
+    accountId,
+    amountPaise: patch.amountPaise ?? real.amountPaise,
+    categoryId: patch.categoryId !== undefined ? patch.categoryId : (counter?.categoryId ?? null),
+    necessity: patch.necessity !== undefined ? patch.necessity : (counter?.necessity ?? null),
+    systemExpensesAccountId: sys.expenses,
+    systemIncomeAccountId: sys.income,
+  });
+}
+
 /**
  * The posting on a specific account — what an account ledger shows for this
  * transaction. Returns null when the transaction does not touch the account.

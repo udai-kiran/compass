@@ -12,7 +12,8 @@ import { HttpError } from "../../../lib/errors.ts";
 import { lockAccountPair, stepAmortization } from "../../credit/services/emis.ts";
 import { assertOwnedAccount, assertOwnedCategory } from "../../../lib/ownership.ts";
 import { assertOwnedResource } from "./resources.ts";
-import { rebuildPostingsForTransaction } from "./transactions.ts";
+import { postTransaction, resolveSystemAccounts } from "./post-entry.ts";
+import { buildOrdinaryPostings } from "./postings.ts";
 
 type TemplateRow = typeof recurringTemplates.$inferSelect;
 
@@ -300,9 +301,23 @@ export async function materializeDue(
               })),
             ).returning({ id: transactions.id });
             // EMI source-family leg: an independent ORDINARY posting family
-            // (never a transfer — D21). Rebuild mirrors ordinary postings.
+            // (never a transfer — D21). The drafts come from the template, the
+            // same values the header was just built from.
+            const sys = await resolveSystemAccounts(trx, t.userId);
             for (const row of emiSourceRows) {
-              await rebuildPostingsForTransaction(trx, t.userId, row.id);
+              await postTransaction(
+                trx,
+                row.id,
+                t.userId,
+                buildOrdinaryPostings({
+                  accountId: t.accountId,
+                  amountPaise: t.amountPaise,
+                  categoryId: t.categoryId,
+                  necessity: null,
+                  systemExpensesAccountId: sys.expenses,
+                  systemIncomeAccountId: sys.income,
+                }),
+              );
             }
             if (onEmiLegsForTest) await onEmiLegsForTest(t.id);
             if (principalLegs.length > 0) {
@@ -320,9 +335,22 @@ export async function materializeDue(
                 })),
               ).returning({ id: transactions.id });
               // EMI principal-family leg: also an independent ORDINARY family
-              // (source + principal are two separate ordinary posting sets).
-              for (const row of emiPrincipalRows) {
-                await rebuildPostingsForTransaction(trx, t.userId, row.id);
+              // (source + principal are two separate ordinary posting sets —
+              // never one transfer, D21).
+              for (const [i, row] of emiPrincipalRows.entries()) {
+                await postTransaction(
+                  trx,
+                  row.id,
+                  t.userId,
+                  buildOrdinaryPostings({
+                    accountId: details.loanAccountId!,
+                    amountPaise: principalLegs[i]!.amountPaise,
+                    categoryId: null,
+                    necessity: null,
+                    systemExpensesAccountId: sys.expenses,
+                    systemIncomeAccountId: sys.income,
+                  }),
+                );
               }
             }
             await trx
@@ -352,10 +380,23 @@ export async function materializeDue(
           recurringTemplateId: t.id,
         })),
       ).returning({ id: transactions.id });
-      // Generic recurring rows are ordinary (non-opening, non-transfer-linked,
-      // no splits) — rebuild mirrors ordinary postings per row.
+      // Generic recurring rows are ordinary — one posting pair each, built
+      // from the template rather than re-read from the row.
+      const genericSys = await resolveSystemAccounts(trx, t.userId);
       for (const row of genericRows) {
-        await rebuildPostingsForTransaction(trx, t.userId, row.id);
+        await postTransaction(
+          trx,
+          row.id,
+          t.userId,
+          buildOrdinaryPostings({
+            accountId: t.accountId,
+            amountPaise: t.amountPaise,
+            categoryId: t.categoryId,
+            necessity: null,
+            systemExpensesAccountId: genericSys.expenses,
+            systemIncomeAccountId: genericSys.income,
+          }),
+        );
       }
       return { created: dates.length, userId: t.userId };
     });

@@ -145,7 +145,7 @@ export function AccountLedgerPage() {
 }
 
 function TxnRow({ txn, categoryName }: { txn: Transaction; categoryName: string | null }) {
-  const isTransfer = txn.transferLinkId !== null;
+  const isTransfer = txn.isTransfer;
   const isCredit = txn.amountPaise >= 0;
   const amount = formatINR(Math.abs(txn.amountPaise));
   return (

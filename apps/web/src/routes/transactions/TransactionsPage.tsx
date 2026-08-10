@@ -369,7 +369,7 @@ function TxRow({
   >(null);
   const [editingDate, setEditingDate] = useState("");
   const lastCommittedDate = useRef<string | null>(null);
-  const isTransfer = tx.transferLinkId !== null;
+  const isTransfer = tx.isTransfer;
   // Distinguish a plain account move from a credit-card payment by looking at the
   // two legs' account types, and name the counterpart so the row is self-explaining.
   const counterpart = tx.transferCounterpartAccountId

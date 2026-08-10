@@ -28,7 +28,7 @@ import { invalidateUserCache } from "./lib/cache.ts";
 import { enqueueBudgetEvaluation } from "./jobs/index.ts";
 import { createStorage, type Storage } from "./lib/storage.ts";
 import { EventBus } from "./lib/event-bus.ts";
-import { reconcileAllPostings } from "./modules/ledger/services/reconcile-postings.ts";
+import { assertNoLegacyShapes, findInconsistentPostings } from "./modules/ledger/services/reconcile-postings.ts";
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -179,20 +179,25 @@ export async function buildApp(config: Config): Promise<FastifyInstance> {
   // it themselves (see EventMap in lib/event-bus.ts).
   registerLedgerCacheSubscriber(app);
 
-  // Dual-write postings backfill/repair over ALL existing data, in the quiescent
-  // window BEFORE any BullMQ worker (startJobs) or HTTP traffic. PR-E converted
-  // readers to postings-derived, so a reconciliation failure here CAN surface wrong
-  // data — log it loudly so the operator is aware. A failed restore reconciliation
-  // (restore-user.ts swallows the error) can leave a transaction without postings
-  // indefinitely; those transactions will be silently absent from converted readers.
-  await reconcileAllPostings(app.db)
-    .then((pass) => {
-      if (pass.failures.length > 0)
-        app.log.error({ users: pass.users, checked: pass.checked, repaired: pass.repaired, failed: pass.failures.length, failures: pass.failures.slice(0, 20) }, "boot: postings reconciliation had failures (PR-B reader gate NOT satisfied)");
-      else if (pass.repaired > 0)
-        app.log.info({ users: pass.users, checked: pass.checked, repaired: pass.repaired }, "boot: postings reconciliation repaired drift");
+  // Postings are the authority (PR-G1), so boot no longer REBUILDS them from
+  // the legacy columns — doing that is what destroyed a transfer's second leg.
+  // Two checks replace it, both before any BullMQ worker or HTTP traffic:
+  //
+  // 1. Refuse to start at all against a pre-recreate database. Single-shape
+  //    code misreads the old two-row Clearing shape silently, so a hard stop is
+  //    the only safe response.
+  // 2. Report — never repair — any posting set that is not zero-sum or does not
+  //    match a canonical shape.
+  await assertNoLegacyShapes(app.db);
+  await findInconsistentPostings(app.db)
+    .then((problems) => {
+      if (problems.length > 0)
+        app.log.error(
+          { count: problems.length, problems: problems.slice(0, 20) },
+          "boot: inconsistent postings found — these transactions are corrupt and need a human",
+        );
     })
-    .catch((err: unknown) => app.log.error({ err }, "boot postings reconciliation failed"));
+    .catch((err: unknown) => app.log.error({ err }, "boot posting validation failed"));
 
   await startJobs(app);
   await setupAuth(app);

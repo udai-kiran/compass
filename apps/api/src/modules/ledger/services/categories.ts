@@ -7,9 +7,9 @@ import type {
   UpdateCategory,
 } from "@compass/shared";
 import type { Db, DbOrTx } from "../../../db/index.ts";
-import { categories, transactions, transactionSplits } from "../schema.ts";
+import { categories, postings } from "../schema.ts";
 import { HttpError } from "../../../lib/errors.ts";
-import { rebuildPostingsForTransaction } from "./transactions.ts";
+import { reprojectLegacyColumns } from "./transactions.ts";
 
 type CategoryRow = typeof categories.$inferSelect;
 
@@ -152,41 +152,26 @@ export async function mergeCategory(
     throw new HttpError(400, "Can only merge categories of the same kind");
   }
   await db.transaction(async (tx) => {
-    // Collect the transaction ids whose postings will need rebuilding
-    // (both direct-transaction and split-derived counter postings) BEFORE
-    // the updates, so the set is based on the old category id.
-    const affectedTxns = await tx
-      .select({ id: transactions.id })
-      .from(transactions)
-      .where(eq(transactions.categoryId, id));
-    const affectedSplits = await tx
-      .select({ transactionId: transactionSplits.transactionId })
-      .from(transactionSplits)
-      .where(eq(transactionSplits.categoryId, id));
-    const affectedIds = new Set([
-      ...affectedTxns.map((r) => r.id),
-      ...affectedSplits.map((s) => s.transactionId),
-    ]);
+    // The category dimension lives on the COUNTER POSTINGS, so the merge is a
+    // posting update — one statement covering ordinary and split shapes alike,
+    // where the legacy version needed two (transactions + transaction_splits)
+    // and a per-row rebuild afterwards. Transfers and openings carry no
+    // category, so they cannot match and are untouched.
+    const affected = await tx
+      .selectDistinct({ id: postings.transactionId })
+      .from(postings)
+      .where(eq(postings.categoryId, id));
 
-    await tx
-      .update(transactions)
-      .set({ categoryId: intoCategoryId })
-      .where(eq(transactions.categoryId, id));
-    await tx
-      .update(transactionSplits)
-      .set({ categoryId: intoCategoryId })
-      .where(eq(transactionSplits.categoryId, id));
+    await tx.update(postings).set({ categoryId: intoCategoryId }).where(eq(postings.categoryId, id));
     await tx
       .update(categories)
       .set({ parentId: source.parentId })
       .where(eq(categories.parentId, id));
     await tx.delete(categories).where(eq(categories.id, id));
 
-    // Rebuild each affected row's postings so its Expenses/Income counter
-    // reflects the new category. rebuild's branch priority preserves
-    // Clearing/Opening shapes — only the counter category changes.
-    for (const txnId of affectedIds) {
-      await rebuildPostingsForTransaction(tx, userId, txnId);
+    // Re-project the doomed legacy columns from the postings we just changed.
+    for (const { id: txnId } of affected) {
+      await reprojectLegacyColumns(tx, userId, txnId);
     }
   });
 }

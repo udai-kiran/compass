@@ -5,6 +5,7 @@ import {
   CreateTransferLinkSchema,
   CreateTransferSchema,
   TransferResultSchema,
+  UnlinkTransferResultSchema,
   TransferSuggestionSchema,
 } from "@compass/shared";
 import { createTransfer, linkTransfer, suggestTransfers, unlinkTransfer } from "../services/transfers.ts";
@@ -45,18 +46,21 @@ export async function transferRoutes(app: FastifyInstance) {
     },
   );
 
+  // The :id is a TRANSACTION id, not a transfer-link id — a transfer IS one
+  // transaction now. Splits it back into two ordinary transactions and returns
+  // both ids, since the caller cannot predict the second one.
   r.delete(
     "/api/transfers/:id",
     {
       schema: {
         params: z.object({ id: z.uuid() }),
-        response: { 200: z.object({ ok: z.boolean() }) },
+        response: { 200: UnlinkTransferResultSchema },
       },
     },
     async (req) => {
-      await unlinkTransfer(app.db, req.session!.userId, req.params.id);
+      const result = await unlinkTransfer(app.db, req.session!.userId, req.params.id);
       app.eventBus.emit("ledger.mutated", { userId: req.session!.userId });
-      return { ok: true };
+      return result;
     },
   );
 }

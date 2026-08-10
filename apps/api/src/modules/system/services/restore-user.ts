@@ -3,7 +3,7 @@ import { HttpError } from "../../../lib/errors.ts";
 import type { Storage } from "../../../lib/storage.ts";
 import { openArchive, type ArchiveHeader } from "../../../lib/backup-archive.ts";
 import { createDb } from "../../../db/index.ts";
-import { reconcileUserPostings } from "../../ledger/services/reconcile-postings.ts";
+import { findInconsistentPostings } from "../../ledger/services/reconcile-postings.ts";
 import { DEFERRED_RESTORE_COLUMNS, firstPassRow } from "../../../db/restore.ts";
 import { ALL_TABLES, LINKED_TABLES, USER_TABLES } from "./backup.ts";
 
@@ -78,20 +78,25 @@ export interface RestoreSummary {
  * run in one transaction; if it fails, the freshly uploaded objects are removed
  * again best-effort.
  *
- * Archived posting rows are deliberately discarded (skipped during insert) —
- * postings are derived data, re-synthesized post-commit via the `reconcile`
- * callback. A throw from `reconcile` does NOT trigger DB rollback or blob
- * deletion (the DB already committed).
+ * Archived posting rows are RESTORED, not discarded. Before PR-G1 they were
+ * skipped and re-synthesized afterwards from the legacy columns — that
+ * derivation is gone, so skipping them now would restore transactions with no
+ * postings at all, i.e. with no amount, account or category that any reader can
+ * see. Postings are the data.
+ *
+ * The post-commit `validate` callback therefore VERIFIES the restored shapes
+ * instead of repairing them; a throw from it does NOT trigger DB rollback or
+ * blob deletion (the DB already committed).
  */
 export async function restoreUserBackup(
   pool: pg.Pool,
   storage: Storage,
   userId: string,
   archivePath: string,
-  reconcile: (pool: pg.Pool, userId: string) => Promise<{ repaired: number; failures: unknown[] }> = (
+  validate: (pool: pg.Pool, userId: string) => Promise<{ repaired: number; failures: unknown[] }> = async (
     p,
     uid,
-  ) => reconcileUserPostings(createDb(p), uid),
+  ) => ({ repaired: 0, failures: await findInconsistentPostings(createDb(p), uid) }),
 ): Promise<RestoreSummary> {
   const archive = await openArchive(archivePath);
   const uploaded: string[] = [];
@@ -146,9 +151,7 @@ export async function restoreUserBackup(
       let rowCount = 0;
       let tableCount = 0;
       for (const table of tables) {
-        // Archived posting rows are deliberately discarded — they are re-derived
-        // post-commit via reconcileUserPostings.
-        if (table === "postings") continue;
+        // `postings` is restored like any other table: it IS the ledger now.
         const rows = header.tables[table];
         if (!Array.isArray(rows)) continue; // older archive without this table
         if (rows.length > 0) tableCount++;
@@ -197,11 +200,12 @@ export async function restoreUserBackup(
     await archive.close();
   }
 
-  // Post-commit reconcile (only runs when the transaction committed — if the
-  // outer catch re-threw this code is unreachable). A throw from reconcile
-  // MUST NOT trigger DB rollback or blob deletion (the DB already committed).
+  // Post-commit validation (only runs when the transaction committed — if the
+  // outer catch re-threw this code is unreachable). A throw MUST NOT trigger DB
+  // rollback or blob deletion (the DB already committed), so a bad archive
+  // surfaces as a reported failure count rather than a half-undone restore.
   try {
-    const r = await reconcile(pool, userId);
+    const r = await validate(pool, userId);
     summary.postings = { repaired: r.repaired, failed: r.failures.length };
   } catch {
     summary.postings = { repaired: 0, failed: 1 };

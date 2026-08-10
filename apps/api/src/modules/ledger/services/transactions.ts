@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, isNull, lte, or, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, lte, sql, type SQL } from "drizzle-orm";
 import type {
   BulkAction,
   BulkResult,
@@ -10,22 +10,30 @@ import type {
   UpdateTransaction,
 } from "@compass/shared";
 import type { Db, DbOrTx } from "../../../db/index.ts";
-import { recurringTemplates, transactions, transactionSplits, transferLinks } from "../schema.ts";
+import { postings, recurringTemplates, transactions } from "../schema.ts";
 import { HttpError } from "../../../lib/errors.ts";
 import { getMerchantRules, normalizeMerchant } from "./merchants.ts";
 import { assertOwnedRealAccount, assertOwnedCategory } from "../../../lib/ownership.ts";
 import { assertOwnedResource } from "./resources.ts";
 import { isUniqueViolation } from "../../investments/services/sip-lifecycle.ts";
 import {
-  buildOpeningPostings,
   buildOrdinaryPostings,
   buildSplitPostings,
-  buildTransferLegPostings,
+  classifyShape,
+  legForAccount,
   PostingShapeError,
-  type PostingDraft,
+  primaryRealLeg,
+  rebuildDrafts,
+  type ShapePatch,
   sumPaise,
 } from "./postings.ts";
-import { replacePostings, resolveSystemAccounts, type ResolvedSystemAccounts } from "./post-entry.ts";
+import {
+  currentPostings,
+  postTransaction,
+  resolveSystemAccounts,
+  systemKindLookup,
+  type ResolvedSystemAccounts,
+} from "./post-entry.ts";
 
 type TxRow = typeof transactions.$inferSelect;
 
@@ -43,12 +51,6 @@ export function sumSigned(amounts: number[]): { incomePaise: number; expensePais
     else expensePaise += -a;
   }
   return { incomePaise, expensePaise };
-}
-
-/** SQL fragment: true when the transaction is part of a linked transfer. */
-export function isTransferSql(): SQL<boolean> {
-  return sql<boolean>`exists (select 1 from ${transferLinks} tl
-    where tl.out_transaction_id = ${transactions.id} or tl.in_transaction_id = ${transactions.id})`;
 }
 
 export function filterWhere(
@@ -110,179 +112,149 @@ export function decodeCursor(cursor: string): { date: string; createdAt: string;
   return { date, createdAt, id };
 }
 
-async function hydrate(db: DbOrTx, rows: TxRow[]): Promise<Transaction[]> {
+/**
+ * Builds the `Transaction` DTO for a page of headers from their POSTINGS.
+ *
+ * Everything shape-related now comes from the postings: the account and amount
+ * are a projection, `splits` are the counter postings, and a transfer is two
+ * real postings on one header rather than a `transfer_links` row joining two.
+ *
+ * `perspectiveAccountId` selects WHICH posting the account/amount project from.
+ * A transfer touches two accounts, so a global list shows its outflow leg
+ * (`primaryRealLeg`) while an account ledger must show that account's own leg —
+ * otherwise the destination account's ledger renders an inflow as an outflow.
+ */
+async function hydrate(
+  db: DbOrTx,
+  userId: string,
+  rows: TxRow[],
+  perspectiveAccountId?: string,
+): Promise<Transaction[]> {
   if (rows.length === 0) return [];
   const ids = rows.map((r) => r.id);
-  const [splitRows, linkRows] = await Promise.all([
-    db.query.transactionSplits.findMany({ where: inArray(transactionSplits.transactionId, ids) }),
-    db.query.transferLinks.findMany({
-      where: or(
-        inArray(transferLinks.outTransactionId, ids),
-        inArray(transferLinks.inTransactionId, ids),
-      ),
-    }),
+  const [postingRows, systemKindOf] = await Promise.all([
+    db
+      .select({
+        transactionId: postings.transactionId,
+        id: postings.id,
+        accountId: postings.accountId,
+        amountPaise: postings.amountPaise,
+        categoryId: postings.categoryId,
+        necessity: postings.necessity,
+        note: postings.note,
+      })
+      .from(postings)
+      .where(inArray(postings.transactionId, ids)),
+    systemKindLookup(db, userId),
   ]);
-  const splitsByTx = new Map<string, Split[]>();
-  for (const s of splitRows) {
-    const list = splitsByTx.get(s.transactionId) ?? [];
-    list.push({ id: s.id, categoryId: s.categoryId, amountPaise: s.amountPaise, note: s.note });
-    splitsByTx.set(s.transactionId, list);
+
+  const byTx = new Map<string, typeof postingRows>();
+  for (const p of postingRows) {
+    const list = byTx.get(p.transactionId) ?? [];
+    list.push(p);
+    byTx.set(p.transactionId, list);
   }
-  const linkByTx = new Map<string, string>();
-  const counterpartTxByTx = new Map<string, string>();
-  for (const l of linkRows) {
-    linkByTx.set(l.outTransactionId, l.id);
-    linkByTx.set(l.inTransactionId, l.id);
-    counterpartTxByTx.set(l.outTransactionId, l.inTransactionId);
-    counterpartTxByTx.set(l.inTransactionId, l.outTransactionId);
-  }
-  // Resolve each transfer leg's *counterpart account* — the other leg often isn't
-  // in this page, so look up just the account of the counterpart transactions.
-  const counterpartTxIds = [
-    ...new Set(rows.map((r) => counterpartTxByTx.get(r.id)).filter((id): id is string => !!id)),
-  ];
-  const accountByCounterpartTx = new Map<string, string>();
-  if (counterpartTxIds.length > 0) {
-    const cpRows = await db.query.transactions.findMany({
-      where: inArray(transactions.id, counterpartTxIds),
-      columns: { id: true, accountId: true },
+
+  return rows.map((r) => {
+    const stored = byTx.get(r.id) ?? [];
+    const shape = classifyShape(stored, systemKindOf);
+    const isTransfer = shape === "transfer";
+
+    // Which leg this row speaks for. An account-scoped read projects that
+    // account's posting; everything else projects the primary real leg.
+    const projected =
+      (perspectiveAccountId ? legForAccount(stored, perspectiveAccountId) : null) ??
+      primaryRealLeg(stored, systemKindOf);
+
+    const counters = stored.filter((p) => {
+      const kind = systemKindOf(p.accountId);
+      return kind === "expenses" || kind === "income";
     });
-    for (const t of cpRows) accountByCounterpartTx.set(t.id, t.accountId);
-  }
-  const counterpartAccountByTx = (id: string): string | null => {
-    const cpTx = counterpartTxByTx.get(id);
-    return cpTx ? (accountByCounterpartTx.get(cpTx) ?? null) : null;
-  };
-  return rows.map((r) => ({
-    id: r.id,
-    accountId: r.accountId,
-    date: r.date,
-    amountPaise: r.amountPaise,
-    merchant: r.merchant,
-    categoryId: r.categoryId,
-    necessity: r.necessity,
-    notes: r.notes,
-    tags: r.tags,
-    source: r.source,
-    transferLinkId: linkByTx.get(r.id) ?? null,
-    transferCounterpartAccountId: counterpartAccountByTx(r.id),
-    policyId: r.policyId,
-    resourceId: r.resourceId,
-    recurringTemplateId: r.recurringTemplateId,
-    splits: splitsByTx.get(r.id) ?? [],
-  }));
+    const splits: Split[] =
+      shape === "split"
+        ? counters.map((c) => ({
+            id: c.id,
+            categoryId: c.categoryId!,
+            amountPaise: -c.amountPaise,
+            note: c.note,
+          }))
+        : [];
+    const counterpart = isTransfer
+      ? (stored.find((p) => systemKindOf(p.accountId) === null && p.accountId !== projected.accountId)
+          ?.accountId ?? null)
+      : null;
+
+    return {
+      id: r.id,
+      accountId: projected.accountId,
+      date: r.date,
+      amountPaise: projected.amountPaise,
+      merchant: r.merchant,
+      // A single counter carries the category; a split's categories live on its
+      // `splits`, and a transfer or opening has none.
+      categoryId: shape === "ordinary" ? (counters[0]?.categoryId ?? null) : null,
+      necessity: shape === "ordinary" ? (counters[0]?.necessity ?? null) : null,
+      notes: r.notes,
+      tags: r.tags,
+      source: r.source,
+      isTransfer,
+      transferCounterpartAccountId: counterpart,
+      policyId: r.policyId,
+      resourceId: r.resourceId,
+      recurringTemplateId: r.recurringTemplateId,
+      splits,
+    };
+  });
 }
 
 /**
- * Computes the posting drafts that mirror a transaction's CURRENT resulting
- * shape (the row + any transaction_splits, re-read on the passed handle).
- * Branches on the row's shape FIRST, in order: (a) an opening row
- * (`is_opening = true`, bank/cash accounts only) mirrors Opening postings;
- * (b) a row that is a member of `transfer_links` (as either `out_transaction_id`
- * or `in_transaction_id`) mirrors a per-leg Clearing pair via
- * `buildTransferLegPostings`; (c) a row with `transaction_splits` mirrors
- * split postings; (d) otherwise ordinary postings. `linkTransfer`/
- * `unlinkTransfer` (`transfers.ts`) call this after changing `transfer_links`
- * membership so both legs flip between Clearing and ordinary shape.
+ * Applies a shape-affecting patch to a transaction: reads its CURRENT postings
+ * (the authority for what it is), rebuilds them through the pure
+ * `rebuildDrafts`, and writes them plus their legacy projection.
  *
- * `transaction_splits` carries no `necessity` column of its own (see schema
- * in `modules/ledger/schema.ts`) — each split posting's necessity is the
- * parent transaction's `necessity`, applied uniformly to every split.
+ * This replaces `computePostingDraftsForTransaction`, which re-derived the
+ * whole shape from `is_opening` / `transfer_links` / `transaction_splits` and
+ * the legacy columns. That direction is gone: those columns are now written
+ * FROM postings and read by nothing.
  *
- * Tenant-scoped: returns `null` when no row exists for `id` owned by `userId`
- * (soft-deleted rows still count — their postings are retained). The SPLIT
- * branch enforces the split-sum invariant: if the split amounts do not sum to
- * the parent row's amount, a `PostingShapeError` is thrown — the shape is
- * unrepairable, not re-derivable.
+ * Throws `PostingShapeError` for a transaction with no postings at all rather
+ * than inventing a shape for it — under the old model a postings-less row was
+ * repairable from its columns, and under this one it is corrupt data.
  *
- * `systemAccounts` may be passed in to reuse an already-resolved set (e.g.
- * from `resolveSystemAccounts`); otherwise they are resolved here.
+ * `systemAccounts` may be passed in to reuse an already-resolved set.
  */
-export async function computePostingDraftsForTransaction(
+export async function applyShapePatch(
   t: DbOrTx,
   userId: string,
   id: string,
+  patch: ShapePatch,
   systemAccounts?: ResolvedSystemAccounts,
-): Promise<PostingDraft[] | null> {
-  const row = await t.query.transactions.findFirst({
-    where: and(eq(transactions.id, id), eq(transactions.userId, userId)),
-  });
-  if (!row) return null;
+): Promise<void> {
+  const stored = await currentPostings(t, id);
+  if (stored.length === 0) {
+    throw new PostingShapeError(
+      `transaction ${id} has no postings — its shape cannot be determined`,
+    );
+  }
   const resolved = systemAccounts ?? (await resolveSystemAccounts(t, userId));
-
-  if (row.isOpening === true) {
-    return buildOpeningPostings({
-      accountId: row.accountId,
-      amountPaise: row.amountPaise,
-      systemOpeningAccountId: resolved.opening,
-    });
-  }
-
-  const transferLink = await t.query.transferLinks.findFirst({
-    where: or(eq(transferLinks.outTransactionId, id), eq(transferLinks.inTransactionId, id)),
-  });
-  if (transferLink) {
-    return buildTransferLegPostings({
-      accountId: row.accountId,
-      amountPaise: row.amountPaise,
-      clearingAccountId: resolved.clearing,
-      note: "",
-    });
-  }
-
-  const splitRows = await t.query.transactionSplits.findMany({
-    where: eq(transactionSplits.transactionId, id),
-  });
-  if (splitRows.length > 0) {
-    const splitSum = sumPaise(splitRows.map((s) => s.amountPaise));
-    if (splitSum !== row.amountPaise) {
-      throw new PostingShapeError(
-        `transaction ${id}: split sum ${splitSum} paise does not match transaction amount ${row.amountPaise} paise`,
-      );
-    }
-    return buildSplitPostings({
-      accountId: row.accountId,
-      splits: splitRows.map((s) => ({
-        categoryId: s.categoryId,
-        amountPaise: s.amountPaise,
-        necessity: row.necessity,
-        note: s.note,
-      })),
-      systemExpensesAccountId: resolved.expenses,
-      systemIncomeAccountId: resolved.income,
-    });
-  }
-
-  return buildOrdinaryPostings({
-    accountId: row.accountId,
-    amountPaise: row.amountPaise,
-    categoryId: row.categoryId,
-    necessity: row.necessity,
-    systemExpensesAccountId: resolved.expenses,
-    systemIncomeAccountId: resolved.income,
-  });
+  const systemKindOf = await systemKindLookup(t, userId);
+  const drafts = rebuildDrafts(stored, patch, resolved, systemKindOf);
+  await postTransaction(t, id, userId, drafts);
 }
 
 /**
- * Rebuilds a transaction's posting mirror from its CURRENT resulting shape
- * (the row + any transaction_splits, re-read on the passed handle) and
- * replaces the postings via `replacePostings`. Shared by every writer that
- * needs to re-derive postings after a legacy mutation rather than construct
- * drafts inline: `updateTransaction`, `setSplits`, `bulkAction`
- * (restore/setCategory), and the opening-balance row writers in
- * `accounts.ts` (createAccount, updateAccount's opening-plan apply). Must be
- * called on the SAME tx as the legacy write it follows (ATOMICITY LAW) —
- * callers pass their `t` handle, never a bare `db`.
+ * Re-projects a transaction's legacy columns from its existing postings,
+ * changing no posting. The postings-authoritative successor to
+ * `rebuildPostingsForTransaction`, whose name described the old direction:
+ * it rebuilt POSTINGS from the columns.
  *
- * Delegates the shape computation to `computePostingDraftsForTransaction`
- * (see there for the branch order and the split-sum invariant), then replaces
- * the postings via `replacePostings`. Returns without writing when no row
- * exists for `id` under `userId`.
+ * Callers that only touched header fields (merchant, notes, tags, date) do not
+ * need this at all. It exists for the writers that must guarantee the doomed
+ * columns still satisfy NOT NULL after they have inserted a header — and it
+ * disappears with those columns in PR-G2.
  */
-export async function rebuildPostingsForTransaction(t: DbOrTx, userId: string, id: string): Promise<void> {
-  const drafts = await computePostingDraftsForTransaction(t, userId, id);
-  if (!drafts) return;
-  await replacePostings(t, id, userId, drafts);
+export async function reprojectLegacyColumns(t: DbOrTx, userId: string, id: string): Promise<void> {
+  await applyShapePatch(t, userId, id, {});
 }
 
 export async function listTransactions(
@@ -353,7 +325,7 @@ export async function listTransactions(
     lastCreatedAtPrecise = preciseRow[0]?.createdAtText ?? null;
   }
   return {
-    items: await hydrate(db, page),
+    items: await hydrate(db, userId, page, query.accountId),
     nextCursor:
       hasMore && last && !query.q && lastCreatedAtPrecise
         ? encodeCursor(last.date, lastCreatedAtPrecise, last.id)
@@ -370,7 +342,7 @@ export async function getTransaction(db: Db, userId: string, id: string): Promis
     where: and(eq(transactions.id, id), eq(transactions.userId, userId)),
   });
   if (!row || row.deletedAt) throw new HttpError(404, "Transaction not found");
-  return (await hydrate(db, [row]))[0]!;
+  return (await hydrate(db, userId, [row]))[0]!;
 }
 
 export async function createTransaction(
@@ -411,18 +383,20 @@ export async function createTransaction(
       .returning();
     const newRow = inserted[0]!;
     const systemAccounts = await resolveSystemAccounts(t, userId);
+    // Drafts come from the caller's INPUT, not from re-reading the row we just
+    // wrote: the request is the intent, and the columns are only its shadow.
     const drafts = buildOrdinaryPostings({
-      accountId: newRow.accountId,
-      amountPaise: newRow.amountPaise,
-      categoryId: newRow.categoryId,
-      necessity: newRow.necessity,
+      accountId: input.accountId,
+      amountPaise: input.amountPaise,
+      categoryId: input.categoryId ?? null,
+      necessity: input.necessity ?? null,
       systemExpensesAccountId: systemAccounts.expenses,
       systemIncomeAccountId: systemAccounts.income,
     });
-    await replacePostings(t, newRow.id, userId, drafts);
+    await postTransaction(t, newRow.id, userId, drafts);
     return inserted;
   });
-  return (await hydrate(db, [rows[0]!]))[0]!;
+  return getTransaction(db, userId, rows[0]!.id);
 }
 
 export async function updateTransaction(
@@ -458,49 +432,32 @@ export async function updateTransaction(
         .for("update");
       if (!locked) return [];
 
-      // 2. Transfer-leg guard: reject account/amount edits on a linked leg.
-      if (input.accountId !== undefined || input.amountPaise !== undefined) {
-        const linkRow = await t.query.transferLinks.findFirst({
-          where: or(eq(transferLinks.outTransactionId, id), eq(transferLinks.inTransactionId, id)),
-        });
-        if (linkRow) {
-          throw new HttpError(
-            409,
-            "Unlink the transfer before changing a transfer leg's account or amount",
+      // 2. Header-only fields go straight to the row. The shape-affecting four
+      //    (account, amount, category, necessity) are deliberately NOT written
+      //    here — `applyShapePatch` derives them from the rebuilt postings, so
+      //    writing them now would only be overwritten a line later.
+      const { accountId, amountPaise, categoryId, necessity, ...header } = input;
+      if (Object.keys(header).length > 0) {
+        await t
+          .update(transactions)
+          .set({ ...header, updatedAt: new Date() })
+          .where(
+            and(eq(transactions.id, id), eq(transactions.userId, userId), isNull(transactions.deletedAt)),
           );
-        }
       }
 
-      // 3. Split-amount guard: reject amountPaise change that doesn't match existing splits.
-      if (input.amountPaise !== undefined) {
-        const splitRows = await t.query.transactionSplits.findMany({
-          where: eq(transactionSplits.transactionId, id),
-          columns: { amountPaise: true },
-        });
-        if (splitRows.length > 0) {
-          const splitSum = sumPaise(splitRows.map((s) => s.amountPaise));
-          if (splitSum !== input.amountPaise) {
-            throw new HttpError(
-              409,
-              "Update the transaction's splits to match the new amount",
-            );
-          }
-        }
-      }
+      // 3. Rebuild the postings for the shape patch. The transfer-leg guard and
+      //    the split-sum guard both live inside `rebuildDrafts` now — they are
+      //    properties of the shape, not of the columns, so they belong with the
+      //    shape logic where they are unit-testable.
+      await applyShapePatch(t, userId, id, { accountId, amountPaise, categoryId, necessity });
 
-      const updated = await t
-        .update(transactions)
-        .set({ ...input, updatedAt: new Date() })
+      return t
+        .select({ id: transactions.id })
+        .from(transactions)
         .where(
           and(eq(transactions.id, id), eq(transactions.userId, userId), isNull(transactions.deletedAt)),
-        )
-        .returning();
-      if (updated.length === 0) return updated;
-      // Re-read the RESULTING shape (row + any transaction_splits) and rebuild
-      // postings from it — account/amount/category/necessity can all change
-      // via the spread update, and this covers every case uniformly (D15).
-      await rebuildPostingsForTransaction(t, userId, id);
-      return updated;
+        );
     });
   } catch (err) {
     // A SIP's linked installment holds (sip_id, date) uniquely, so moving this
@@ -514,7 +471,7 @@ export async function updateTransaction(
     throw err;
   }
   if (rows.length === 0) throw new HttpError(404, "Transaction not found");
-  return (await hydrate(db, rows))[0]!;
+  return getTransaction(db, userId, id);
 }
 
 export async function softDeleteTransaction(db: Db, userId: string, id: string): Promise<void> {
@@ -542,26 +499,53 @@ export async function setSplits(
     // LAW / concurrency safety) — a concurrent amount edit can't race this
     // check between read and write. BigInt-safe sum via sumPaise.
     const parentRows = await t
-      .select()
+      .select({ id: transactions.id })
       .from(transactions)
       .where(
         and(eq(transactions.id, id), eq(transactions.userId, userId), isNull(transactions.deletedAt)),
       )
       .for("update");
-    const parent = parentRows[0];
-    if (!parent) throw new HttpError(404, "Transaction not found");
+    if (!parentRows[0]) throw new HttpError(404, "Transaction not found");
+
+    // The amount to match is the CURRENT postings' real leg, not the legacy
+    // column — postings are the authority, and the column is their shadow.
+    const stored = await currentPostings(t, id);
+    const systemKindOf = await systemKindLookup(t, userId);
+    const shape = classifyShape(stored, systemKindOf);
+    if (shape === "transfer" || shape === "opening") {
+      throw new HttpError(409, `A ${shape} cannot be split`);
+    }
+    const parentAmount = primaryRealLeg(stored, systemKindOf).amountPaise;
     const total = sumPaise(splits.map((s) => s.amountPaise));
-    if (splits.length > 0 && total !== parent.amountPaise) {
-      throw new HttpError(400, `Splits must sum to the transaction amount (${parent.amountPaise})`);
+    if (splits.length > 0 && total !== parentAmount) {
+      throw new HttpError(400, `Splits must sum to the transaction amount (${parentAmount})`);
     }
-    await t.delete(transactionSplits).where(eq(transactionSplits.transactionId, id));
-    if (splits.length > 0) {
-      await t.insert(transactionSplits).values(splits.map((s) => ({ ...s, transactionId: id })));
-    }
-    // Rebuild postings from the RESULTING shape in the SAME tx (ATOMICITY LAW):
-    // split postings when splits remain, else ordinary postings from the txn's
-    // own amount/category/necessity (reverting to ordinary).
-    await rebuildPostingsForTransaction(t, userId, id);
+
+    const systemAccounts = await resolveSystemAccounts(t, userId);
+    const necessity = stored.find((p) => {
+      const kind = systemKindOf(p.accountId);
+      return kind === "expenses" || kind === "income";
+    })?.necessity ?? null;
+    const drafts =
+      splits.length > 0
+        ? buildSplitPostings({
+            accountId: primaryRealLeg(stored, systemKindOf).accountId,
+            splits: splits.map((s) => ({ ...s, necessity })),
+            systemExpensesAccountId: systemAccounts.expenses,
+            systemIncomeAccountId: systemAccounts.income,
+          })
+        : // Clearing the splits reverts to an ordinary transaction. Its single
+          // category is genuinely gone with the split counters, so it becomes
+          // uncategorized rather than resurrecting a stale legacy column.
+          buildOrdinaryPostings({
+            accountId: primaryRealLeg(stored, systemKindOf).accountId,
+            amountPaise: parentAmount,
+            categoryId: null,
+            necessity,
+            systemExpensesAccountId: systemAccounts.expenses,
+            systemIncomeAccountId: systemAccounts.income,
+          });
+    await postTransaction(t, id, userId, drafts);
   });
   return getTransaction(db, userId, id);
 }
@@ -576,15 +560,14 @@ export async function bulkAction(db: Db, userId: string, action: BulkAction): Pr
         await t
           .update(transactions)
           .set({
-            categoryId: item.categoryId,
             tags: item.tags,
             deletedAt: item.deleted ? new Date() : null,
             updatedAt: new Date(),
           })
           .where(and(eq(transactions.id, item.id), eq(transactions.userId, userId)));
-        // Restore can change the category and un-delete the row — rebuild this
-        // row's postings from its resulting shape in the SAME tx.
-        await rebuildPostingsForTransaction(t, userId, item.id);
+        // The category lives on the counter posting, so restoring it is a shape
+        // patch — not a column write followed by a re-derive.
+        await applyShapePatch(t, userId, item.id, { categoryId: item.categoryId });
       }
       return { affected: action.snapshot.length, snapshot: [] };
     });
@@ -618,14 +601,11 @@ export async function bulkAction(db: Db, userId: string, action: BulkAction): Pr
     const where = inArray(transactions.id, ids);
     switch (action.action) {
       case "setCategory":
-        await t
-          .update(transactions)
-          .set({ categoryId: action.categoryId, updatedAt: new Date() })
-          .where(where);
-        // Re-category changes the affected rows' Expenses/Income counter
-        // posting's category — rebuild each row's postings from its resulting
-        // shape (never touches Clearing/Opening) in the SAME tx.
-        for (const id of ids) await rebuildPostingsForTransaction(t, userId, id);
+        // The category lives on the counter posting. `rebuildDrafts` ignores a
+        // category patch for split, transfer and opening shapes, so a bulk
+        // re-category over a filter that catches one leaves it alone — which is
+        // exactly what the legacy branch did.
+        for (const id of ids) await applyShapePatch(t, userId, id, { categoryId: action.categoryId });
         break;
       case "addTag":
         // Header-only (tags array) — NO posting change.
