@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, isNull, lte, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import type {
   CardActivity,
   CardActivityTxn,
@@ -11,7 +11,7 @@ import type {
 } from "@compass/shared";
 import { UpsertCardDetailsSchema, UpsertCardIssuerSettingsSchema } from "@compass/shared";
 import type { Db } from "../../../db/index.ts";
-import { accounts, transactions } from "../../../db/schema.ts";
+import { accounts } from "../../../db/schema.ts";
 import { cardDetails, cardIssuerSettings, rewardEntries } from "../schema.ts";
 import { HttpError } from "../../../lib/errors.ts";
 import { decryptSecret, encryptSecret } from "../../../lib/secret-box.ts";
@@ -228,13 +228,17 @@ export async function listCardHolders(
 
     const sums = await db.execute(sql`
       select
-        coalesce(sum(amount_paise), 0)::bigint as total,
-        coalesce(sum(amount_paise) filter (where date < ${billedBefore}), 0)::bigint as at_close,
-        coalesce(sum(amount_paise) filter (where amount_paise < 0 and date >= ${billedBefore}), 0)::bigint as current_spend
-      from transactions
-      where account_id = ${acc.id} and user_id = ${userId} and deleted_at is null and date <= ${ref}
+        coalesce(sum(p.amount_paise), 0)::bigint as total,
+        coalesce(sum(p.amount_paise) filter (where t.date < ${billedBefore}), 0)::bigint as at_close,
+        coalesce(sum(p.amount_paise) filter (where p.amount_paise < 0 and t.date >= ${billedBefore}), 0)::bigint as current_spend
+      from postings p
+      join transactions t on t.id = p.transaction_id
+      where p.account_id = ${acc.id} and t.user_id = ${userId} and t.deleted_at is null and t.date <= ${ref}
     `);
     const row = sums.rows[0] as { total: string; at_close: string; current_spend: string };
+    if (!Number.isSafeInteger(Number(row.total)) || !Number.isSafeInteger(Number(row.at_close)) || !Number.isSafeInteger(Number(row.current_spend))) {
+      throw new HttpError(500, "Card balance aggregate exceeded a safe integer — refusing to lose paise");
+    }
     const balance = acc.openingBalancePaise + Number(row.total);
 
     const rewards = await db
@@ -321,42 +325,51 @@ export async function getCardActivity(
   // Headline balances: owed now, and owed as of the last statement close.
   const sums = await db.execute(sql`
     select
-      coalesce(sum(amount_paise), 0)::bigint as total,
-      coalesce(sum(amount_paise) filter (where date < ${billedBefore}), 0)::bigint as at_close
-    from transactions
-    where account_id = ${accountId} and user_id = ${userId} and deleted_at is null and date <= ${ref}
+      coalesce(sum(p.amount_paise), 0)::bigint as total,
+      coalesce(sum(p.amount_paise) filter (where t.date < ${billedBefore}), 0)::bigint as at_close
+    from postings p
+    join transactions t on t.id = p.transaction_id
+    where p.account_id = ${accountId} and t.user_id = ${userId} and t.deleted_at is null and t.date <= ${ref}
   `);
   const agg = sums.rows[0] as { total: string; at_close: string };
+  if (!Number.isSafeInteger(Number(agg.total)) || !Number.isSafeInteger(Number(agg.at_close))) {
+    throw new HttpError(500, "Card balance aggregate exceeded a safe integer — refusing to lose paise");
+  }
   const balancePaise = acc.openingBalancePaise + Number(agg.total);
   const owedAtClose = -(acc.openingBalancePaise + Number(agg.at_close));
   const totalDuePaise = Math.max(0, cycle ? owedAtClose : -balancePaise);
 
-  const rows = await db.query.transactions.findMany({
-    where: and(
-      eq(transactions.accountId, accountId),
-      eq(transactions.userId, userId),
-      isNull(transactions.deletedAt),
-      gte(transactions.date, fromInclusive),
-      lte(transactions.date, ref),
-    ),
-    orderBy: [desc(transactions.date), desc(transactions.id)],
-    columns: {
-      id: true,
-      date: true,
-      merchant: true,
-      amountPaise: true,
-      categoryId: true,
-      reconciledStatementId: true,
-    },
-  });
-  const toTxn = (t: (typeof rows)[number]): CardActivityTxn => ({
-    id: t.id,
-    date: t.date,
-    merchant: t.merchant,
-    amountPaise: t.amountPaise,
-    categoryId: t.categoryId,
-    reconciledStatementId: t.reconciledStatementId,
-  });
+  const rawRows = await db.execute(sql`
+    select t.id, t.date, t.merchant, t.reconciled_statement_id, t.category_id, p.amount_paise
+    from postings p
+    join transactions t on t.id = p.transaction_id
+    where p.account_id = ${accountId}
+      and t.user_id = ${userId} and t.deleted_at is null
+      and t.date >= ${fromInclusive} and t.date <= ${ref}
+    order by t.date desc, t.id desc
+  `);
+  const rows = rawRows.rows as Array<{
+    id: string;
+    date: string;
+    merchant: string;
+    reconciled_statement_id: string | null;
+    category_id: string | null;
+    amount_paise: string;
+  }>;
+  const toTxn = (t: (typeof rows)[number]): CardActivityTxn => {
+    const amountPaise = Number(t.amount_paise);
+    if (!Number.isSafeInteger(amountPaise)) {
+      throw new HttpError(500, "Card activity amount exceeded a safe integer — refusing to lose paise");
+    }
+    return {
+      id: t.id,
+      date: t.date,
+      merchant: t.merchant,
+      amountPaise,
+      categoryId: t.category_id,
+      reconciledStatementId: t.reconciled_statement_id,
+    };
+  };
   const split = splitByCycle(rows, cycle);
   const billed = split.billed.map(toTxn);
   const unbilled = split.unbilled.map(toTxn);

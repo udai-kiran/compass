@@ -10,10 +10,19 @@ export async function search(db: Db, userId: string, q: string): Promise<SearchR
 
   const [txs, cats, accs, goalRows] = await Promise.all([
     db.execute(sql`
-      select id, merchant, amount_paise, date from transactions
-      where user_id = ${userId} and deleted_at is null
-        and (lower(merchant) like ${like} or lower(notes) like ${like})
-      order by date desc limit 8
+      select t.id, t.merchant, p.amount_paise, t.date
+      from postings p
+      join accounts a on a.id = p.account_id
+      join transactions t on t.id = p.transaction_id
+      where t.user_id = ${userId} and t.deleted_at is null
+        and a.system_kind is null
+        and not exists (
+          select 1 from postings p2
+          join accounts a2 on a2.id = p2.account_id
+          where p2.transaction_id = t.id and a2.system_kind in ('clearing', 'opening')
+        )
+        and (lower(t.merchant) like ${like} or lower(t.notes) like ${like})
+      order by t.date desc limit 8
     `),
     db.execute(sql`select id, name from categories where user_id = ${userId} and lower(name) like ${like} order by name limit 6`),
     db.execute(sql`select id, name from accounts where user_id = ${userId} and lower(name) like ${like} and system_kind is null order by name limit 6`),

@@ -10,7 +10,7 @@ import type {
 } from "@compass/shared";
 import { ImportMappingSchema } from "@compass/shared";
 import type { Db } from "../../../db/index.ts";
-import { accounts, categories, transactions, transferLinks } from "../../../db/schema.ts";
+import { accounts, categories, postings, transactions, transferLinks } from "../../../db/schema.ts";
 import { importPresets, importRows, imports } from "../schema.ts";
 import { parseAmountCell, parseCsv, parseDateCell } from "../../../lib/csv.ts";
 import { HttpError } from "../../../lib/errors.ts";
@@ -358,14 +358,20 @@ export async function applyMapping(
     const existing = await db
       .select({
         date: transactions.date,
-        amountPaise: transactions.amountPaise,
+        amountPaise: postings.amountPaise,
         merchant: transactions.merchant,
       })
       .from(transactions)
+      .innerJoin(
+        postings,
+        and(
+          eq(postings.transactionId, transactions.id),
+          eq(postings.accountId, batch.accountId),
+        ),
+      )
       .where(
         and(
           eq(transactions.userId, userId),
-          eq(transactions.accountId, batch.accountId),
           gte(transactions.date, minDate),
           lte(transactions.date, maxDate),
         ),
@@ -618,16 +624,22 @@ export async function commitImport(
           .select({
             id: transactions.id,
             date: transactions.date,
-            amountPaise: transactions.amountPaise,
+            amountPaise: postings.amountPaise,
             merchant: transactions.merchant,
             notes: transactions.notes,
             source: transactions.source,
           })
           .from(transactions)
+          .innerJoin(
+            postings,
+            and(
+              eq(postings.transactionId, transactions.id),
+              eq(postings.accountId, batch.accountId),
+            ),
+          )
           .where(
             and(
               eq(transactions.userId, userId),
-              eq(transactions.accountId, batch.accountId),
               isNull(transactions.deletedAt),
               gte(transactions.date, shift(dates[0]!, -3)),
               lte(transactions.date, shift(dates.at(-1)!, 3)),

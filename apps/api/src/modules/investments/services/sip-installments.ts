@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, gte, isNull, lte } from "drizzle-orm";
+import { and, desc, eq, gt, gte, isNull, lte, sql } from "drizzle-orm";
 import type {
   HoldingEvent,
   LinkSipInstallment,
@@ -9,7 +9,7 @@ import type {
 import { LinkSipInstallmentSchema, RecordSipInstallmentSchema, unitsForInstallment } from "@compass/shared";
 import type { SipFundingSource, SipTargetKind } from "@compass/shared";
 import type { Db } from "../../../db/index.ts";
-import { transactions } from "../../../db/schema.ts";
+import { postings, transactions } from "../../../db/schema.ts";
 import { holdingEvents, holdings, sips } from "../schema.ts";
 import { HttpError, pgError } from "../../../lib/errors.ts";
 import { nextSeqForDate } from "./holdings.ts";
@@ -285,24 +285,43 @@ export async function linkSipInstallment(
     const sip = sipRows[0];
     if (!sip) throw new HttpError(404, "SIP not found");
 
-    const txRows = await tx
-      .select({
-        id: transactions.id,
-        accountId: transactions.accountId,
-        amountPaise: transactions.amountPaise,
-        date: transactions.date,
-        isOpening: transactions.isOpening,
-        sipId: transactions.sipId,
-        deletedAt: transactions.deletedAt,
-      })
-      .from(transactions)
-      .where(and(eq(transactions.id, parsed.transactionId), eq(transactions.userId, userId)))
-      .for("update");
-    const ledgerTx = txRows[0];
+    const txRaw = await tx.execute(sql`
+      select t.id, t.date, t.sip_id, t.deleted_at,
+        p.account_id,
+        p.amount_paise,
+        exists (
+          select 1 from postings p2
+          join accounts a2 on a2.id = p2.account_id
+          where p2.transaction_id = t.id and a2.system_kind = 'opening'
+        )::boolean as is_opening
+      from transactions t
+      left join postings p on p.transaction_id = t.id
+        and p.account_id = ${sip.targetAccountId}
+      where t.id = ${parsed.transactionId} and t.user_id = ${userId}
+      for update of t
+    `);
+    const rawRow = txRaw.rows[0] as
+      | {
+          id: string;
+          date: string;
+          sip_id: string | null;
+          deleted_at: Date | null;
+          account_id: string | null;
+          amount_paise: string | null;
+          is_opening: boolean;
+        }
+      | undefined;
     // A soft-deleted row is 404, not 400: it is not part of the ledger the user
     // can see, so "not found" is the honest answer — and linking it would stamp
     // an installment that every installment query filters straight back out.
-    if (!ledgerTx || ledgerTx.deletedAt !== null) throw new HttpError(404, "Transaction not found");
+    if (!rawRow || rawRow.deleted_at !== null) throw new HttpError(404, "Transaction not found");
+    const ledgerTx = {
+      accountId: rawRow.account_id ?? "",
+      amountPaise: Number(rawRow.amount_paise ?? 0),
+      date: rawRow.date,
+      isOpening: rawRow.is_opening as boolean,
+      sipId: rawRow.sip_id as string | null,
+    };
 
     const issue = linkInstallmentIssue(sip, ledgerTx);
     if (issue) throw new HttpError(issue.status, issue.message);
@@ -320,7 +339,7 @@ export async function linkSipInstallment(
         .set({ sipId, updatedAt: new Date() })
         .where(
           and(
-            eq(transactions.id, ledgerTx.id),
+            eq(transactions.id, rawRow.id),
             eq(transactions.userId, userId),
             isNull(transactions.sipId),
           ),
@@ -419,18 +438,28 @@ async function linkedInstallmentRows(
   userId: string,
   sipId: string,
 ): Promise<Array<{ id: string; date: string; amountPaise: number; merchant: string; notes: string }>> {
-  return db
-    .select({
-      id: transactions.id,
-      date: transactions.date,
-      amountPaise: transactions.amountPaise,
-      merchant: transactions.merchant,
-      notes: transactions.notes,
-    })
-    .from(transactions)
-    .where(and(eq(transactions.userId, userId), eq(transactions.sipId, sipId), isNull(transactions.deletedAt)))
-    .orderBy(desc(transactions.date), desc(transactions.createdAt))
-    .limit(INSTALLMENT_CANDIDATE_LIMIT);
+  const result = await db.execute(sql`
+    select t.id, t.date, t.merchant, t.notes, rp.amount_paise
+    from transactions t
+    join lateral (
+      select p.amount_paise
+      from postings p
+      join accounts a on a.id = p.account_id
+      where p.transaction_id = t.id and a.system_kind is null
+      order by p.id
+      limit 1
+    ) rp on true
+    where t.user_id = ${userId} and t.sip_id = ${sipId} and t.deleted_at is null
+    order by t.date desc, t.created_at desc
+    limit ${INSTALLMENT_CANDIDATE_LIMIT}
+  `);
+  return (result.rows as Array<{ id: string; date: string; merchant: string; notes: string; amount_paise: string }>).map((r) => {
+    const amountPaise = Number(r.amount_paise);
+    if (!Number.isSafeInteger(amountPaise)) {
+      throw new HttpError(500, "SIP installment amount exceeded a safe integer — refusing to lose paise");
+    }
+    return { id: r.id, date: r.date, merchant: r.merchant, notes: r.notes, amountPaise };
+  });
 }
 
 /**
@@ -450,19 +479,29 @@ async function unlinkedInstallmentRows(
     .select({
       id: transactions.id,
       date: transactions.date,
-      amountPaise: transactions.amountPaise,
+      amountPaise: postings.amountPaise,
       merchant: transactions.merchant,
       notes: transactions.notes,
     })
     .from(transactions)
+    .innerJoin(
+      postings,
+      and(
+        eq(postings.transactionId, transactions.id),
+        eq(postings.accountId, accountId),
+        gt(postings.amountPaise, 0),
+      ),
+    )
     .where(
       and(
         eq(transactions.userId, userId),
-        eq(transactions.accountId, accountId),
         isNull(transactions.deletedAt),
         isNull(transactions.sipId),
-        eq(transactions.isOpening, false),
-        gt(transactions.amountPaise, 0),
+        sql`not exists (
+          select 1 from postings p2
+          join accounts a2 on a2.id = p2.account_id
+          where p2.transaction_id = ${transactions.id} and a2.system_kind = 'opening'
+        )`,
         gte(transactions.date, bounds.from),
         lte(transactions.date, bounds.to),
       ),

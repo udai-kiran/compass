@@ -14,7 +14,7 @@ import {
 } from "@compass/shared";
 import type { Db } from "../../../db/index.ts";
 import { insuranceHealthCards, insurancePolicies } from "../schema.ts";
-import { transactions } from "../../../db/schema.ts";
+import { accounts, postings, transactions } from "../../../db/schema.ts";
 import { HttpError } from "../../../lib/errors.ts";
 import type { Storage } from "../../../lib/storage.ts";
 import { assertUploadable } from "../../ledger/services/attachments.ts";
@@ -287,21 +287,33 @@ export async function listPolicyPremiums(
   policyId: string,
 ): Promise<PolicyPremiums> {
   await ownedPolicy(db, userId, policyId);
-  const rows = await db.query.transactions.findMany({
-    where: and(
-      eq(transactions.policyId, policyId),
-      eq(transactions.userId, userId),
-      isNull(transactions.deletedAt),
-    ),
-    orderBy: [desc(transactions.date), desc(transactions.id)],
-  });
+  const rows = await db
+    .select({
+      id: transactions.id,
+      date: transactions.date,
+      amountPaise: postings.amountPaise,
+      merchant: transactions.merchant,
+      accountId: postings.accountId,
+      note: transactions.notes,
+    })
+    .from(transactions)
+    .innerJoin(postings, eq(postings.transactionId, transactions.id))
+    .innerJoin(accounts, and(eq(accounts.id, postings.accountId), isNull(accounts.systemKind)))
+    .where(
+      and(
+        eq(transactions.policyId, policyId),
+        eq(transactions.userId, userId),
+        isNull(transactions.deletedAt),
+      ),
+    )
+    .orderBy(desc(transactions.date), desc(transactions.id));
   const items = rows.map((r) => ({
     id: r.id,
     date: r.date,
     amountPaise: r.amountPaise,
     merchant: r.merchant,
     accountId: r.accountId,
-    note: r.notes,
+    note: r.note,
   }));
   const totalPaise = items.reduce((s, i) => s + Math.abs(i.amountPaise), 0);
   return { items, totalPaise, count: items.length };
