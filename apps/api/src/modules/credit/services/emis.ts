@@ -7,7 +7,7 @@ import {
   UpsertEmiDetailsSchema,
 } from "@compass/shared";
 import type { Db, DbOrTx } from "../../../db/index.ts";
-import { accounts, recurringTemplates, transactions } from "../../../db/schema.ts";
+import { accounts, postings, recurringTemplates, transactions } from "../../../db/schema.ts";
 import { emiDetails } from "../schema.ts";
 import { HttpError } from "../../../lib/errors.ts";
 import { assertOwnedCategory } from "../../../lib/ownership.ts";
@@ -374,11 +374,18 @@ export async function upsertEmiDetails(
         const history = await trx
           .select({ id: transactions.id })
           .from(transactions)
+          .innerJoin(
+            postings,
+            and(
+              eq(postings.transactionId, transactions.id),
+              eq(postings.accountId, template.accountId),
+              lt(postings.amountPaise, 0),
+            ),
+          )
           .where(
             and(
               eq(transactions.recurringTemplateId, templateId),
-              eq(transactions.accountId, template.accountId),
-              lt(transactions.amountPaise, 0),
+              eq(transactions.userId, userId),
               isNull(transactions.deletedAt),
             ),
           )
@@ -472,15 +479,21 @@ export async function listEmiInstallments(
     .select({
       id: transactions.id,
       date: transactions.date,
-      amountPaise: transactions.amountPaise,
+      amountPaise: postings.amountPaise,
     })
     .from(transactions)
+    .innerJoin(
+      postings,
+      and(
+        eq(postings.transactionId, transactions.id),
+        eq(postings.accountId, template.accountId),
+        lt(postings.amountPaise, 0),
+      ),
+    )
     .where(
       and(
         eq(transactions.recurringTemplateId, templateId),
         eq(transactions.userId, userId),
-        eq(transactions.accountId, template.accountId),
-        lt(transactions.amountPaise, 0),
         gte(transactions.date, d.startDate),
         isNull(transactions.deletedAt),
       ),

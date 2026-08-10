@@ -123,13 +123,16 @@ export async function ledgerDuesAtDates(
   );
   const agg = await db.execute(sql`
     select ds.stmt_date::text as stmt_date,
-      coalesce(sum(t.amount_paise), 0)::bigint as sum_paise
+      coalesce(sum(sub.amount_paise), 0)::bigint as sum_paise
     from unnest(array[${dateList}]) as ds(stmt_date)
-    left join transactions t
-      on t.account_id = ${accountId}
-      and t.user_id = ${userId}
-      and t.deleted_at is null
-      and t.date < ds.stmt_date
+    left join (
+      select p.amount_paise, t.date
+      from postings p
+      join transactions t on t.id = p.transaction_id
+      where p.account_id = ${accountId}
+        and t.user_id = ${userId}
+        and t.deleted_at is null
+    ) sub on sub.date < ds.stmt_date
     group by ds.stmt_date
   `);
   for (const row of agg.rows as { stmt_date: string; sum_paise: string }[]) {

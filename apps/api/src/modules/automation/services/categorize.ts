@@ -48,11 +48,19 @@ export async function suggestCategoriesFor(
   const restrict = transactionIds && transactionIds.length > 0;
   const rows = (
     await db.execute(sql`
-      select id, merchant, notes, amount_paise
-      from transactions
-      where user_id = ${userId} and deleted_at is null and category_id is null
-        ${restrict ? sql`and id in ${transactionIds}` : sql``}
-      order by date desc
+      select t.id, t.merchant, t.notes, p.amount_paise
+      from postings p
+      join accounts a on a.id = p.account_id
+      join transactions t on t.id = p.transaction_id
+      where t.user_id = ${userId} and t.deleted_at is null and t.category_id is null
+        and a.system_kind is null
+        and not exists (
+          select 1 from postings p2
+          join accounts a2 on a2.id = p2.account_id
+          where p2.transaction_id = t.id and a2.system_kind in ('clearing', 'opening')
+        )
+        ${restrict ? sql`and t.id in (${sql.join(transactionIds!.map((id) => sql`${id}::uuid`), sql`, `)})` : sql``}
+      order by t.date desc
       limit 200
     `)
   ).rows as Array<{ id: string; merchant: string; notes: string; amount_paise: string }>;

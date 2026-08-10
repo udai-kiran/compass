@@ -6,50 +6,56 @@ import { HttpError } from "../../../lib/errors.ts";
 
 type UserTaskRow = typeof userTasks.$inferSelect;
 
-type TaskJoinRow = {
-  task: UserTaskRow;
-  txnId: string | null;
-  txnAccountId: string | null;
-  txnDate: string | null;
-  txnMerchant: string | null;
-  txnAmountPaise: number | null;
+type TaskRawRow = {
+  id: string;
+  user_id: string;
+  title: string;
+  notes: string;
+  due_date: string | null;
+  completed_at: Date | null;
+  transaction_id: string | null;
+  source: string;
+  source_key: string | null;
+  created_at: Date;
+  updated_at: Date;
+  txn_id: string | null;
+  txn_date: string | null;
+  txn_merchant: string | null;
+  txn_account_id: string | null;
+  txn_amount_paise: string | null;
 };
 
-function toUserTask(row: TaskJoinRow): UserTask {
-  const { task } = row;
+function toUserTask(row: TaskRawRow): UserTask {
+  const hasTxn = row.txn_id !== null;
+  let amountPaise: number | null = null;
+  if (hasTxn && row.txn_amount_paise !== null) {
+    amountPaise = Number(row.txn_amount_paise);
+    if (!Number.isSafeInteger(amountPaise)) {
+      throw new HttpError(500, "Task transaction amount exceeded a safe integer — refusing to lose paise");
+    }
+  }
   return {
-    id: task.id,
-    title: task.title,
-    notes: task.notes,
-    dueDate: task.dueDate,
-    completedAt: task.completedAt ? task.completedAt.toISOString() : null,
-    transactionId: task.transactionId,
-    transaction:
-      row.txnId !== null
-        ? {
-            id: row.txnId,
-            accountId: row.txnAccountId!,
-            date: row.txnDate!,
-            merchant: row.txnMerchant!,
-            amountPaise: row.txnAmountPaise!,
-          }
-        : null,
-    source: task.source as UserTask["source"],
-    sourceKey: task.sourceKey,
-    createdAt: task.createdAt.toISOString(),
-    updatedAt: task.updatedAt.toISOString(),
+    id: row.id,
+    title: row.title,
+    notes: row.notes,
+    dueDate: row.due_date,
+    completedAt: row.completed_at ? row.completed_at.toISOString() : null,
+    transactionId: row.transaction_id,
+    transaction: hasTxn
+      ? {
+          id: row.txn_id!,
+          accountId: row.txn_account_id!,
+          date: row.txn_date!,
+          merchant: row.txn_merchant!,
+          amountPaise: amountPaise!,
+        }
+      : null,
+    source: row.source as UserTask["source"],
+    sourceKey: row.source_key,
+    createdAt: row.created_at.toISOString(),
+    updatedAt: row.updated_at.toISOString(),
   };
 }
-
-/**
- * List/get ordering: incomplete before completed, then soonest due date first
- * (nulls last), then most-recently-created first, with the id as a total
- * tiebreak. `.orderBy(t.completedAt, ...)` can't express the boolean-cast
- * completion grouping or an explicit `NULLS LAST`, so this is a raw `sql`
- * expression — same style as `sql\`${goals.sortOrder} desc\`` in
- * services/goals.ts.
- */
-const TASK_ORDER = sql`(${userTasks.completedAt} is not null) asc, ${userTasks.dueDate} asc nulls last, ${userTasks.createdAt} desc, ${userTasks.id} asc`;
 
 /**
  * Ownership predicate applied both at write time (create/update) and to the
@@ -75,36 +81,47 @@ export async function assertOwnedActiveTransaction(
   if (!row) throw new HttpError(404, "Transaction not found");
 }
 
-function taskQuery(db: DbOrTx) {
-  return db
-    .select({
-      task: userTasks,
-      txnId: transactions.id,
-      txnAccountId: transactions.accountId,
-      txnDate: transactions.date,
-      txnMerchant: transactions.merchant,
-      txnAmountPaise: transactions.amountPaise,
-    })
-    .from(userTasks)
-    .leftJoin(
-      transactions,
-      and(
-        eq(transactions.id, userTasks.transactionId),
-        eq(transactions.userId, userTasks.userId),
-        isNull(transactions.deletedAt),
-      ),
-    );
-}
+const TASK_LATERAL_QUERY = sql`
+  select
+    ut.id, ut.user_id, ut.title, ut.notes, ut.due_date,
+    ut.completed_at, ut.transaction_id, ut.source, ut.source_key,
+    ut.created_at, ut.updated_at,
+    t.id as txn_id, t.date as txn_date, t.merchant as txn_merchant,
+    rp.account_id as txn_account_id,
+    rp.amount_paise as txn_amount_paise
+  from user_tasks ut
+  left join transactions t
+    on t.id = ut.transaction_id
+    and t.user_id = ut.user_id
+    and t.deleted_at is null
+  left join lateral (
+    select p.account_id, p.amount_paise
+    from postings p
+    join accounts a on a.id = p.account_id
+    where p.transaction_id = t.id and a.system_kind is null
+    order by p.id
+    limit 1
+  ) rp on t.id is not null
+`;
 
 export async function listUserTasks(db: DbOrTx, userId: string): Promise<UserTask[]> {
-  const rows = await taskQuery(db).where(eq(userTasks.userId, userId)).orderBy(TASK_ORDER);
-  return rows.map(toUserTask);
+  const result = await db.execute(sql`
+    ${TASK_LATERAL_QUERY}
+    where ut.user_id = ${userId}
+    order by (ut.completed_at is not null) asc,
+             ut.due_date asc nulls last,
+             ut.created_at desc, ut.id asc
+  `);
+  return (result.rows as TaskRawRow[]).map(toUserTask);
 }
 
 export async function getUserTask(db: DbOrTx, userId: string, id: string): Promise<UserTask> {
-  const rows = await taskQuery(db).where(and(eq(userTasks.id, id), eq(userTasks.userId, userId)));
-  if (rows.length === 0) throw new HttpError(404, "Task not found");
-  return toUserTask(rows[0]!);
+  const result = await db.execute(sql`
+    ${TASK_LATERAL_QUERY}
+    where ut.user_id = ${userId} and ut.id = ${id}
+  `);
+  if (result.rows.length === 0) throw new HttpError(404, "Task not found");
+  return toUserTask(result.rows[0] as TaskRawRow);
 }
 
 export async function createUserTask(
