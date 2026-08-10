@@ -8,6 +8,7 @@ import { createPool } from "../../../infra/db.ts";
 import { accounts, recurringTemplates, transactions, users } from "../../../db/schema.ts";
 import { HttpError } from "../../../lib/errors.ts";
 import { amortize, createEmi, splitInstallments, stepAmortization, upsertEmiDetails } from "./emis.ts";
+import { createTransaction } from "../../ledger/services/transactions.ts";
 
 // ---------- (a) on-schedule payments match amortize()'s per-row arithmetic exactly ----------
 
@@ -277,8 +278,11 @@ async function insertInstallmentHistory(
   accountId: string,
   templateId: string,
 ): Promise<void> {
-  await db.insert(transactions).values({
-    userId,
+  // Use createTransaction so the dual-write posting is created alongside the
+  // legacy transactions row, mirroring production. The upsertEmiDetails
+  // history check (converted by PR-E) now inner-joins postings; a fixture
+  // with no posting is invisible to that check.
+  await createTransaction(db, userId, {
     accountId,
     date: "2026-01-05",
     amountPaise: -34000,

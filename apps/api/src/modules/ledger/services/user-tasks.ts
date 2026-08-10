@@ -12,12 +12,12 @@ type TaskRawRow = {
   title: string;
   notes: string;
   due_date: string | null;
-  completed_at: Date | null;
+  completed_at: string | null;
   transaction_id: string | null;
   source: string;
   source_key: string | null;
-  created_at: Date;
-  updated_at: Date;
+  created_at: string;
+  updated_at: string;
   txn_id: string | null;
   txn_date: string | null;
   txn_merchant: string | null;
@@ -39,7 +39,7 @@ function toUserTask(row: TaskRawRow): UserTask {
     title: row.title,
     notes: row.notes,
     dueDate: row.due_date,
-    completedAt: row.completed_at ? row.completed_at.toISOString() : null,
+    completedAt: row.completed_at,
     transactionId: row.transaction_id,
     transaction: hasTxn
       ? {
@@ -52,8 +52,8 @@ function toUserTask(row: TaskRawRow): UserTask {
       : null,
     source: row.source as UserTask["source"],
     sourceKey: row.source_key,
-    createdAt: row.created_at.toISOString(),
-    updatedAt: row.updated_at.toISOString(),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   };
 }
 
@@ -84,8 +84,10 @@ export async function assertOwnedActiveTransaction(
 const TASK_LATERAL_QUERY = sql`
   select
     ut.id, ut.user_id, ut.title, ut.notes, ut.due_date,
-    ut.completed_at, ut.transaction_id, ut.source, ut.source_key,
-    ut.created_at, ut.updated_at,
+    to_char(ut.completed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as completed_at,
+    ut.transaction_id, ut.source, ut.source_key,
+    to_char(ut.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as created_at,
+    to_char(ut.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as updated_at,
     t.id as txn_id, t.date as txn_date, t.merchant as txn_merchant,
     rp.account_id as txn_account_id,
     rp.amount_paise as txn_amount_paise

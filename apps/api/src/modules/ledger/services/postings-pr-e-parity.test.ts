@@ -525,7 +525,11 @@ test("postings-pr-e-parity: PE7 — search returns one result per transaction, r
   const results = await search(db, userId, "PE7Merchant");
   assert.equal(results.transactions.length, 1, "transfer legs excluded by Pattern C");
   assert.equal(results.transactions[0]!.amountPaise, -600, "amount from posting");
-  assert.equal(results.transactions[0]!.merchant, "PE7Merchant");
+  // createTransaction normalises merchant on write via normalizeMerchant/titleCase:
+  // lowercase then capitalise-after-whitespace, so "PE7Merchant" (one token, no noise
+  // filter hit) is stored as "Pe7merchant". search.ts returns the stored value verbatim.
+  // This normalisation predates PR-E and is not a postings-conversion regression.
+  assert.equal(results.transactions[0]!.merchant, "Pe7merchant");
 
   assert.deepEqual(await findInconsistentPostings(db, userId), []);
 });

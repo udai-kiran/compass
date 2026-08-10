@@ -180,9 +180,11 @@ export async function buildApp(config: Config): Promise<FastifyInstance> {
   registerLedgerCacheSubscriber(app);
 
   // Dual-write postings backfill/repair over ALL existing data, in the quiescent
-  // window BEFORE any BullMQ worker (startJobs) or HTTP traffic. PR-A non-blocking:
-  // every reader is still legacy-derived, so a failure cannot surface posting-derived
-  // wrong data — but log it loudly (PR-B's reader-cutover gate depends on this being clean).
+  // window BEFORE any BullMQ worker (startJobs) or HTTP traffic. PR-E converted
+  // readers to postings-derived, so a reconciliation failure here CAN surface wrong
+  // data — log it loudly so the operator is aware. A failed restore reconciliation
+  // (restore-user.ts swallows the error) can leave a transaction without postings
+  // indefinitely; those transactions will be silently absent from converted readers.
   await reconcileAllPostings(app.db)
     .then((pass) => {
       if (pass.failures.length > 0)
