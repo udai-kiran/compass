@@ -1,7 +1,8 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
+import { z } from "zod";
 import Fastify, { type FastifyInstance } from "fastify";
 import { serializerCompiler, validatorCompiler } from "fastify-type-provider-zod";
 import { loadConfig } from "../../../config.ts";
@@ -283,6 +284,116 @@ test("AC8 (route half): POST /api/user-tasks with source/sourceKey in the body i
   assert.equal(rows.length, 1);
   assert.equal(rows[0]!.source, "user");
   assert.equal(rows[0]!.sourceKey, null);
+});
+
+// ---------- AC2b + AC2: timestamp ISO-8601 formatting and completedAt null/non-null, via both routes ----------
+
+// AC2b: a dedicated regression test with non-zero microseconds. Without this fixture
+// a future change could accidentally exercise only millisecond precision and miss the
+// bug (raw pg form "2026-07-30 12:04:02.460779+00" fails z.iso.datetime() per TASK.md).
+// AC2: completedAt is null for incomplete and a strict ISO string for completed,
+// asserted through both the list and get routes (D5).
+test("AC2b+AC2 (route): timestamps with non-zero microseconds are returned as z.iso.datetime()-valid strings; completedAt is null for incomplete and ISO for completed, via both list and get routes", async (t) => {
+  const userId = await createUser();
+  const sessionId = await createSession(app.redis, userId);
+  t.after(async () => {
+    await destroySession(app.redis, sessionId);
+    await cleanupUser(userId);
+  });
+
+  // Create two tasks via the service so they exist with valid IDs.
+  const incomplete = await createUserTask(app.db, userId, {
+    title: "Incomplete microsecond task",
+    notes: "",
+    transactionId: null,
+    dueDate: null,
+  });
+  const completed = await createUserTask(app.db, userId, {
+    title: "Completed microsecond task",
+    notes: "",
+    transactionId: null,
+    dueDate: null,
+  });
+
+  // Overwrite timestamps with known non-zero microsecond values using raw SQL.
+  // JS Date has only millisecond precision; raw SQL is the only way to seed
+  // timestamps with sub-millisecond digits (e.g. .460779) that reproduce the bug.
+  await app.db.execute(sql`
+    UPDATE user_tasks
+    SET created_at   = '2026-07-30 12:04:02.460779+00',
+        updated_at   = '2026-07-30 12:04:03.123456+00',
+        completed_at = NULL
+    WHERE id = ${incomplete.id}
+  `);
+  await app.db.execute(sql`
+    UPDATE user_tasks
+    SET created_at   = '2026-07-30 12:04:02.460779+00',
+        updated_at   = '2026-07-30 12:04:03.123456+00',
+        completed_at = '2026-07-30 12:04:04.789012+00'
+    WHERE id = ${completed.id}
+  `);
+
+  // --- list route ---
+  const listRes = await app.inject({
+    method: "GET",
+    url: "/api/user-tasks",
+    cookies: sessionCookie(sessionId),
+  });
+  assert.equal(listRes.statusCode, 200, `list route returned ${listRes.statusCode}: ${listRes.body}`);
+  const listBody = listRes.json() as Array<{
+    id: string;
+    createdAt: string;
+    updatedAt: string;
+    completedAt: string | null;
+  }>;
+
+  const incompleteInList = listBody.find((r) => r.id === incomplete.id);
+  const completedInList = listBody.find((r) => r.id === completed.id);
+  assert.ok(incompleteInList, "incomplete task must appear in list");
+  assert.ok(completedInList, "completed task must appear in list");
+
+  // Each timestamp must be accepted by z.iso.datetime() — this is the criterion
+  // that the raw pg form "2026-07-30 12:04:02.460779+00" would fail.
+  assert.doesNotThrow(() => z.iso.datetime().parse(incompleteInList!.createdAt), "list: incomplete createdAt must be z.iso.datetime()");
+  assert.doesNotThrow(() => z.iso.datetime().parse(incompleteInList!.updatedAt), "list: incomplete updatedAt must be z.iso.datetime()");
+  assert.equal(incompleteInList!.completedAt, null, "AC2: incomplete task completedAt must be null in list");
+
+  assert.doesNotThrow(() => z.iso.datetime().parse(completedInList!.createdAt), "list: completed createdAt must be z.iso.datetime()");
+  assert.doesNotThrow(() => z.iso.datetime().parse(completedInList!.updatedAt), "list: completed updatedAt must be z.iso.datetime()");
+  assert.ok(completedInList!.completedAt !== null, "AC2: completed task completedAt must not be null in list");
+  assert.doesNotThrow(() => z.iso.datetime().parse(completedInList!.completedAt!), "list: completed completedAt must be z.iso.datetime()");
+
+  // --- get route (individual) ---
+  const getIncompleteRes = await app.inject({
+    method: "GET",
+    url: `/api/user-tasks/${incomplete.id}`,
+    cookies: sessionCookie(sessionId),
+  });
+  assert.equal(getIncompleteRes.statusCode, 200, `get incomplete returned ${getIncompleteRes.statusCode}: ${getIncompleteRes.body}`);
+  const getIncompleteBody = getIncompleteRes.json() as {
+    createdAt: string;
+    updatedAt: string;
+    completedAt: string | null;
+  };
+  assert.doesNotThrow(() => z.iso.datetime().parse(getIncompleteBody.createdAt), "get: incomplete createdAt must be z.iso.datetime()");
+  assert.doesNotThrow(() => z.iso.datetime().parse(getIncompleteBody.updatedAt), "get: incomplete updatedAt must be z.iso.datetime()");
+  assert.equal(getIncompleteBody.completedAt, null, "AC2: incomplete task completedAt must be null in get");
+
+  const getCompletedRes = await app.inject({
+    method: "GET",
+    url: `/api/user-tasks/${completed.id}`,
+    cookies: sessionCookie(sessionId),
+  });
+  assert.equal(getCompletedRes.statusCode, 200, `get completed returned ${getCompletedRes.statusCode}: ${getCompletedRes.body}`);
+  const getCompletedBody = getCompletedRes.json() as {
+    createdAt: string;
+    updatedAt: string;
+    completedAt: string | null;
+  };
+  assert.doesNotThrow(() => z.iso.datetime().parse(getCompletedBody.createdAt), "get: completed createdAt must be z.iso.datetime()");
+  assert.doesNotThrow(() => z.iso.datetime().parse(getCompletedBody.updatedAt), "get: completed updatedAt must be z.iso.datetime()");
+  assert.ok(getCompletedBody.completedAt !== null, "AC2: completed task completedAt must not be null in get");
+  assert.doesNotThrow(() => z.iso.datetime().parse(getCompletedBody.completedAt!), "get: completed completedAt must be z.iso.datetime()");
 });
 
 // ---------- AC12: demo-mode mutating requests are rejected, with no DB effect ----------

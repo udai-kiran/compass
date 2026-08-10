@@ -305,7 +305,7 @@ export async function linkSipInstallment(
           id: string;
           date: string;
           sip_id: string | null;
-          deleted_at: Date | null;
+          deleted_at: string | null;
           account_id: string | null;
           amount_paise: string | null;
           is_opening: boolean;
