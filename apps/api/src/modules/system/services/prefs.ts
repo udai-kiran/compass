@@ -7,6 +7,7 @@ import { bankCashBalances } from "../../ledger/services/balances.ts";
 import { createNotification } from "./notifications.ts";
 import { assertOwnedAccount } from "../../../lib/ownership.ts";
 import { HttpError } from "../../../lib/errors.ts";
+import { hasCategoryDimension } from "../../../lib/ledger-sql.ts";
 
 type PrefRow = typeof notificationPrefs.$inferSelect;
 
@@ -99,12 +100,7 @@ export async function evaluateLargeTransactions(db: Db, userId: string): Promise
         and abs(p.amount_paise) >= ${pref.thresholdPaise}
         and a.system_kind is null
         ${pref.accountId === null ? sql`` : sql`and a.id = ${pref.accountId}`}
-        and not exists (
-          select 1 from postings p2
-          join accounts a2 on a2.id = p2.account_id
-          where p2.transaction_id = t.id
-            and a2.system_kind in ('clearing', 'opening')
-        )
+        and ${hasCategoryDimension()}
     `);
     for (const t of res.rows as Array<{ id: string; merchant: string; amount_paise: string; date: string }>) {
       const amount = Number(t.amount_paise);

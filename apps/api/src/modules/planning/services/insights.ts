@@ -4,6 +4,7 @@ import type { Db } from "../../../db/index.ts";
 import { incomeExpense, periodRange, prevPeriodKey } from "../../../lib/periods.ts";
 import { HttpError } from "../../../lib/errors.ts";
 import { accountBalancesAtDate } from "../../ledger/services/accounts.ts";
+import { hasCategoryDimension } from "../../../lib/ledger-sql.ts";
 
 // ---------- pure, tested helpers ----------
 
@@ -141,12 +142,7 @@ async function topMerchants(
       and p.amount_paise < 0
       and t.merchant <> ''
       and a.system_kind is null
-      and not exists (
-        select 1 from postings p2
-        join accounts a2 on a2.id = p2.account_id
-        where p2.transaction_id = t.id
-          and a2.system_kind in ('clearing', 'opening')
-      )
+      and ${hasCategoryDimension()}
     group by t.merchant order by spent desc limit ${limit}
   `);
   return (res.rows as Array<{ merchant: string; spent: string; n: number }>).map((r) => {
@@ -198,12 +194,7 @@ export async function getInsights(db: Db, userId: string, periodKey: string): Pr
       and t.date >= ${from} and t.date <= ${to}
       and p.amount_paise < 0
       and a.system_kind is null
-      and not exists (
-        select 1 from postings p2
-        join accounts a2 on a2.id = p2.account_id
-        where p2.transaction_id = t.id
-          and a2.system_kind in ('clearing', 'opening')
-      )
+      and ${hasCategoryDimension()}
     order by p.amount_paise asc limit 1
   `);
   const lg = largest.rows[0] as { id: string; merchant: string; amt: string; date: string } | undefined;

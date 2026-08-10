@@ -7,6 +7,7 @@ import {
 } from "@compass/shared";
 import type { Db } from "../db/index.ts";
 import { HttpError } from "./errors.ts";
+import { hasCategoryDimension } from "./ledger-sql.ts";
 
 /**
  * SQL list of the liability account types. A positive amount on one of these (a
@@ -71,11 +72,6 @@ export async function spentByCategory(
       and t.date >= ${from} and t.date <= ${to}
       and a.system_kind = 'expenses'
       and p.amount_paise > 0
-      and not exists (
-        select 1 from postings p2
-        join accounts a2 on a2.id = p2.account_id
-        where p2.transaction_id = t.id and a2.system_kind = 'clearing'
-      )
     group by p.category_id
   `);
   const out = new Map<string | null, number>();
@@ -153,11 +149,6 @@ export async function spendByNecessity(
       and t.date >= ${from} and t.date <= ${to}
       and a.system_kind = 'expenses'
       and p.amount_paise > 0
-      and not exists (
-        select 1 from postings p2
-        join accounts a2 on a2.id = p2.account_id
-        where p2.transaction_id = t.id and a2.system_kind = 'clearing'
-      )
     group by t.necessity, c.necessity, c.kind
   `);
   type Row = {
@@ -186,8 +177,8 @@ export async function spendByNecessity(
  *
  * Anchors on the REAL posting (`a.system_kind IS NULL`) so mixed-sign splits
  * (e.g. parent -70, splits [-100, +30]) count the parent amount (-70 → expense
- * 70), not the individual split amounts. Opening rows and Clearing legs are
- * excluded via the `system_kind IN ('clearing', 'opening')` NOT EXISTS guard.
+ * 70), not the individual split amounts. Transfers and openings are excluded by
+ * `hasCategoryDimension()` — neither carries an Expenses/Income counter.
  */
 export async function incomeExpense(
   db: Db,
@@ -215,12 +206,7 @@ export async function incomeExpense(
       and t.deleted_at is null
       and t.date >= ${from} and t.date <= ${to}
       and a.system_kind is null
-      and not exists (
-        select 1 from postings p2
-        join accounts a2 on a2.id = p2.account_id
-        where p2.transaction_id = t.id
-          and a2.system_kind in ('clearing', 'opening')
-      )
+      and ${hasCategoryDimension()}
   `);
   const row = res.rows[0] as { income: string; expense: string };
   const incomePaise = Number(row.income);

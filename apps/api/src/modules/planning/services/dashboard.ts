@@ -14,6 +14,7 @@ import {
   spentByCategory,
 } from "../../../lib/periods.ts";
 import { listTransactions } from "../../ledger/services/transactions.ts";
+import { hasCategoryDimension } from "../../../lib/ledger-sql.ts";
 
 const TTL = 300;
 
@@ -59,7 +60,8 @@ export async function getTrends(db: Db, redis: Redis, userId: string, months: nu
     const from = `${start}-01`;
     const { to } = periodRange("monthly", end);
 
-    // Transfers and opening rows are excluded via the NOT EXISTS (Clearing/Opening posting) guard.
+    // Transfers and openings are excluded by hasCategoryDimension(): neither
+    // has Expenses/Income counter postings to sum.
     const totals = await db.execute(sql`
       select to_char(t.date, 'YYYY-MM') as month,
         coalesce(sum(case when p.amount_paise > 0 and a.type not in (${LIABILITY_TYPES_SQL})
@@ -71,12 +73,7 @@ export async function getTrends(db: Db, redis: Redis, userId: string, months: nu
       where t.user_id = ${userId} and t.deleted_at is null
         and t.date >= ${from} and t.date <= ${to}
         and a.system_kind is null
-        and not exists (
-          select 1 from postings p2
-          join accounts a2 on a2.id = p2.account_id
-          where p2.transaction_id = t.id
-            and a2.system_kind in ('clearing', 'opening')
-        )
+        and ${hasCategoryDimension()}
       group by 1
     `);
     const byCategory = await db.execute(sql`
@@ -89,11 +86,6 @@ export async function getTrends(db: Db, redis: Redis, userId: string, months: nu
         and t.date >= ${from} and t.date <= ${to}
         and a.system_kind = 'expenses'
         and p.amount_paise > 0
-        and not exists (
-          select 1 from postings p2
-          join accounts a2 on a2.id = p2.account_id
-          where p2.transaction_id = t.id and a2.system_kind = 'clearing'
-        )
       group by 1, 2
     `);
 

@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import type { AiProvider } from "@compass/ai";
 import { redactPii, type AiCategorySuggestion, type RedactionIdentity } from "@compass/shared";
 import type { Db } from "../../../db/index.ts";
+import { hasCategoryDimension } from "../../../lib/ledger-sql.ts";
 
 /**
  * The user's own identifiers, to redact *their* PII from the free-text note sent
@@ -54,11 +55,7 @@ export async function suggestCategoriesFor(
       join transactions t on t.id = p.transaction_id
       where t.user_id = ${userId} and t.deleted_at is null and t.category_id is null
         and a.system_kind is null
-        and not exists (
-          select 1 from postings p2
-          join accounts a2 on a2.id = p2.account_id
-          where p2.transaction_id = t.id and a2.system_kind in ('clearing', 'opening')
-        )
+        and ${hasCategoryDimension()}
         ${restrict ? sql`and t.id in (${sql.join(transactionIds!.map((id) => sql`${id}::uuid`), sql`, `)})` : sql``}
       order by t.date desc
       limit 200
