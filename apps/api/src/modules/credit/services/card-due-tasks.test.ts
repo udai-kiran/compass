@@ -10,6 +10,7 @@ import { cardDetails, cardIssuerSettings } from "../schema.ts";
 import { cardCycle, lastOccurrence, nextOccurrence } from "./cycle-math.ts";
 import { listCardHolders } from "./cards.ts";
 import { materializeCardDueTasks, truncateTaskTitle } from "./card-due-tasks.ts";
+import { createTransaction } from "../../ledger/services/transactions.ts";
 
 // DB-backed: this repo has no DB-mocking infrastructure (see emis.test.ts's
 // identical DB-backed section). Export DATABASE_URL before running
@@ -172,13 +173,14 @@ async function createTxn(
   amountPaise: number,
   opts: { deleted?: boolean } = {},
 ): Promise<void> {
-  await db.insert(transactions).values({
-    userId,
-    accountId,
-    date,
-    amountPaise,
-    deletedAt: opts.deleted ? new Date() : null,
-  });
+  // Use createTransaction so the dual-write posting is created alongside the
+  // legacy transactions row, mirroring production. The readers that were
+  // converted by PR-E now query postings, so a fixture with no posting would
+  // be invisible to those readers.
+  const txn = await createTransaction(db, userId, { accountId, date, amountPaise });
+  if (opts.deleted) {
+    await db.update(transactions).set({ deletedAt: new Date() }).where(eq(transactions.id, txn.id));
+  }
 }
 
 async function cleanupUser(userId: string): Promise<void> {

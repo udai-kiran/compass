@@ -8,7 +8,8 @@ import { createPool } from "../../../infra/db.ts";
 import { accounts, transactions, userTasks } from "../schema.ts";
 import { users } from "../../../db/schema.ts";
 import { HttpError } from "../../../lib/errors.ts";
-import { softDeleteTransaction } from "./transactions.ts";
+import { softDeleteTransaction, createTransaction } from "./transactions.ts";
+import { seedSystemAccounts } from "./post-entry.ts";
 import {
   createUserTask,
   deleteUserTask,
@@ -65,17 +66,18 @@ async function createTxn(
   accountId: string,
   overrides: Partial<{ date: string; amountPaise: number; merchant: string }> = {},
 ): Promise<string> {
-  const [t] = await db
-    .insert(transactions)
-    .values({
-      userId,
-      accountId,
-      date: overrides.date ?? "2026-01-05",
-      amountPaise: overrides.amountPaise ?? -1000,
-      merchant: overrides.merchant ?? "Test merchant",
-    })
-    .returning({ id: transactions.id });
-  return t!.id;
+  // Seed system accounts before calling createTransaction (required by the real service).
+  // createTransaction then calls resolveSystemAccounts internally (idempotent no-op if
+  // already seeded) and dual-writes the full balanced posting family alongside the
+  // transactions row — which is the production shape the TASK_LATERAL_QUERY expects.
+  await seedSystemAccounts(db, userId);
+  const txn = await createTransaction(db, userId, {
+    accountId,
+    date: overrides.date ?? "2026-01-05",
+    amountPaise: overrides.amountPaise ?? -1000,
+    merchant: overrides.merchant ?? "Test merchant",
+  });
+  return txn.id;
 }
 
 /** Deletes everything a test user (and its accounts/transactions) created. */

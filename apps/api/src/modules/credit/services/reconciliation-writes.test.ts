@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import test, { after } from "node:test";
 import { randomUUID } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { createDb } from "../../../db/index.ts";
 import { createPool } from "../../../infra/db.ts";
-import { accounts, emailIngestions, transactions, users } from "../../../db/schema.ts";
+import { accounts, emailIngestions, postings, transactions, users } from "../../../db/schema.ts";
 import { cardDetails, statementReconciliations } from "../schema.ts";
 import { HttpError, pgError } from "../../../lib/errors.ts";
 import { listAccounts } from "../../ledger/services/accounts.ts";
+import { createTransaction } from "../../ledger/services/transactions.ts";
 import { getCardActivity } from "./cards.ts";
 import { listReconciliations } from "./reconciliation-reads.ts";
 import { absorbCarryover, recomputeReconciliation, type AbsorbCarryoverHooks } from "./reconciliation-writes.ts";
@@ -63,13 +64,13 @@ async function createTxn(
   amountPaise: number,
   opts: { deleted?: boolean } = {},
 ): Promise<void> {
-  await db.insert(transactions).values({
-    userId,
-    accountId,
-    date,
-    amountPaise,
-    deletedAt: opts.deleted ? new Date() : null,
-  });
+  // Use createTransaction so the dual-write posting is created alongside the
+  // legacy transactions row, mirroring production. The readers converted by
+  // PR-E now query postings; a fixture with no posting is invisible to them.
+  const txn = await createTransaction(db, userId, { accountId, date, amountPaise });
+  if (opts.deleted) {
+    await db.update(transactions).set({ deletedAt: new Date() }).where(eq(transactions.id, txn.id));
+  }
 }
 
 /** A minimal email_ingestions row so a reconciliation can carry a valid ingestionId. */
@@ -674,22 +675,30 @@ test("absorbCarryover: a concurrent account-row lock (an opening-balance edit in
 // on A's still-open xid) and reproduced twice.
 //
 // This test instead has B UPDATE a pre-existing pre-statement-date
-// transaction's `amount_paise` (never touching `account_id`, so no FK
-// re-check and no lock on the `accounts` row is taken). This still
-// constructs the same two-edge cycle the recipe calls for: A's earlier
-// ledger aggregate read the row's OLD amount (A rw-> B, since B later
-// overwrites what A read), and B reads the account row A will write (B rw->
-// A, the reverse edge) before committing — the same dependency shape, via a
-// write absorb's own aggregate query is equally blind to until it re-reads.
+// transaction's `amount_paise` AND both legs of its posting family.
+// After PR-E, the aggregate `ledgerDuesAtDates` reads from `postings`,
+// not `transactions` — so it is the POSTING update that creates the
+// A rw-> B anti-dependency (A read the posting amounts B will overwrite).
+// The `transactions` update is kept only so the legacy row stays
+// consistent with its postings; it is NOT what triggers 40001. Both
+// posting legs are updated together via the CASE expression to keep the
+// family zero-sum (matching `buildOrdinaryPostings`'s balanced pair).
+// The deadlock-avoidance property still holds: no FK column
+// (`account_id`, `transaction_id`) appears in any SET list, so Postgres
+// performs no FK re-check and takes no `FOR KEY SHARE` lock on the
+// `accounts` row that connection A holds `FOR UPDATE`.
+// `rebuildPostingsForTransaction` must NOT be used here: it deletes and
+// re-inserts postings, and those INSERTs would perform FK checks and
+// reintroduce the deadlock. Do not "simplify" by dropping the postings
+// UPDATE — that silently makes these tests vacuous (no anti-dependency,
+// no 40001, no retry), which is exactly the regression PR-E introduced
+// and that this change repaired.
 test("absorbCarryover: a genuine SSI dependency cycle forces 40001, and withSerializableRetry succeeds off the fresh ledger", async (t) => {
   const userId = await createUser();
   t.after(() => cleanupUser(userId));
   const accountId = await createCardAccount(userId, 0);
   const close = "2029-05-20";
-  const [seed] = await db
-    .insert(transactions)
-    .values({ userId, accountId, date: "2029-05-05", amountPaise: -100000 })
-    .returning({ id: transactions.id });
+  const seed = await createTransaction(db, userId, { accountId, date: "2029-05-05", amountPaise: -100000 });
   const reconciliationId = await createReconciliation(userId, accountId, {
     statementDate: close,
     totalDuePaise: 500000,
@@ -702,9 +711,9 @@ test("absorbCarryover: a genuine SSI dependency cycle forces 40001, and withSeri
       if (hookCalls > 1) return; // second attempt: inert, per the recipe's step 4
       // Connection B: its own serializable transaction. FIRST reads the
       // account row (the reverse edge — B reads what A will later write),
-      // THEN overwrites the pre-existing pre-statement-date ledger row's
-      // amount (the write A's earlier aggregate read is now stale against)
-      // and commits.
+      // THEN updates the transaction's amount_paise AND both posting legs
+      // (the postings update is the anti-dependency: A's earlier postings
+      // aggregate read is now stale against B's overwrite) and commits.
       await db.transaction(
         async (txB) => {
           await txB
@@ -714,7 +723,13 @@ test("absorbCarryover: a genuine SSI dependency cycle forces 40001, and withSeri
           await txB
             .update(transactions)
             .set({ amountPaise: -150000 })
-            .where(eq(transactions.id, seed!.id));
+            .where(eq(transactions.id, seed.id));
+          const updatedPostings = await txB
+            .update(postings)
+            .set({ amountPaise: sql`(CASE WHEN ${postings.accountId} = ${accountId} THEN ${-150000} ELSE ${150000} END)::bigint` })
+            .where(eq(postings.transactionId, seed.id))
+            .returning();
+          assert.equal(updatedPostings.length, 2, "exactly two posting rows updated (card leg + counter-leg), keeping the family zero-sum");
         },
         { isolationLevel: "serializable" },
       );
@@ -738,10 +753,7 @@ test("absorbCarryover: an SSI cycle reproduced on BOTH attempts surfaces 40001 w
   t.after(() => cleanupUser(userId));
   const accountId = await createCardAccount(userId, 0);
   const close = "2029-06-20";
-  const [seed] = await db
-    .insert(transactions)
-    .values({ userId, accountId, date: "2029-06-05", amountPaise: -100000 })
-    .returning({ id: transactions.id });
+  const seed = await createTransaction(db, userId, { accountId, date: "2029-06-05", amountPaise: -100000 });
   const reconciliationId = await createReconciliation(userId, accountId, {
     statementDate: close,
     totalDuePaise: 500000,
@@ -760,10 +772,17 @@ test("absorbCarryover: an SSI cycle reproduced on BOTH attempts surfaces 40001 w
             .select()
             .from(accounts)
             .where(and(eq(accounts.id, accountId), eq(accounts.userId, userId)));
+          const newAmount = -100000 - hookCalls * 1000;
           await txB
             .update(transactions)
-            .set({ amountPaise: -100000 - hookCalls * 1000 })
-            .where(eq(transactions.id, seed!.id));
+            .set({ amountPaise: newAmount })
+            .where(eq(transactions.id, seed.id));
+          const updatedPostings = await txB
+            .update(postings)
+            .set({ amountPaise: sql`(CASE WHEN ${postings.accountId} = ${accountId} THEN ${newAmount} ELSE ${-newAmount} END)::bigint` })
+            .where(eq(postings.transactionId, seed.id))
+            .returning();
+          assert.equal(updatedPostings.length, 2, "exactly two posting rows updated (card leg + counter-leg), keeping the family zero-sum");
         },
         { isolationLevel: "serializable" },
       );
