@@ -228,6 +228,12 @@ export interface LedgerTxnRow {
  * The card's ledger transactions in a date range — the pool the statement
  * matcher checks each line against. Range is the lines' own dates padded by the
  * posting-lag window (see matchLinesToLedger), never the statement period.
+ *
+ * The signed amount and the account scope both come from the `postings` table
+ * (D1-D3, TASK.md §design-rulings). Transfer legs and opening rows on the card
+ * account are deliberately INCLUDED — a card repayment booked as a transfer
+ * must still match its statement payment line (D1). The `transactions.account_id`
+ * and `transactions.amount_paise` legacy columns are not read here.
  */
 export async function loadCardLedgerTxns(
   pool: pg.Pool,
@@ -243,20 +249,35 @@ export async function loadCardLedgerTxns(
     occurred_at_ts: string | null;
     merchant: string;
   }>(
-    `select id, amount_paise, to_char(date, 'YYYY-MM-DD') as date,
-            to_char(occurred_at, 'YYYY-MM-DD"T"HH24:MI:SSOF') as occurred_at_ts, merchant
-       from transactions
-      where user_id = $1 and account_id = $2 and deleted_at is null
-        and date between $3 and $4`,
+    `select t.id,
+            sum(p.amount_paise)::bigint as amount_paise,
+            to_char(t.date, 'YYYY-MM-DD') as date,
+            to_char(t.occurred_at, 'YYYY-MM-DD"T"HH24:MI:SSOF') as occurred_at_ts,
+            t.merchant
+       from postings p
+       join transactions t on t.id = p.transaction_id
+      where t.user_id = $1
+        and p.account_id = $2
+        and t.deleted_at is null
+        and t.date between $3 and $4
+      group by t.id, t.date, t.occurred_at, t.merchant`,
     [userId, accountId, fromDate, toDate],
   );
-  return res.rows.map((r) => ({
-    id: r.id,
-    amountPaise: Number(r.amount_paise),
-    date: r.date,
-    occurredAtTs: r.occurred_at_ts,
-    merchant: r.merchant,
-  }));
+  return res.rows.map((r) => {
+    const amountPaise = Number(r.amount_paise);
+    if (!Number.isSafeInteger(amountPaise)) {
+      throw new Error(
+        "Card ledger aggregate exceeded a safe integer — refusing to lose paise",
+      );
+    }
+    return {
+      id: r.id,
+      amountPaise,
+      date: r.date,
+      occurredAtTs: r.occurred_at_ts,
+      merchant: r.merchant,
+    };
+  });
 }
 
 /** An inbox row plus how it should land: a plain pending draft, or a matched duplicate. */
