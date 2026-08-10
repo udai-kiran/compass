@@ -262,29 +262,98 @@ export function buildTransferLegPostings(input: {
 // ---------------------------------------------------------------------------
 
 /**
- * Classifies a set of postings into one of four shapes.
- * Throws HttpError(400) for unrecognised / degenerate shapes.
+ * Classifies a set of postings into one of four shapes. Postings are the
+ * AUTHORITY for a transaction's shape (PR-G1) — nothing derives it from the
+ * legacy columns any more, so this function, not `transfer_links` /
+ * `transaction_splits` / `is_opening`, is what decides what a transaction is.
  *
- * NOTE (PR-A→PR-B): a 1-real + 1-Clearing leg pair (from
- * `buildTransferLegPostings`, the dual-write per-leg transfer shape) is not
- * one of the four shapes classified here — recognising/reading it back is a
- * PR-B reader concern. This function is not called against Clearing legs
- * during PR-A.
+ * Counts are EXACT, and an unrecognised combination throws rather than
+ * degrading to a nearby shape: a miscounted posting set is corrupt data, and
+ * guessing at it is how money goes missing quietly.
+ *
+ *   ordinary — exactly 1 real + exactly 1 Expenses/Income counter
+ *   split    — exactly 1 real + 2 or more Expenses/Income counters
+ *   transfer — exactly 2 real, no system postings
+ *   opening  — exactly 1 real + exactly 1 Opening counter
+ *
+ * A single-element split is deliberately classified `ordinary`: with postings
+ * as the authority it IS an ordinary transaction with one category, and there
+ * is no legacy `transaction_splits` row left to say otherwise.
+ *
+ * Clearing postings are rejected outright. They were the transitional
+ * dual-write representation of a transfer leg (PLAN-dualwrite.md Q4), retired
+ * in PR-G1 — encountering one means the database predates the recreate, which
+ * the boot check refuses to start on.
  */
 export function classifyShape(
   postings: readonly PostingDraft[],
   systemKindOf: (accountId: string) => SystemKind | null,
 ): "ordinary" | "split" | "transfer" | "opening" {
   const kinds = postings.map((p) => systemKindOf(p.accountId));
+  if (kinds.some((k) => k === "clearing")) {
+    throw new HttpError(
+      400,
+      "Clearing postings were retired in PR-G1 — this database predates the postings recreate",
+    );
+  }
   const systemCount = kinds.filter((k) => k !== null).length;
   const realCount = postings.length - systemCount;
+  const openingCount = kinds.filter((k) => k === "opening").length;
 
-  if (kinds.some((k) => k === "opening")) return "opening";
-  if (systemCount === 0 && realCount >= 2) return "transfer";
-  if (realCount === 1 && systemCount === 1) return "ordinary";
-  if (realCount === 1 && systemCount >= 2) return "split";
+  if (realCount === 2 && systemCount === 0) return "transfer";
+  if (realCount === 1 && openingCount === 1 && systemCount === 1) return "opening";
+  if (realCount === 1 && openingCount === 0) {
+    if (systemCount === 1) return "ordinary";
+    if (systemCount >= 2) return "split";
+  }
 
   throw new HttpError(400, "unrecognized posting shape");
+}
+
+/**
+ * The transaction's PRIMARY REAL POSTING — the one a transaction-level reader
+ * projects when it must show a single account and amount.
+ *
+ * Deliberately not "the negative posting": for income, and for an opening on
+ * an asset account, the real posting is POSITIVE and the negative one is a
+ * system account, so a sign rule projects the wrong leg. The rule is "the
+ * posting on a non-system account", and for a transfer — which has two — the
+ * outflow (negative) leg, so a transfer reads as money leaving its source.
+ *
+ * Account-scoped readers must NOT use this; they want `legForAccount`, because
+ * from the destination account's perspective a transfer is an inflow.
+ */
+export function primaryRealLeg(
+  postings: readonly PostingDraft[],
+  systemKindOf: (accountId: string) => SystemKind | null,
+): PostingDraft {
+  const reals = postings.filter((p) => systemKindOf(p.accountId) === null);
+  if (reals.length === 1) return reals[0]!;
+  if (reals.length === 2) {
+    const outflow = reals.find((p) => p.amountPaise < 0);
+    if (!outflow) {
+      throw new HttpError(400, "transfer has no outflow leg");
+    }
+    return outflow;
+  }
+  throw new HttpError(400, `expected one or two real postings, found ${reals.length}`);
+}
+
+/**
+ * The posting on a specific account — what an account ledger shows for this
+ * transaction. Returns null when the transaction does not touch the account.
+ * Throws when it touches it more than once, which no valid shape does.
+ */
+export function legForAccount(
+  postings: readonly PostingDraft[],
+  accountId: string,
+): PostingDraft | null {
+  const legs = postings.filter((p) => p.accountId === accountId);
+  if (legs.length === 0) return null;
+  if (legs.length > 1) {
+    throw new HttpError(400, `transaction touches account ${accountId} ${legs.length} times`);
+  }
+  return legs[0]!;
 }
 
 /**
