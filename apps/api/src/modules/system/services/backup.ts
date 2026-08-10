@@ -123,21 +123,71 @@ export async function exportUserData(db: Db, userId: string): Promise<Record<str
   return out;
 }
 
-/** A user's transactions as CSV. */
+/**
+ * A user's transactions as CSV.
+ *
+ * Amount, Account and Category are derived from the `postings` table, not from
+ * the legacy `transactions.amount_paise` / `account_id` / `category_id` columns.
+ * Two independent LEFT JOIN LATERAL sub-queries keep cardinality exactly one row
+ * per transaction even for split transactions:
+ *   - The real posting (`system_kind IS NULL`) supplies Amount and Account.
+ *   - The counter postings (`system_kind IS NOT NULL`) supply Category as the
+ *     sorted distinct set of category names joined with `"; "`.
+ *
+ * Deliberate divergences from the legacy CSV shape (design ruling D9):
+ *   - A split transaction's Category is the joined sorted distinct counter
+ *     categories, not the stale parent `category_id`.
+ *   - A transfer leg, an opening row, or a postings-less transaction exports
+ *     blank Category, regardless of any legacy `category_id` still set.
+ *   - A transaction with no real posting exports blank Amount AND blank Account,
+ *     never `0` (D3).
+ *
+ * AC18 — bigint safety: `postings.amount_paise` is a bigint column; the pg driver
+ * returns it as a string, which `Number()` converts to a JS number. For personal-
+ * finance amounts in paise this is within Number.MAX_SAFE_INTEGER (≈ 90 trillion
+ * rupees) and the existing behaviour is explicitly accepted here.
+ */
 export async function transactionsCsv(db: Db, userId: string): Promise<string> {
   const res = await db.execute(sql`
-    select t.date, t.merchant, t.amount_paise, c.name as category, a.name as account, t.notes
+    select
+      t.date, t.merchant, rp.amount_paise,
+      coalesce(cat.category, '') as category,
+      rp.account, t.notes
     from transactions t
-    left join categories c on c.id = t.category_id
-    left join accounts a on a.id = t.account_id
+    left join lateral (
+      select p.amount_paise, a.name as account
+      from postings p
+      join accounts a on a.id = p.account_id
+                     and a.user_id = t.user_id
+                     and a.system_kind is null
+      where p.transaction_id = t.id
+      order by p.id
+      limit 1
+    ) rp on true
+    left join lateral (
+      select string_agg(x.name, '; ' order by x.name collate "C") as category
+      from (
+        select distinct c.name
+        from postings cp
+        join accounts ca on ca.id = cp.account_id
+                        and ca.user_id = t.user_id
+                        and ca.system_kind is not null
+        join categories c on c.id = cp.category_id
+                         and c.user_id = t.user_id
+        where cp.transaction_id = t.id
+      ) x
+    ) cat on true
     where t.user_id = ${userId} and t.deleted_at is null
     order by t.date desc
   `);
   const rows: Array<Array<string | number>> = [["Date", "Merchant", "Amount (paise)", "Category", "Account", "Notes"]];
   for (const r of res.rows as Array<Record<string, unknown>>) {
     rows.push([
-      String(r.date), String(r.merchant ?? ""), Number(r.amount_paise),
-      String(r.category ?? ""), String(r.account ?? ""), String(r.notes ?? ""),
+      String(r.date), String(r.merchant ?? ""),
+      r.amount_paise === null ? "" : Number(r.amount_paise),
+      String(r.category ?? ""),
+      r.account === null ? "" : String(r.account),
+      String(r.notes ?? ""),
     ]);
   }
   return toCsv(rows);

@@ -17,6 +17,7 @@ import {
   exportGaps,
   FILE_COLUMNS,
   LINKED_TABLES,
+  transactionsCsv,
   USER_TABLES,
 } from "./backup.ts";
 import type pg from "pg";
@@ -1257,4 +1258,474 @@ test("A6 AC5 post-commit throw: reconcile failure does not roll back committed r
 
   // No blobs were deleted — the committed restore's uploads survive.
   assert.deepEqual(deletes, [], "blobs must not be deleted on reconcile failure");
+});
+
+// ---------- transactionsCsv tests (AC2-AC17) ----------
+//
+// These tests require DATABASE_URL (same hard requirement as the tests above).
+// Each test creates a fresh disposable user and cleans up in t.after().
+
+/**
+ * RFC-4180 CSV parser for toCsv() output.
+ * Handles quoted fields with embedded commas, double-quotes and newlines.
+ */
+function parseCsvRows(csv: string): string[][] {
+  const rows: string[][] = [];
+  let i = 0;
+  while (i < csv.length) {
+    const row: string[] = [];
+    while (true) {
+      let field: string;
+      if (i < csv.length && csv[i] === '"') {
+        // Quoted field — scan until the closing unescaped quote
+        i++; // skip opening quote
+        let f = "";
+        while (i < csv.length) {
+          if (csv[i] === '"' && i + 1 < csv.length && csv[i + 1] === '"') {
+            f += '"'; i += 2; // escaped double-quote
+          } else if (csv[i] === '"') {
+            i++; break; // closing quote
+          } else {
+            f += csv[i++];
+          }
+        }
+        field = f;
+      } else {
+        // Unquoted field
+        let j = i;
+        while (j < csv.length && csv[j] !== "," && csv[j] !== "\r" && csv[j] !== "\n") j++;
+        field = csv.slice(i, j);
+        i = j;
+      }
+      row.push(field);
+      if (i < csv.length && csv[i] === ",") { i++; continue; } // more fields
+      // End of row
+      if (i + 1 < csv.length && csv[i] === "\r" && csv[i + 1] === "\n") i += 2;
+      else if (i < csv.length && csv[i] === "\n") i++;
+      break;
+    }
+    if (row.length > 0) rows.push(row);
+  }
+  return rows;
+}
+
+/** Shared fixture: a user with one real bank, one wallet, four system accounts
+ *  and two categories (Food, Transport). */
+interface CsvFixture {
+  userId: string;
+  bankId: string;
+  walletId: string;
+  expensesId: string;
+  clearingId: string;
+  openingId: string;
+  foodId: string;
+  transportId: string;
+}
+
+async function createCsvUser(): Promise<CsvFixture> {
+  const userId = await createUser();
+  const [bank] = await db.insert(accounts).values({ userId, name: "Test Bank", type: "bank" }).returning({ id: accounts.id });
+  const [wallet] = await db.insert(accounts).values({ userId, name: "Wallet", type: "cash" }).returning({ id: accounts.id });
+  const [expAcc] = await db.insert(accounts).values({ userId, name: "Expenses", type: "system", systemKind: "expenses" }).returning({ id: accounts.id });
+  const [clearAcc] = await db.insert(accounts).values({ userId, name: "Clearing", type: "system", systemKind: "clearing" }).returning({ id: accounts.id });
+  const [openAcc] = await db.insert(accounts).values({ userId, name: "Opening", type: "system", systemKind: "opening" }).returning({ id: accounts.id });
+  const [food] = await db.insert(categories).values({ userId, name: "Food", kind: "expense" }).returning({ id: categories.id });
+  const [transport] = await db.insert(categories).values({ userId, name: "Transport", kind: "expense" }).returning({ id: categories.id });
+  return {
+    userId,
+    bankId: bank!.id,
+    walletId: wallet!.id,
+    expensesId: expAcc!.id,
+    clearingId: clearAcc!.id,
+    openingId: openAcc!.id,
+    foodId: food!.id,
+    transportId: transport!.id,
+  };
+}
+
+test("transactionsCsv AC2: header is byte-identical — Date,Merchant,Amount (paise),Category,Account,Notes", async (t) => {
+  const userId = await createUser();
+  t.after(() => cleanupUser(userId));
+  const csv = await transactionsCsv(db, userId);
+  // Raw byte-identity check: toCsv (csv.ts:147) joins rows with "\r\n" and appends a
+  // trailing "\r\n", so a user with no transactions must produce exactly this string.
+  assert.equal(csv, "Date,Merchant,Amount (paise),Category,Account,Notes\r\n");
+  // Also verify via parsed fields (would accept quoted headers — kept for extra coverage).
+  const rows = parseCsvRows(csv);
+  assert.deepEqual(
+    rows[0],
+    ["Date", "Merchant", "Amount (paise)", "Category", "Account", "Notes"],
+  );
+});
+
+test("transactionsCsv AC3: ordinary expense — postings parity (amount, account, category)", async (t) => {
+  const fx = await createCsvUser();
+  t.after(() => cleanupUser(fx.userId));
+  const [txn] = await db
+    .insert(transactions)
+    .values({ userId: fx.userId, accountId: fx.bankId, date: "2026-01-15", amountPaise: -5000, merchant: "Cafe", categoryId: fx.foodId })
+    .returning({ id: transactions.id });
+  await db.insert(postings).values([
+    { transactionId: txn!.id, accountId: fx.bankId, amountPaise: -5000 },
+    { transactionId: txn!.id, accountId: fx.expensesId, amountPaise: 5000, categoryId: fx.foodId },
+  ]);
+  const rows = parseCsvRows(await transactionsCsv(db, fx.userId));
+  assert.equal(rows.length, 2, "one header + one data row");
+  const data = rows[1]!;
+  assert.equal(data[0], "2026-01-15", "Date");
+  assert.equal(data[1], "Cafe", "Merchant");
+  assert.equal(data[2], "-5000", "Amount from real posting");
+  assert.equal(data[3], "Food", "Category from counter posting");
+  assert.equal(data[4], "Test Bank", "Account from real posting");
+  assert.equal(data[5], "", "Notes empty");
+});
+
+test("transactionsCsv AC4: postings values override stale legacy fields (drift)", async (t) => {
+  const fx = await createCsvUser();
+  t.after(() => cleanupUser(fx.userId));
+  // Legacy transaction points to bank/food/-5000; postings say wallet/transport/-8000
+  const [txn] = await db
+    .insert(transactions)
+    .values({ userId: fx.userId, accountId: fx.bankId, date: "2026-01-10", amountPaise: -5000, merchant: "Drift test", categoryId: fx.foodId })
+    .returning({ id: transactions.id });
+  await db.insert(postings).values([
+    { transactionId: txn!.id, accountId: fx.walletId, amountPaise: -8000 }, // real: wallet, not bank
+    { transactionId: txn!.id, accountId: fx.expensesId, amountPaise: 8000, categoryId: fx.transportId }, // counter: transport, not food
+  ]);
+  const rows = parseCsvRows(await transactionsCsv(db, fx.userId));
+  assert.equal(rows.length, 2);
+  const data = rows[1]!;
+  assert.equal(data[2], "-8000", "Amount from posting, not legacy amount_paise");
+  assert.equal(data[3], "Transport", "Category from posting, not legacy category_id");
+  assert.equal(data[4], "Wallet", "Account from posting, not legacy account_id");
+});
+
+test("transactionsCsv AC5: split transaction yields one row with joined sorted distinct categories", async (t) => {
+  const fx = await createCsvUser();
+  t.after(() => cleanupUser(fx.userId));
+  const [txn] = await db
+    .insert(transactions)
+    .values({ userId: fx.userId, accountId: fx.bankId, date: "2026-01-20", amountPaise: -10000, merchant: "Split purchase" })
+    .returning({ id: transactions.id });
+  await db.insert(postings).values([
+    { transactionId: txn!.id, accountId: fx.bankId, amountPaise: -10000 }, // real posting
+    { transactionId: txn!.id, accountId: fx.expensesId, amountPaise: 6000, categoryId: fx.foodId },
+    { transactionId: txn!.id, accountId: fx.expensesId, amountPaise: 4000, categoryId: fx.transportId },
+  ]);
+  const rows = parseCsvRows(await transactionsCsv(db, fx.userId));
+  assert.equal(rows.length, 2, "split must yield exactly one data row (D1)");
+  assert.equal(rows[1]![3], "Food; Transport", "categories sorted by name collate C, joined with '; '");
+});
+
+test("transactionsCsv AC6: transfer pair — one row per leg, correct sign and account", async (t) => {
+  const fx = await createCsvUser();
+  t.after(() => cleanupUser(fx.userId));
+  const [outTxn] = await db
+    .insert(transactions)
+    .values({ userId: fx.userId, accountId: fx.bankId, date: "2026-01-05", amountPaise: -20000, merchant: "Transfer out" })
+    .returning({ id: transactions.id });
+  await db.insert(postings).values([
+    { transactionId: outTxn!.id, accountId: fx.bankId, amountPaise: -20000 },
+    { transactionId: outTxn!.id, accountId: fx.clearingId, amountPaise: 20000 },
+  ]);
+  const [inTxn] = await db
+    .insert(transactions)
+    .values({ userId: fx.userId, accountId: fx.walletId, date: "2026-01-05", amountPaise: 20000, merchant: "Transfer in" })
+    .returning({ id: transactions.id });
+  await db.insert(postings).values([
+    { transactionId: inTxn!.id, accountId: fx.walletId, amountPaise: 20000 },
+    { transactionId: inTxn!.id, accountId: fx.clearingId, amountPaise: -20000 },
+  ]);
+  const rows = parseCsvRows(await transactionsCsv(db, fx.userId));
+  assert.equal(rows.length, 3, "one header + two leg rows");
+  // Both legs share the same date — find by merchant
+  const outRow = rows.slice(1).find((r) => r[1] === "Transfer out")!;
+  const inRow = rows.slice(1).find((r) => r[1] === "Transfer in")!;
+  assert.ok(outRow, "out leg must be present");
+  assert.ok(inRow, "in leg must be present");
+  assert.equal(outRow[2], "-20000", "out leg amount");
+  assert.equal(outRow[4], "Test Bank", "out leg account");
+  assert.equal(inRow[2], "20000", "in leg amount");
+  assert.equal(inRow[4], "Wallet", "in leg account");
+});
+
+test("transactionsCsv AC7+AC13: no postings → blank Amount, Account AND Category (not 0, not dropped)", async (t) => {
+  const fx = await createCsvUser();
+  t.after(() => cleanupUser(fx.userId));
+  // Transaction with a stale legacy category_id but no postings
+  await db.insert(transactions).values({
+    userId: fx.userId, accountId: fx.bankId, date: "2026-01-25",
+    amountPaise: -999, merchant: "No posting txn", categoryId: fx.foodId,
+  });
+  const rows = parseCsvRows(await transactionsCsv(db, fx.userId));
+  assert.equal(rows.length, 2, "postings-less transaction still yields a row");
+  const data = rows[1]!;
+  assert.equal(data[2], "", "Amount must be blank (not 0) when no real posting");
+  assert.equal(data[3], "", "Category must be blank when no counter postings (D9.4)");
+  assert.equal(data[4], "", "Account must be blank when no real posting");
+});
+
+test("transactionsCsv AC8: soft-deleted excluded; another user's transaction excluded", async (t) => {
+  const fx = await createCsvUser();
+  const otherId = await createUser();
+  t.after(async () => {
+    await cleanupUser(fx.userId);
+    await cleanupUser(otherId);
+  });
+  // One live transaction for fx.userId
+  await db.insert(transactions).values({
+    userId: fx.userId, accountId: fx.bankId, date: "2026-01-30", amountPaise: -1000, merchant: "Live txn",
+  });
+  // Soft-deleted transaction for fx.userId — must be excluded
+  await db.insert(transactions).values({
+    userId: fx.userId, accountId: fx.bankId, date: "2026-01-29",
+    amountPaise: -2000, merchant: "Deleted txn", deletedAt: new Date(),
+  });
+  // Another user's transaction — must be excluded
+  const [otherAcc] = await db
+    .insert(accounts)
+    .values({ userId: otherId, name: "Other bank", type: "bank" })
+    .returning({ id: accounts.id });
+  await db.insert(transactions).values({
+    userId: otherId, accountId: otherAcc!.id, date: "2026-01-28", amountPaise: -3000, merchant: "Other user txn",
+  });
+  const rows = parseCsvRows(await transactionsCsv(db, fx.userId));
+  assert.equal(rows.length, 2, "only the one live transaction for this user");
+  assert.equal(rows[1]![1], "Live txn");
+});
+
+test("transactionsCsv AC9: rows ordered by date desc", async (t) => {
+  const fx = await createCsvUser();
+  t.after(() => cleanupUser(fx.userId));
+  // Insert in chronological order; expect reverse-chronological in output
+  for (const [date, merchant] of [
+    ["2026-01-01", "Oldest"],
+    ["2026-01-05", "Middle"],
+    ["2026-01-10", "Newest"],
+  ] as [string, string][]) {
+    await db.insert(transactions).values({
+      userId: fx.userId, accountId: fx.bankId, date, amountPaise: -100, merchant,
+    });
+  }
+  const rows = parseCsvRows(await transactionsCsv(db, fx.userId));
+  assert.equal(rows.length, 4, "one header + three data rows");
+  assert.equal(rows[1]![1], "Newest", "newest date first");
+  assert.equal(rows[2]![1], "Middle");
+  assert.equal(rows[3]![1], "Oldest", "oldest date last");
+});
+
+test("transactionsCsv AC11 D9.2: transfer leg exports blank Category even when t.category_id is set", async (t) => {
+  const fx = await createCsvUser();
+  t.after(() => cleanupUser(fx.userId));
+  // Transaction with stale legacy category (as if categorised before being linked as transfer)
+  const [txn] = await db
+    .insert(transactions)
+    .values({ userId: fx.userId, accountId: fx.bankId, date: "2026-02-01", amountPaise: -15000, merchant: "Transfer with stale category", categoryId: fx.foodId })
+    .returning({ id: transactions.id });
+  // Postings are transfer shape: real (bank) + counter (clearing, no category)
+  await db.insert(postings).values([
+    { transactionId: txn!.id, accountId: fx.bankId, amountPaise: -15000 },
+    { transactionId: txn!.id, accountId: fx.clearingId, amountPaise: 15000 }, // no categoryId
+  ]);
+  const rows = parseCsvRows(await transactionsCsv(db, fx.userId));
+  assert.equal(rows.length, 2);
+  assert.equal(rows[1]![3], "", "Category must be blank for transfer leg despite stale t.category_id");
+});
+
+test("transactionsCsv AC12 D9.3: opening row exports real amount/account and blank Category", async (t) => {
+  const fx = await createCsvUser();
+  t.after(() => cleanupUser(fx.userId));
+  const [txn] = await db
+    .insert(transactions)
+    .values({ userId: fx.userId, accountId: fx.bankId, date: "2026-01-01", amountPaise: 100000, merchant: "Opening balance", isOpening: true, categoryId: fx.foodId })
+    .returning({ id: transactions.id });
+  await db.insert(postings).values([
+    { transactionId: txn!.id, accountId: fx.bankId, amountPaise: 100000 },
+    { transactionId: txn!.id, accountId: fx.openingId, amountPaise: -100000 }, // no categoryId
+  ]);
+  const rows = parseCsvRows(await transactionsCsv(db, fx.userId));
+  assert.equal(rows.length, 2);
+  const data = rows[1]!;
+  assert.equal(data[2], "100000", "Amount from real posting");
+  assert.equal(data[3], "", "Category must be blank for opening row (D9.3)");
+  assert.equal(data[4], "Test Bank", "Account from real posting");
+});
+
+test("transactionsCsv AC14: categories sorted deterministically (collate C), duplicates collapsed", async (t) => {
+  const fx = await createCsvUser();
+  t.after(() => cleanupUser(fx.userId));
+  // Insert one extra category (Zulu); Food and Transport already exist in the shared
+  // fixture. Counter postings reference them in reverse alphabetical order (Zulu, then
+  // Transport, then Food) to prove the sort is applied and duplicates are collapsed.
+  const [zulu] = await db
+    .insert(categories)
+    .values({ userId: fx.userId, name: "Zulu", kind: "expense" })
+    .returning({ id: categories.id });
+  const [txn] = await db
+    .insert(transactions)
+    .values({ userId: fx.userId, accountId: fx.bankId, date: "2026-01-15", amountPaise: -30000, merchant: "Multi-category" })
+    .returning({ id: transactions.id });
+  // Insert counter postings: Zulu first, then Transport, then Food twice (duplicate)
+  await db.insert(postings).values([
+    { transactionId: txn!.id, accountId: fx.bankId, amountPaise: -30000 }, // real
+    { transactionId: txn!.id, accountId: fx.expensesId, amountPaise: 12000, categoryId: zulu!.id },
+    { transactionId: txn!.id, accountId: fx.expensesId, amountPaise: 9000, categoryId: fx.transportId },
+    { transactionId: txn!.id, accountId: fx.expensesId, amountPaise: 5000, categoryId: fx.foodId },
+    { transactionId: txn!.id, accountId: fx.expensesId, amountPaise: 4000, categoryId: fx.foodId }, // duplicate
+  ]);
+  const rows = parseCsvRows(await transactionsCsv(db, fx.userId));
+  assert.equal(rows.length, 2, "split must still be one row");
+  assert.equal(rows[1]![3], "Food; Transport; Zulu", "sorted by name collate C, duplicates collapsed");
+});
+
+test("transactionsCsv AC15: CSV escaping — comma in category, double-quote in merchant, newline in notes", async (t) => {
+  const fx = await createCsvUser();
+  t.after(() => cleanupUser(fx.userId));
+  const [catComma] = await db
+    .insert(categories)
+    .values({ userId: fx.userId, name: "Food, snacks", kind: "expense" })
+    .returning({ id: categories.id });
+  const [txn] = await db
+    .insert(transactions)
+    .values({
+      userId: fx.userId, accountId: fx.bankId, date: "2026-02-10", amountPaise: -1500,
+      merchant: 'Cafe "Gourmet"',
+      notes: "Bill includes\nnewline",
+    })
+    .returning({ id: transactions.id });
+  await db.insert(postings).values([
+    { transactionId: txn!.id, accountId: fx.bankId, amountPaise: -1500 },
+    { transactionId: txn!.id, accountId: fx.expensesId, amountPaise: 1500, categoryId: catComma!.id },
+  ]);
+  const rows = parseCsvRows(await transactionsCsv(db, fx.userId));
+  assert.equal(rows.length, 2);
+  const data = rows[1]!;
+  assert.equal(data[1], 'Cafe "Gourmet"', "double-quotes in merchant preserved");
+  assert.equal(data[3], "Food, snacks", "comma in category preserved");
+  assert.equal(data[5], "Bill includes\nnewline", "newline in notes preserved");
+});
+
+test("transactionsCsv AC16 D7: posting referencing another user's account/category is filtered out by tenant guard", async (t) => {
+  const userId = await createUser();
+  const otherUserId = await createUser();
+  // Must clean up userId first — its posting references otherUserId's account
+  t.after(async () => {
+    await cleanupUser(userId);
+    await cleanupUser(otherUserId);
+  });
+  const [myBank] = await db.insert(accounts).values({ userId, name: "My Bank", type: "bank" }).returning({ id: accounts.id });
+  const [myExpenses] = await db.insert(accounts).values({ userId, name: "Expenses", type: "system", systemKind: "expenses" }).returning({ id: accounts.id });
+  const [otherBank] = await db.insert(accounts).values({ userId: otherUserId, name: "Other Bank", type: "bank" }).returning({ id: accounts.id });
+  const [otherCat] = await db.insert(categories).values({ userId: otherUserId, name: "Other Category", kind: "expense" }).returning({ id: categories.id });
+  const [txn] = await db
+    .insert(transactions)
+    .values({ userId, accountId: myBank!.id, date: "2026-02-20", amountPaise: -5000, merchant: "Leakage test" })
+    .returning({ id: transactions.id });
+  // Real posting references other user's bank account (a.user_id ≠ t.user_id → filtered)
+  // Counter posting references other user's category (c.user_id ≠ t.user_id → filtered)
+  await db.insert(postings).values([
+    { transactionId: txn!.id, accountId: otherBank!.id, amountPaise: -5000 },
+    { transactionId: txn!.id, accountId: myExpenses!.id, amountPaise: 5000, categoryId: otherCat!.id },
+  ]);
+  const rows = parseCsvRows(await transactionsCsv(db, userId));
+  assert.equal(rows.length, 2);
+  const data = rows[1]!;
+  // a.user_id = t.user_id guard: other user's bank account is not matched → no real posting → blank
+  assert.equal(data[2], "", "Amount must be blank when real posting references other user's account");
+  assert.equal(data[4], "", "Account must not surface other user's account name");
+  // c.user_id = t.user_id guard: other user's category is not matched → blank category
+  assert.equal(data[3], "", "Category must not surface other user's category name");
+});
+
+test("transactionsCsv AC17 D8: archived account and archived category still appear in export", async (t) => {
+  const userId = await createUser();
+  t.after(() => cleanupUser(userId));
+  const [archivedBank] = await db
+    .insert(accounts)
+    .values({ userId, name: "Archived Bank", type: "bank", archivedAt: new Date("2025-06-01") })
+    .returning({ id: accounts.id });
+  const [expAcc] = await db
+    .insert(accounts)
+    .values({ userId, name: "Expenses", type: "system", systemKind: "expenses" })
+    .returning({ id: accounts.id });
+  const [archivedCat] = await db
+    .insert(categories)
+    .values({ userId, name: "Archived Category", kind: "expense", archivedAt: new Date("2025-06-01") })
+    .returning({ id: categories.id });
+  const [txn] = await db
+    .insert(transactions)
+    .values({ userId, accountId: archivedBank!.id, date: "2026-01-15", amountPaise: -2000, merchant: "Archived acct txn" })
+    .returning({ id: transactions.id });
+  await db.insert(postings).values([
+    { transactionId: txn!.id, accountId: archivedBank!.id, amountPaise: -2000 },
+    { transactionId: txn!.id, accountId: expAcc!.id, amountPaise: 2000, categoryId: archivedCat!.id },
+  ]);
+  const rows = parseCsvRows(await transactionsCsv(db, userId));
+  assert.equal(rows.length, 2);
+  const data = rows[1]!;
+  assert.equal(data[3], "Archived Category", "archived category must still appear");
+  assert.equal(data[4], "Archived Bank", "archived account must still appear");
+});
+
+test("transactionsCsv AC17 D8: renamed account shows the NEW name in the export", async (t) => {
+  // D8 says archived_at is not filtered. The complementary point is that the join
+  // reads the account row at export time, so a renamed account always shows its
+  // current name (not the name it had when the posting was created).
+  const userId = await createUser();
+  t.after(() => cleanupUser(userId));
+  const [bank] = await db
+    .insert(accounts)
+    .values({ userId, name: "Old Bank Name", type: "bank" })
+    .returning({ id: accounts.id });
+  const [expAcc] = await db
+    .insert(accounts)
+    .values({ userId, name: "Expenses", type: "system", systemKind: "expenses" })
+    .returning({ id: accounts.id });
+  const [food] = await db
+    .insert(categories)
+    .values({ userId, name: "Food", kind: "expense" })
+    .returning({ id: categories.id });
+  const [txn] = await db
+    .insert(transactions)
+    .values({ userId, accountId: bank!.id, date: "2026-03-01", amountPaise: -3000, merchant: "Rename test" })
+    .returning({ id: transactions.id });
+  await db.insert(postings).values([
+    { transactionId: txn!.id, accountId: bank!.id, amountPaise: -3000 },
+    { transactionId: txn!.id, accountId: expAcc!.id, amountPaise: 3000, categoryId: food!.id },
+  ]);
+  // Rename the account after its posting has been inserted
+  await db.update(accounts).set({ name: "New Bank Name" }).where(eq(accounts.id, bank!.id));
+  const rows = parseCsvRows(await transactionsCsv(db, userId));
+  assert.equal(rows.length, 2);
+  assert.equal(rows[1]![4], "New Bank Name", "export must show the current (renamed) account name");
+});
+
+test("transactionsCsv D9.6: transaction with two real postings exports exactly one row (order by p.id limit 1)", async (t) => {
+  // D9.6: if a transaction somehow has multiple real (system_kind IS NULL) postings,
+  // the lateral uses ORDER BY p.id LIMIT 1, so exactly one row is exported and the
+  // selection is deterministic (lowest posting id wins).
+  const fx = await createCsvUser();
+  t.after(() => cleanupUser(fx.userId));
+  const [txn] = await db
+    .insert(transactions)
+    .values({ userId: fx.userId, accountId: fx.bankId, date: "2026-03-10", amountPaise: -7000, merchant: "Two real postings" })
+    .returning({ id: transactions.id });
+  // Insert two real (system_kind IS NULL) postings with different amounts.
+  // Hard-coded UUID literals are used so the lexical ordering (and therefore which
+  // posting wins `ORDER BY p.id LIMIT 1`) is deterministic and independent of
+  // insertion order. Do NOT replace these with generated ids: the test would flake
+  // because gen_random_uuid() gives no insertion-order guarantee.
+  // '...0001' < '...0002' lexically, so the posting on bankId/-7000 wins.
+  await db.insert(postings).values({ id: "00000000-0000-4000-8000-000000000001", transactionId: txn!.id, accountId: fx.bankId, amountPaise: -7000 });
+  await db.insert(postings).values({ id: "00000000-0000-4000-8000-000000000002", transactionId: txn!.id, accountId: fx.walletId, amountPaise: -9999 });
+  // Counter posting for category
+  await db.insert(postings).values({
+    transactionId: txn!.id, accountId: fx.expensesId, amountPaise: 7000, categoryId: fx.foodId,
+  });
+  const rows = parseCsvRows(await transactionsCsv(db, fx.userId));
+  assert.equal(rows.length, 2, "exactly one data row even with two real postings");
+  const data = rows[1]!;
+  // The posting with the smaller UUID ('...0001', on bankId/-7000) wins; wallet/-9999 must not appear.
+  assert.equal(data[2], "-7000", "amount from the lowest-id real posting (order by p.id limit 1)");
+  assert.equal(data[4], "Test Bank", "account from the lowest-id real posting");
 });
