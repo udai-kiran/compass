@@ -53,6 +53,20 @@ export function sumSigned(amounts: number[]): { incomePaise: number; expensePais
   return { incomePaise, expensePaise };
 }
 
+/**
+ * The list filter, expressed against POSTINGS.
+ *
+ * Every predicate that used to read a legacy column is now an EXISTS over the
+ * transaction's postings. The account filter is the one that actually changes
+ * behaviour: `transactions.account_id` projects only a transfer's OUTFLOW leg,
+ * so filtering on it would drop transfers from the destination account's ledger
+ * entirely — the money would arrive nowhere. `EXISTS (a posting on this
+ * account)` matches both legs, and `hydrate` then projects the one belonging to
+ * the account being viewed.
+ *
+ * Amount filters compare against the real postings for the same reason: a
+ * transfer has two, and either may satisfy the range.
+ */
 export function filterWhere(
   userId: string,
   filter: TransactionFilter,
@@ -65,14 +79,34 @@ export function filterWhere(
   }
   if (filter.from) conds.push(gte(transactions.date, filter.from) as SQL);
   if (filter.to) conds.push(lte(transactions.date, filter.to) as SQL);
-  if (filter.accountId) conds.push(eq(transactions.accountId, filter.accountId) as SQL);
-  if (filter.categoryId) conds.push(eq(transactions.categoryId, filter.categoryId) as SQL);
+  if (filter.accountId) {
+    conds.push(sql`exists (
+      select 1 from postings pf
+      where pf.transaction_id = ${transactions.id} and pf.account_id = ${filter.accountId}
+    )`);
+  }
+  if (filter.categoryId) {
+    conds.push(sql`exists (
+      select 1 from postings pf
+      where pf.transaction_id = ${transactions.id} and pf.category_id = ${filter.categoryId}
+    )`);
+  }
   if (filter.tag) conds.push(sql`${filter.tag} = any(${transactions.tags})`);
   if (filter.minAmountPaise !== undefined) {
-    conds.push(sql`abs(${transactions.amountPaise}) >= ${filter.minAmountPaise}`);
+    conds.push(sql`exists (
+      select 1 from postings pf
+      join accounts af on af.id = pf.account_id and af.system_kind is null
+      where pf.transaction_id = ${transactions.id}
+        and abs(pf.amount_paise) >= ${filter.minAmountPaise}
+    )`);
   }
   if (filter.maxAmountPaise !== undefined) {
-    conds.push(sql`abs(${transactions.amountPaise}) <= ${filter.maxAmountPaise}`);
+    conds.push(sql`exists (
+      select 1 from postings pf
+      join accounts af on af.id = pf.account_id and af.system_kind is null
+      where pf.transaction_id = ${transactions.id}
+        and abs(pf.amount_paise) <= ${filter.maxAmountPaise}
+    )`);
   }
   return and(...conds)!;
 }
@@ -293,15 +327,45 @@ export async function listTransactions(
       .orderBy(...order)
       .limit(query.limit + 1),
     withTotals
-      ? db
-          .select({
-            count: sql<number>`count(*)::int`,
-            sum: sql<number>`coalesce(sum(${transactions.amountPaise}), 0)::bigint`,
-            inflow: sql<number>`coalesce(sum(${transactions.amountPaise}) filter (where ${transactions.amountPaise} > 0), 0)::bigint`,
-            outflow: sql<number>`coalesce(-sum(${transactions.amountPaise}) filter (where ${transactions.amountPaise} < 0), 0)::bigint`,
-          })
-          .from(transactions)
-          .where(where)
+      ? // Totals sum the PROJECTED leg of each matching transaction, so they
+        // agree with the amounts the list actually shows — one row, one
+        // contribution. Which leg that is depends on the same perspective the
+        // rows use: an account-scoped list sums that account's postings, and a
+        // global list sums the outflow leg of a transfer and the single real
+        // leg of everything else.
+        //
+        // A global list additionally EXCLUDES transfers from the money totals
+        // (it still counts them in `count`). Summing one leg of a transfer
+        // would drop the net by the transfer amount, when moving money between
+        // your own accounts nets to zero — which is what the header claims to
+        // show.
+        db.execute(sql`
+          with projected as (
+            select
+              t.id,
+              (
+                select p.amount_paise
+                from postings p
+                join accounts a on a.id = p.account_id and a.system_kind is null
+                where p.transaction_id = t.id
+                  ${query.accountId ? sql`and p.account_id = ${query.accountId}` : sql`order by p.amount_paise asc`}
+                limit 1
+              ) as amount_paise,
+              (
+                select count(*) from postings pr
+                join accounts ar on ar.id = pr.account_id and ar.system_kind is null
+                where pr.transaction_id = t.id
+              ) as real_legs
+            from transactions t
+            where ${where}
+          )
+          select
+            count(*)::int as count,
+            coalesce(sum(amount_paise) filter (where ${query.accountId ? sql`true` : sql`real_legs = 1`}), 0)::bigint as sum,
+            coalesce(sum(amount_paise) filter (where amount_paise > 0 and ${query.accountId ? sql`true` : sql`real_legs = 1`}), 0)::bigint as inflow,
+            coalesce(-sum(amount_paise) filter (where amount_paise < 0 and ${query.accountId ? sql`true` : sql`real_legs = 1`}), 0)::bigint as outflow
+          from projected
+        `)
       : Promise.resolve(null),
   ]);
 
@@ -324,17 +388,32 @@ export async function listTransactions(
       .limit(1);
     lastCreatedAtPrecise = preciseRow[0]?.createdAtText ?? null;
   }
+  const totalRow = (totals?.rows[0] ?? null) as {
+    count: number;
+    sum: string;
+    inflow: string;
+    outflow: string;
+  } | null;
   return {
     items: await hydrate(db, userId, page, query.accountId),
     nextCursor:
       hasMore && last && !query.q && lastCreatedAtPrecise
         ? encodeCursor(last.date, lastCreatedAtPrecise, last.id)
         : null,
-    totalCount: totals ? totals[0]!.count : -1,
-    totalAmountPaise: totals ? Number(totals[0]!.sum) : -1,
-    totalInflowPaise: totals ? Number(totals[0]!.inflow) : -1,
-    totalOutflowPaise: totals ? Number(totals[0]!.outflow) : -1,
+    totalCount: totalRow ? totalRow.count : -1,
+    totalAmountPaise: totalRow ? safeTotal(totalRow.sum) : -1,
+    totalInflowPaise: totalRow ? safeTotal(totalRow.inflow) : -1,
+    totalOutflowPaise: totalRow ? safeTotal(totalRow.outflow) : -1,
   };
+}
+
+/** bigint→Number with the repo's refuse-to-lose-paise guard. */
+function safeTotal(value: string): number {
+  const n = Number(value);
+  if (!Number.isSafeInteger(n)) {
+    throw new HttpError(500, "Transaction total exceeded a safe integer — refusing to lose paise");
+  }
+  return n;
 }
 
 export async function getTransaction(db: Db, userId: string, id: string): Promise<Transaction> {
