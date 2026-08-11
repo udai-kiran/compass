@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { setImmediate as yieldLoop } from "node:timers/promises";
-import { and, desc, eq, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
 import type {
   BankPreset,
   CommitResult,
@@ -10,7 +10,7 @@ import type {
 } from "@compass/shared";
 import { ImportMappingSchema } from "@compass/shared";
 import type { Db } from "../../../db/index.ts";
-import { accounts, categories, postings, transactions, transferLinks } from "../../../db/schema.ts";
+import { accounts, categories, postings, transactions } from "../../../db/schema.ts";
 import { importPresets, importRows, imports } from "../schema.ts";
 import { parseAmountCell, parseCsv, parseDateCell } from "../../../lib/csv.ts";
 import { HttpError } from "../../../lib/errors.ts";
@@ -868,34 +868,6 @@ export async function rollbackImport(
       }
     }
 
-    // Capture transfer counterparts BEFORE the delete loop: hard-deleting a
-    // transaction cascades its transfer_links rows, so a surviving counterpart
-    // that is NOT itself being deleted would be orphaned from its Clearing
-    // postings — it must be rebuilt to ordinary after the delete.
-    const survivingPartners = new Set<string>();
-    if (ids.length > 0) {
-      const links = await t
-        .select({
-          out: transferLinks.outTransactionId,
-          in: transferLinks.inTransactionId,
-        })
-        .from(transferLinks)
-        .where(
-          and(
-            eq(transferLinks.userId, userId),
-            or(
-              inArray(transferLinks.outTransactionId, ids),
-              inArray(transferLinks.inTransactionId, ids),
-            ),
-          ),
-        );
-      const deleted = new Set(ids);
-      for (const link of links) {
-        if (!deleted.has(link.out)) survivingPartners.add(link.out);
-        if (!deleted.has(link.in)) survivingPartners.add(link.in);
-      }
-    }
-
     for (let i = 0; i < ids.length; i += BATCH) {
       await t
         .delete(transactions)
@@ -925,8 +897,8 @@ export async function rollbackImport(
     await t.update(imports).set({ status: "rolled_back" }).where(eq(imports.id, importId));
   });
 
-  // Rebuild auto transfer links: restored rows may re-form pairs, and the ones
-  // dropped during reconciliation are gone. Manual links were never touched.
+  // Corrected transactions restored during rollback may again form eligible
+  // ordinary pairs — rerun autoLinkTransfers to close those loops.
   if (snapshots.length > 0) await autoLinkTransfers(db, userId);
 
   return { removed: ids.length };
