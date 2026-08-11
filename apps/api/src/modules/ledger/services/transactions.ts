@@ -342,21 +342,21 @@ export async function listTransactions(
         db.execute(sql`
           with projected as (
             select
-              t.id,
+              transactions.id,
               (
                 select p.amount_paise
                 from postings p
                 join accounts a on a.id = p.account_id and a.system_kind is null
-                where p.transaction_id = t.id
+                where p.transaction_id = transactions.id
                   ${query.accountId ? sql`and p.account_id = ${query.accountId}` : sql`order by p.amount_paise asc`}
                 limit 1
               ) as amount_paise,
               (
                 select count(*) from postings pr
                 join accounts ar on ar.id = pr.account_id and ar.system_kind is null
-                where pr.transaction_id = t.id
+                where pr.transaction_id = transactions.id
               ) as real_legs
-            from transactions t
+            from transactions
             where ${where}
           )
           select
