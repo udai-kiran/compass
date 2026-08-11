@@ -21,6 +21,7 @@ import {
   spentByCategory,
 } from "../../../lib/periods.ts";
 import { savingRatePct } from "./insights.ts";
+import { hasCategoryDimension } from "../../../lib/ledger-sql.ts";
 
 /**
  * Resolve a validated `ReportQuery` into a concrete `from`/`to`/`periodKey`.
@@ -110,12 +111,7 @@ export async function buildReport(db: Db, userId: string, query: ReportQuery): P
         and p.amount_paise < 0
         and t.merchant <> ''
         and a.system_kind is null
-        and not exists (
-          select 1 from postings p2
-          join accounts a2 on a2.id = p2.account_id
-          where p2.transaction_id = t.id
-            and a2.system_kind in ('clearing', 'opening')
-        )
+        and ${hasCategoryDimension()}
       group by t.merchant order by spent desc limit 15
     `),
     spendByNecessity(db, userId, from, to),

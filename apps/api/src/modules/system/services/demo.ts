@@ -25,7 +25,8 @@ import {
   users,
 } from "../../../db/schema.ts";
 import { seedDefaultCategories } from "../../ledger/services/categories.ts";
-import { rebuildPostingsForTransaction } from "../../ledger/services/transactions.ts";
+import { postTransaction, resolveSystemAccounts } from "../../ledger/services/post-entry.ts";
+import { buildOpeningPostings, buildOrdinaryPostings } from "../../ledger/services/postings.ts";
 import { seedSystemAccounts } from "../../ledger/services/post-entry.ts";
 import { findUserByEmail } from "./users.ts";
 
@@ -214,11 +215,32 @@ async function seedInto(db: Db, userId: string): Promise<void> {
       earn(hdfcCard!.id, m, 6, 9000, "Refunds", "Card Payment Received");
     }
     const insertedTxns = await tx.insert(transactions).values(txns).returning({ id: transactions.id });
-    // Rebuild postings for each demo row. rebuild handles ordinary/opening/
-    // split shapes; demo card-payment pairs are NOT transfer-linked so they
-    // stay ordinary (matching legacy demo behavior).
-    for (const row of insertedTxns) {
-      await rebuildPostingsForTransaction(tx, userId, row.id);
+    // Build each demo row's postings from the seed values that produced it.
+    // Demo card-payment pairs are deliberately NOT linked as transfers, so they
+    // stay two ordinary transactions — the seed exercises the ordinary and
+    // opening shapes, and the transfer shape is covered by tests.
+    const demoSys = await resolveSystemAccounts(tx, userId);
+    for (const [i, row] of insertedTxns.entries()) {
+      const seed = txns[i]!;
+      await postTransaction(
+        tx,
+        row.id,
+        userId,
+        seed.isOpening
+          ? buildOpeningPostings({
+              accountId: seed.accountId,
+              amountPaise: seed.amountPaise,
+              systemOpeningAccountId: demoSys.opening,
+            })
+          : buildOrdinaryPostings({
+              accountId: seed.accountId,
+              amountPaise: seed.amountPaise,
+              categoryId: seed.categoryId ?? null,
+              necessity: null,
+              systemExpensesAccountId: demoSys.expenses,
+              systemIncomeAccountId: demoSys.income,
+            }),
+      );
     }
 
     // ---- Budget for the current month ----

@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import type { SearchResults } from "@compass/shared";
 import type { Db } from "../../../db/index.ts";
+import { hasCategoryDimension } from "../../../lib/ledger-sql.ts";
 
 /** Cross-entity search: transactions (merchant/notes), categories, accounts, goals. */
 export async function search(db: Db, userId: string, q: string): Promise<SearchResults> {
@@ -16,11 +17,7 @@ export async function search(db: Db, userId: string, q: string): Promise<SearchR
       join transactions t on t.id = p.transaction_id
       where t.user_id = ${userId} and t.deleted_at is null
         and a.system_kind is null
-        and not exists (
-          select 1 from postings p2
-          join accounts a2 on a2.id = p2.account_id
-          where p2.transaction_id = t.id and a2.system_kind in ('clearing', 'opening')
-        )
+        and ${hasCategoryDimension()}
         and (lower(t.merchant) like ${like} or lower(t.notes) like ${like})
       order by t.date desc limit 8
     `),

@@ -1,9 +1,10 @@
 import { and, eq, isNotNull } from "drizzle-orm";
 import type { DbOrTx } from "../../../db/index.ts";
-import { accounts, postings, transactions } from "../schema.ts";
+import { accounts, postings, transactions, transactionSplits } from "../schema.ts";
 import { HttpError } from "../../../lib/errors.ts";
 import { assertOwnedAccount, assertOwnedCategory } from "../../../lib/ownership.ts";
 import { isUniqueViolation } from "../../investments/services/sip-lifecycle.ts";
+import { projectLegacyColumns, projectLegacySplits } from "./legacy-projection.ts";
 import { assertZeroSum, type PostingDraft, type SystemKind } from "./postings.ts";
 
 // ---------------------------------------------------------------------------
@@ -79,6 +80,89 @@ export async function replacePostings(
       })),
     );
   }
+}
+
+/**
+ * THE write primitive of the postings-authoritative model (PR-G1): replace a
+ * transaction's postings and re-derive its legacy column projection from them,
+ * in that order, on one handle.
+ *
+ * Every writer goes through here. The ordering is the whole point — postings
+ * are written first because they are the truth, and the legacy columns are
+ * computed FROM them rather than the other way round. Before PR-G1 this ran
+ * backwards: writers set the legacy columns and `rebuildPostingsForTransaction`
+ * re-derived postings from those columns, which is why a shape the columns
+ * could not express (a transfer with two real legs) was silently destroyed.
+ *
+ * `transaction_splits` is refreshed too, so a transaction that stops being a
+ * split clears its rows. Both projections disappear with PR-G2.
+ */
+export async function postTransaction(
+  db: DbOrTx,
+  transactionId: string,
+  userId: string,
+  drafts: PostingDraft[],
+): Promise<void> {
+  await replacePostings(db, transactionId, userId, drafts);
+
+  const systemKindOf = await systemKindLookup(db, userId);
+  const legacy = projectLegacyColumns(drafts, systemKindOf);
+  await db
+    .update(transactions)
+    .set({
+      accountId: legacy.accountId,
+      amountPaise: legacy.amountPaise,
+      categoryId: legacy.categoryId,
+      necessity: legacy.necessity,
+      isOpening: legacy.isOpening,
+      updatedAt: new Date(),
+    })
+    .where(and(eq(transactions.id, transactionId), eq(transactions.userId, userId)));
+
+  const splitRows = projectLegacySplits(drafts, systemKindOf);
+  await db.delete(transactionSplits).where(eq(transactionSplits.transactionId, transactionId));
+  if (splitRows.length > 0) {
+    await db.insert(transactionSplits).values(splitRows.map((s) => ({ ...s, transactionId })));
+  }
+}
+
+/**
+ * The postings currently stored for a transaction, in the `PostingDraft` shape
+ * the pure shape functions consume. This is what "read the transaction's
+ * current shape" means once postings are the authority.
+ */
+export async function currentPostings(
+  db: DbOrTx,
+  transactionId: string,
+): Promise<PostingDraft[]> {
+  const rows = await db
+    .select({
+      accountId: postings.accountId,
+      amountPaise: postings.amountPaise,
+      categoryId: postings.categoryId,
+      necessity: postings.necessity,
+      note: postings.note,
+    })
+    .from(postings)
+    .where(eq(postings.transactionId, transactionId));
+  return rows;
+}
+
+/**
+ * Builds an accountId → systemKind lookup for one user. Cached per call site
+ * rather than per query: a user has exactly four system accounts (three after
+ * Clearing is retired), so this is a tiny fixed-size read.
+ */
+export async function systemKindLookup(
+  db: DbOrTx,
+  userId: string,
+): Promise<(accountId: string) => SystemKind | null> {
+  const rows = await db
+    .select({ id: accounts.id, systemKind: accounts.systemKind })
+    .from(accounts)
+    .where(and(eq(accounts.userId, userId), isNotNull(accounts.systemKind)));
+  const byId = new Map(rows.map((r) => [r.id, r.systemKind as SystemKind]));
+  return (accountId: string) => byId.get(accountId) ?? null;
 }
 
 /**

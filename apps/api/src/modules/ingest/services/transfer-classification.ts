@@ -109,16 +109,18 @@ export async function acceptTransfer(
       tags: [],
       source: "import",
     });
-    await linkTransfer(tx, userId, outTxn.id, inTxn.id, false);
+    // The link MERGES the two headers into one and deletes the inflow leg, so
+    // both extracted rows must point at the survivor. Stamping `inTxn.id` here
+    // — as this did before PR-G1 — would leave a dangling reference to a row
+    // that no longer exists.
+    const { id: transferId } = await linkTransfer(tx, userId, outTxn.id, inTxn.id);
 
-    await tx
-      .update(extractedTransactions)
-      .set({ transactionId: outTxn.id })
-      .where(and(eq(extractedTransactions.id, input.outId), eq(extractedTransactions.userId, userId)));
-    await tx
-      .update(extractedTransactions)
-      .set({ transactionId: inTxn.id })
-      .where(and(eq(extractedTransactions.id, input.inId), eq(extractedTransactions.userId, userId)));
+    for (const extractedId of [input.outId, input.inId]) {
+      await tx
+        .update(extractedTransactions)
+        .set({ transactionId: transferId })
+        .where(and(eq(extractedTransactions.id, extractedId), eq(extractedTransactions.userId, userId)));
+    }
   });
 
   return Promise.all([reload(db, userId, input.outId), reload(db, userId, input.inId)]);
@@ -282,11 +284,13 @@ export async function acceptRepayment(
         source: "import",
       });
 
-      await linkTransfer(tx, userId, outTransactionId, inTxn.id, false);
+      // As above: the merge keeps the outflow header, so the extracted row
+      // points at the survivor, not at the absorbed inflow leg.
+      const { id: transferId } = await linkTransfer(tx, userId, outTransactionId, inTxn.id);
 
       await tx
         .update(extractedTransactions)
-        .set({ transactionId: inTxn.id })
+        .set({ transactionId: transferId })
         .where(and(eq(extractedTransactions.id, id), eq(extractedTransactions.userId, userId)));
     });
   } catch (err) {

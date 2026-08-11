@@ -11,6 +11,7 @@ import { getTrends } from "./dashboard.ts";
 import { LIABILITY_TYPES_SQL } from "../../../lib/periods.ts";
 import { advanceDate } from "../../ledger/services/recurring.ts";
 import { sipOccurrencesInWindow } from "../../investments/services/sip-schedule.ts";
+import { hasCategoryDimension } from "../../../lib/ledger-sql.ts";
 
 const TTL = 300;
 
@@ -63,7 +64,8 @@ export async function getForecast(db: Db, redis: Redis, userId: string): Promise
 
     // trailing net burn (all sources) for runway, and discretionary spend
     // (excluding recurring-sourced rows, which the schedule below re-adds).
-    // Transfers and opening rows are excluded via the NOT EXISTS (Clearing/Opening posting) guard.
+    // Transfers and openings are excluded by hasCategoryDimension(): neither
+    // has Expenses/Income counter postings to sum.
     const burnRes = await db.execute(sql`
       select
         coalesce(sum(case when p.amount_paise < 0 then -p.amount_paise else 0 end), 0)::bigint as expense,
@@ -77,12 +79,7 @@ export async function getForecast(db: Db, redis: Redis, userId: string): Promise
       where t.user_id = ${userId} and t.deleted_at is null
         and t.date >= ${from90} and t.date <= ${today}
         and a.system_kind is null
-        and not exists (
-          select 1 from postings p2
-          join accounts a2 on a2.id = p2.account_id
-          where p2.transaction_id = t.id
-            and a2.system_kind in ('clearing', 'opening')
-        )
+        and ${hasCategoryDimension()}
     `);
     const burn = burnRes.rows[0] as { expense: string; income: string; discretionary: string };
     const expense = Number(burn.expense);

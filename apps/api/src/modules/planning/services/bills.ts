@@ -7,6 +7,7 @@ import type { Db } from "../../../db/index.ts";
 import { createNotification } from "../../system/services/notifications.ts";
 import { prefEnabled } from "../../system/services/prefs.ts";
 import { advanceDate } from "../../ledger/services/recurring.ts";
+import { hasCategoryDimension } from "../../../lib/ledger-sql.ts";
 
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
@@ -100,12 +101,7 @@ export async function suggestSubscriptions(db: Db, userId: string): Promise<Subs
       and t.merchant <> ''
       and t.date >= current_date - interval '400 days'
       and a.system_kind is null
-      and not exists (
-        select 1 from postings p2
-        join accounts a2 on a2.id = p2.account_id
-        where p2.transaction_id = t.id
-          and a2.system_kind in ('clearing', 'opening')
-      )
+      and ${hasCategoryDimension()}
     order by t.merchant, t.date
   `);
   const rows = res.rows as Array<{

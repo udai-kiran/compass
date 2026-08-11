@@ -12,7 +12,8 @@ import { bankDetails, retirementDetails, sips } from "../../../db/schema.ts";
 import { HttpError } from "../../../lib/errors.ts";
 import { assertOwnedGoal } from "../../../lib/ownership.ts";
 import { assertPublicAccountType } from "../../../lib/account-type.ts";
-import { rebuildPostingsForTransaction } from "./transactions.ts";
+import { postTransaction, resolveSystemAccounts } from "./post-entry.ts";
+import { buildOpeningPostings } from "./postings.ts";
 
 /** Only these carry their opening balance as a ledger transaction; other types
  * (cards/loans/schemes) keep it on the accounts.opening_balance_paise column,
@@ -251,7 +252,17 @@ export async function createAccount(
       });
       if (row) {
         const [openingTxn] = await tx.insert(transactions).values(row).returning({ id: transactions.id });
-        await rebuildPostingsForTransaction(tx, userId, openingTxn!.id);
+        const sys = await resolveSystemAccounts(tx, userId);
+        await postTransaction(
+          tx,
+          openingTxn!.id,
+          userId,
+          buildOpeningPostings({
+            accountId: account.id,
+            amountPaise: input.openingBalancePaise,
+            systemOpeningAccountId: sys.opening,
+          }),
+        );
       }
     }
     return toAccount(account);
@@ -472,19 +483,29 @@ export async function updateAccount(
             isOpening: true,
           })
           .returning({ id: transactions.id });
-        await rebuildPostingsForTransaction(tx, userId, openingTxn!.id);
+        const sys = await resolveSystemAccounts(tx, userId);
+        await postTransaction(
+          tx,
+          openingTxn!.id,
+          userId,
+          buildOpeningPostings({
+            accountId: id,
+            amountPaise: plan.txn.amountPaise,
+            systemOpeningAccountId: sys.opening,
+          }),
+        );
       } else if (plan.txn.kind === "update") {
-        await tx
-          .update(transactions)
-          .set({ amountPaise: plan.txn.amountPaise, updatedAt: new Date() })
-          .where(
-            and(
-              eq(transactions.id, plan.txn.id),
-              eq(transactions.accountId, id),
-              eq(transactions.userId, userId),
-            ),
-          );
-        await rebuildPostingsForTransaction(tx, userId, plan.txn.id);
+        const sys = await resolveSystemAccounts(tx, userId);
+        await postTransaction(
+          tx,
+          plan.txn.id,
+          userId,
+          buildOpeningPostings({
+            accountId: id,
+            amountPaise: plan.txn.amountPaise,
+            systemOpeningAccountId: sys.opening,
+          }),
+        );
       } else if (plan.txn.kind === "delete") {
         // Soft-delete, like every other user-transaction removal (see
         // transactions.ts) — a hard delete would cascade away the row's splits,

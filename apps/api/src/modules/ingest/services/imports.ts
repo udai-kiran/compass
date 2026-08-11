@@ -17,8 +17,10 @@ import { HttpError } from "../../../lib/errors.ts";
 import { parseHdfcStatement } from "../../../lib/hdfc-statement.ts";
 import { getMerchantRules, normalizeMerchant } from "../../ledger/services/merchants.ts";
 import { reconcileStatementTransactions } from "./import-reconciliation.ts";
-import { autoLinkTransfers } from "../../ledger/services/transfers.ts";
-import { rebuildPostingsForTransaction } from "../../ledger/services/transactions.ts";
+import { autoLinkTransfers, unlinkTransfer } from "../../ledger/services/transfers.ts";
+import { applyShapePatch } from "../../ledger/services/transactions.ts";
+import { currentPostings, postTransaction, resolveSystemAccounts, systemKindLookup } from "../../ledger/services/post-entry.ts";
+import { buildOrdinaryPostings, classifyShape, legForAccount } from "../../ledger/services/postings.ts";
 
 export const MAX_IMPORT_BYTES = 25 * 1024 * 1024;
 const BATCH = 1000;
@@ -680,50 +682,26 @@ export async function commitImport(
       }
       const updatedIds = updates.map((item) => item.transactionId);
       if (updatedIds.length > 0) {
-        // Capture the auto links about to be removed BEFORE deleting them:
-        // each severed pair's counterpart leg is being orphaned from its
-        // Clearing postings, so it must be rebuilt to ordinary below.
-        const severedAutoLinks = await t
-          .select({
-            out: transferLinks.outTransactionId,
-            in: transferLinks.inTransactionId,
-          })
-          .from(transferLinks)
-          .where(
-            and(
-              eq(transferLinks.userId, userId),
-              eq(transferLinks.auto, true),
-              or(
-                inArray(transferLinks.outTransactionId, updatedIds),
-                inArray(transferLinks.inTransactionId, updatedIds),
-              ),
-            ),
-          );
-        const severedLegTxIds = new Set<string>();
-        for (const link of severedAutoLinks) {
-          severedLegTxIds.add(link.out);
-          severedLegTxIds.add(link.in);
-        }
-        // A statement correction can invalidate an inferred card payment.
-        // Preserve manual transfer links and let auto-linking rebuild its own.
-        await t
-          .delete(transferLinks)
-          .where(
-            and(
-              eq(transferLinks.userId, userId),
-              eq(transferLinks.auto, true),
-              or(
-                inArray(transferLinks.outTransactionId, updatedIds),
-                inArray(transferLinks.inTransactionId, updatedIds),
-              ),
-            ),
-          );
-        // Rebuild every affected leg's postings in the same tx, and only
-        // AFTER the delete: a severed leg reverts to ordinary, an updated leg
-        // with a surviving MANUAL link re-mirrors Clearing with the new
-        // amount, a plain updated leg re-mirrors ordinary with the new amount.
-        for (const id of new Set([...updatedIds, ...severedLegTxIds])) {
-          await rebuildPostingsForTransaction(t, userId, id);
+        // A statement correction can invalidate a card payment that was
+        // auto-linked into a transfer. There is no `transfer_links.auto` flag
+        // left to sever — a transfer is ONE header now — so the equivalent is
+        // to split it back into two ordinary transactions and correct the leg
+        // that belongs to this batch's account. Manual and automatic links are
+        // no longer distinguishable, which is a deliberate consequence of
+        // dropping the link row: a correction unlinks either.
+        const systemKindOf = await systemKindLookup(t, userId);
+        for (const item of updates) {
+          const stored = await currentPostings(t, item.transactionId);
+          let targetId = item.transactionId;
+          if (classifyShape(stored, systemKindOf) === "transfer") {
+            const { transactionIds } = await unlinkTransfer(t, userId, item.transactionId);
+            // Correct whichever of the two halves sits on this batch's account.
+            for (const candidate of transactionIds) {
+              const legs = await currentPostings(t, candidate);
+              if (legForAccount(legs, batch.accountId)) targetId = candidate;
+            }
+          }
+          await applyShapePatch(t, userId, targetId, { amountPaise: item.row.amountPaise });
         }
       }
 
@@ -766,9 +744,24 @@ export async function commitImport(
         from (select unnest(${pgArray(rowIds)}::uuid[]) as id, unnest(${pgArray(txIds)}::uuid[]) as tx) u
         where ir.id = u.id
       `);
-      // Fresh ordinary import rows: mirror each into postings in the same tx.
-      for (const x of inserted) {
-        await rebuildPostingsForTransaction(t, userId, x.id);
+      // Fresh ordinary import rows: build each one's postings from the parsed
+      // statement line that produced it, in the same tx.
+      const sys = await resolveSystemAccounts(t, userId);
+      for (const [idx, x] of inserted.entries()) {
+        const source = chunk[idx]!;
+        await postTransaction(
+          t,
+          x.id,
+          userId,
+          buildOrdinaryPostings({
+            accountId: batch.accountId,
+            amountPaise: source.amountPaise!,
+            categoryId: source.categoryId ?? null,
+            necessity: null,
+            systemExpensesAccountId: sys.expenses,
+            systemIncomeAccountId: sys.income,
+          }),
+        );
       }
     }
   });
@@ -910,27 +903,20 @@ export async function rollbackImport(
           and(eq(transactions.userId, userId), inArray(transactions.id, ids.slice(i, i + BATCH))),
         );
     }
-    // Put corrected transactions back exactly as they were before the import.
+    // Put corrected transactions back exactly as they were before the import:
+    // header fields on the row, the amount through the postings that own it.
     for (const s of snapshots) {
       await t
         .update(transactions)
         .set({
           date: s.date,
-          amountPaise: s.amountPaise,
           merchant: s.merchant,
           notes: s.notes,
           source: s.source,
           updatedAt: new Date(),
         })
         .where(and(eq(transactions.id, s.transactionId), eq(transactions.userId, userId)));
-    }
-    // Rebuild postings in the same tx for every restored (snapshot) row and
-    // every surviving transfer counterpart whose pair was hard-deleted (the
-    // latter revert to ordinary now that their Clearing partner is gone). A
-    // deleted row's own postings vanish via the transaction_id cascade — never
-    // rebuild a deleted row.
-    for (const id of new Set([...survivingPartners, ...snapshots.map((s) => s.transactionId)])) {
-      await rebuildPostingsForTransaction(t, userId, id);
+      await applyShapePatch(t, userId, s.transactionId, { amountPaise: s.amountPaise });
     }
     await t
       .update(importRows)

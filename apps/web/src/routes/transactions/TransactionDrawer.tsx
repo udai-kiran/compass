@@ -207,14 +207,18 @@ export function TransactionDrawer({
         {/* Transfer */}
         <section className="mt-5">
           <h3 className="text-sm font-semibold text-slate-700">Transfer</h3>
-          {tx.transferLinkId ? (
+          {tx.isTransfer ? (
             <div className="mt-1 flex items-center gap-2 text-sm text-sky-700">
-              Linked as a transfer — excluded from income/expense.
+              A transfer — excluded from income/expense.
               <button
                 className="text-slate-500 underline"
-                onClick={() => unlink.mutate(tx.transferLinkId!, { onSuccess: () => toast("Transfer unlinked", "success") })}
+                onClick={() =>
+                  unlink.mutate(tx.id, {
+                    onSuccess: () => toast("Split into two transactions", "success"),
+                  })
+                }
               >
-                Unlink
+                Split into two
               </button>
             </div>
           ) : suggestion ? (
