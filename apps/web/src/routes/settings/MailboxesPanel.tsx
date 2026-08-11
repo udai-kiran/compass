@@ -26,7 +26,7 @@ function fmtWhen(iso: string | null): string {
 export function MailboxesPanel() {
   const { data: mailboxes } = useMailboxes();
   const { data: creds } = useMailboxCredentials();
-  const { add, remove, sync } = useMailboxMutations();
+  const { add, remove, sync, resetWatermark } = useMailboxMutations();
   const [bundle, setBundle] = useState("");
   const [windowMinutes, setWindowMinutes] = useState<number>(SYNC_WINDOW_MINUTES[0]);
 
@@ -128,7 +128,25 @@ export function MailboxesPanel() {
 
       <ul className="mt-4 divide-y divide-slate-100 overflow-hidden rounded-lg border border-slate-200 bg-white">
         {mailboxes?.map((mb) => (
-          <MailboxRow key={mb.id} mailbox={mb} onRemove={(id) => remove.mutate(id)} />
+          <MailboxRow
+            key={mb.id}
+            mailbox={mb}
+            onRemove={(id) => remove.mutate(id)}
+            resetting={resetWatermark.isPending}
+            onReset={(id) =>
+              resetWatermark.mutate(id, {
+                onSuccess: () =>
+                  sync.mutate(SYNC_WINDOW_MINUTES[0], {
+                    onSuccess: (res) =>
+                      toast(`Watermark reset — sync queued (within ${res.runsInMinutes} min)`, "success"),
+                    onError: () =>
+                      toast("Watermark reset, but couldn't queue sync — use the Queue sync button"),
+                  }),
+                onError: (e) =>
+                  toast(e instanceof Error ? e.message : "Couldn't reset watermark"),
+              })
+            }
+          />
         ))}
       </ul>
     </div>
@@ -138,9 +156,13 @@ export function MailboxesPanel() {
 function MailboxRow({
   mailbox: mb,
   onRemove,
+  onReset,
+  resetting,
 }: {
   mailbox: MailboxAccount;
   onRemove: (id: string) => void;
+  onReset: (id: string) => void;
+  resetting: boolean;
 }) {
   return (
     <li className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 text-sm">
@@ -150,6 +172,17 @@ function MailboxRow({
       <span className="font-medium text-slate-800">{mb.emailAddress}</span>
       <span className="text-xs text-slate-400">{mb.folder}</span>
       <span className="ml-auto text-xs text-slate-400">last sync {fmtWhen(mb.lastSyncedAt)}</span>
+      <button
+        type="button"
+        disabled={resetting}
+        className="text-xs text-amber-600 underline disabled:opacity-50"
+        onClick={() => {
+          if (confirm(`Reset ${mb.emailAddress} and queue a sync to reprocess its available mail?`))
+            onReset(mb.id);
+        }}
+      >
+        {resetting ? "Resetting…" : "Reprocess all"}
+      </button>
       <button
         className="text-xs text-red-500 underline"
         onClick={() => {
