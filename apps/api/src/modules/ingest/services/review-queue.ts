@@ -1,8 +1,8 @@
-import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import type { ExtractedTransaction, ExtractedTxnReviewStatus } from "@compass/shared";
 import type { Db } from "../../../db/index.ts";
 import { emailIngestions, extractedTransactions } from "../schema.ts";
-import { categories, transactions } from "../../../db/schema.ts";
+import { accounts, categories, postings, transactions } from "../../../db/schema.ts";
 import { getMerchantRules, normalizeMerchant } from "../../ledger/services/merchants.ts";
 import { TRANSFER_WINDOW_DAYS } from "../../ledger/services/transfers.ts";
 import { INBOX_COLUMNS, toDto } from "./inbox-shared.ts";
@@ -176,12 +176,27 @@ async function applyHistoryCategory(
   const rows = await db
     .select({
       merchant: transactions.merchant,
-      categoryId: transactions.categoryId,
+      categoryId: categories.id,
       kind: categories.kind,
       date: transactions.date,
     })
     .from(transactions)
-    .innerJoin(categories, eq(categories.id, transactions.categoryId))
+    .innerJoin(postings, eq(postings.transactionId, transactions.id))
+    .innerJoin(
+      accounts,
+      and(
+        eq(accounts.id, postings.accountId),
+        isNotNull(accounts.systemKind),
+        eq(accounts.userId, transactions.userId),
+      ),
+    )
+    .innerJoin(
+      categories,
+      and(
+        eq(categories.id, postings.categoryId),
+        eq(categories.userId, transactions.userId),
+      ),
+    )
     .where(
       and(
         eq(transactions.userId, userId),
@@ -191,7 +206,7 @@ async function applyHistoryCategory(
       ),
     );
   const best = pickHistoryCategories(
-    rows.map((r) => ({ merchant: r.merchant, categoryId: r.categoryId!, kind: r.kind, date: r.date })),
+    rows.map((r) => ({ merchant: r.merchant, categoryId: r.categoryId, kind: r.kind, date: r.date })),
   );
   for (const d of named) {
     const hit = best.get(keyOf.get(d.id)!);

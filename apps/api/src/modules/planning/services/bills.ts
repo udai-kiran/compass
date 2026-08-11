@@ -92,10 +92,18 @@ const YEARLY_GAP = [350, 380] as const;
  */
 export async function suggestSubscriptions(db: Db, userId: string): Promise<SubscriptionSuggestion[]> {
   const res = await db.execute(sql`
-    select t.merchant, t.date, p.amount_paise, a.id as account_id, t.category_id
+    select t.merchant, t.date, p.amount_paise, a.id as account_id, cat.category_id
     from postings p
     join accounts a on a.id = p.account_id
     join transactions t on t.id = p.transaction_id
+    left join lateral (
+      select c.id as category_id, c.name as category_name
+      from postings cp
+      join accounts ca on ca.id = cp.account_id and ca.system_kind is not null and ca.user_id = t.user_id
+      join categories c on c.id = cp.category_id and c.user_id = t.user_id
+      where cp.transaction_id = t.id
+      limit 1
+    ) cat on true
     where t.user_id = ${userId} and t.deleted_at is null
       and p.amount_paise < 0
       and t.merchant <> ''

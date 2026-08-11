@@ -135,7 +135,7 @@ test("postings-pr-e-parity: PE1 — listCardHolders and getCardActivity aggregat
       where p.account_id = ${cardAcct.id} and t.user_id = ${userId} and t.deleted_at is null
     `)
   ).rows[0] as { total: string };
-  assert.equal(holders[0]!.cards[0]!.balancePaise, 5000 + Number(legRow.total));
+  assert.equal(holders[0]!.cards[0]!.balancePaise, Number(legRow.total));
 
   const act = await getCardActivity(db, userId, cardAcct.id, ref);
   assert.equal(act.balancePaise, -10000);
@@ -253,10 +253,12 @@ test("postings-pr-e-parity: PE3 — ledgerDuesAtDates matches opening+postings s
           and t.deleted_at is null and t.date < ${cutDate}
       `)
     ).rows[0] as { s: string };
-    return -(8000 + Number(r.s));
+    // After PR-G1 the Opening balance is stored as a posting (not the column),
+    // so the sum already includes it — no manual addend needed.
+    return -Number(r.s);
   }
 
-  const result = await ledgerDuesAtDates(db, userId, cardAcct.id, 8000, [d1, d2, d3]);
+  const result = await ledgerDuesAtDates(db, userId, cardAcct.id, [d1, d2, d3]);
   assert.equal(result.get(d1), await expectedDue(d1));
   assert.equal(result.get(d2), await expectedDue(d2));
   assert.equal(result.get(d3), await expectedDue(d3));
@@ -516,10 +518,10 @@ test("postings-pr-e-parity: PE7 — search returns one result per transaction, r
     date: iso(-3),
   });
 
-  // Update out-leg merchant to force a match with the search term
-  // createTransfer returns TransferResult = { transferLinkId, outTransactionId, inTransactionId }
+  // Update the transfer header's merchant (createTransfer returns { transactionId } —
+  // the outflow leg; PR-G1 replaced the old three-field result)
   await db.execute(
-    sql`UPDATE transactions SET merchant = 'PE7Merchant' WHERE id = ${xfer.outTransactionId}`,
+    sql`UPDATE transactions SET merchant = 'PE7Merchant' WHERE id = ${xfer.transactionId}`,
   );
 
   const results = await search(db, userId, "PE7Merchant");

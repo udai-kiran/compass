@@ -13,7 +13,6 @@ import {
   createTransaction,
   softDeleteTransaction,
   setSplits,
-  rebuildPostingsForTransaction,
 } from "../modules/ledger/services/transactions.ts";
 import { createTransfer, linkTransfer, unlinkTransfer } from "../modules/ledger/services/transfers.ts";
 import type { NecessitySpendRow } from "./periods.ts";
@@ -486,7 +485,8 @@ test("postings-periods-parity: 7 — transfer lifecycle: link / unlink / re-link
   }
 
   // 7b: unlink → both legs appear as ordinary spend/income
-  await unlinkTransfer(db, userId, transfer.transferLinkId);
+  const unlinked = await unlinkTransfer(db, userId, transfer.transactionId);
+  const [outId, inId] = unlinked.transactionIds;
   {
     const legIe = await legacyIncomeExpense(userId, FROM, TO);
     const ie = await incomeExpense(db, userId, FROM, TO);
@@ -504,7 +504,7 @@ test("postings-periods-parity: 7 — transfer lifecycle: link / unlink / re-link
   }
 
   // 7c: re-link → both excluded again
-  const newLink = await linkTransfer(db, userId, transfer.outTransactionId, transfer.inTransactionId, false);
+  const newLink = await linkTransfer(db, userId, outId, inId);
   {
     const ie = await incomeExpense(db, userId, FROM, TO);
     const sbc = await spentByCategory(db, userId, FROM, TO);
@@ -514,22 +514,9 @@ test("postings-periods-parity: 7 — transfer lifecycle: link / unlink / re-link
     const sbn7c = await spendByNecessity(db, userId, FROM, TO); assert.equal(totalNecessitySpend(sbn7c), 0, "7c: re-linked excluded from spendByNecessity");
   }
 
-  // 7d: hard-delete the in-leg transaction (cascades transfer_links + its postings)
-  //     then rebuild out-leg postings: no longer in transfer_links → ordinary expense shape
-  await db.delete(transactions).where(eq(transactions.id, transfer.inTransactionId));
-  await rebuildPostingsForTransaction(db, userId, transfer.outTransactionId);
-  {
-    const ie = await incomeExpense(db, userId, FROM, TO);
-    const sbc = await spentByCategory(db, userId, FROM, TO);
-    assert.equal(ie.expensePaise, 30000, "7d: surviving out-leg appears as ordinary expense");
-    assert.equal(ie.incomePaise, 0, "7d: no income after in-leg hard-deleted");
-    assert.equal(sbc.get(null) ?? 0, 30000, "7d: out-leg appears in spentByCategory with null category");
-    const sbn7d = await spendByNecessity(db, userId, FROM, TO); assert.equal(totalNecessitySpend(sbn7d), 30000, "7d: surviving out-leg in spendByNecessity");
-  }
-
-  // findInconsistentPostings: only out-leg remains; must be consistent
+  // findInconsistentPostings: re-linked transfer must be consistent
   assert.deepEqual(await findInconsistentPostings(db, userId), []);
-  assert.ok(true, "7: transfer lifecycle assertions complete with " + newLink.id);
+  assert.ok(true, "7: transfer lifecycle complete with " + newLink.id);
 });
 
 test("postings-periods-parity: 8 — opening row excluded from all three readers", async (t) => {

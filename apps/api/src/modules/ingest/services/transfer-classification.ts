@@ -1,8 +1,8 @@
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import type { AcceptRepayment, AcceptTransfer, ExtractedTransaction } from "@compass/shared";
 import type { Db, DbOrTx } from "../../../db/index.ts";
 import { extractedTransactions } from "../schema.ts";
-import { accounts, transactions, transferLinks } from "../../../db/schema.ts";
+import { accounts } from "../../../db/schema.ts";
 import { HttpError } from "../../../lib/errors.ts";
 import { isUniqueViolation } from "../../investments/services/sip-lifecycle.ts";
 import { createTransaction } from "../../ledger/services/transactions.ts";
@@ -232,21 +232,31 @@ export async function acceptRepayment(
         throw new HttpError(400, "The paying account is archived");
       }
 
-      const candidates = await tx
-        .select({ id: transactions.id })
-        .from(transactions)
-        .where(
-          and(
-            eq(transactions.userId, userId),
-            eq(transactions.accountId, input.fromAccountId),
-            eq(transactions.amountPaise, -claimed.amountPaise),
-            isNull(transactions.deletedAt),
-            eq(transactions.isOpening, false),
-            sql`abs(${transactions.date} - ${input.occurredAt}::date) <= ${TRANSFER_WINDOW_DAYS}`,
-            sql`not exists (select 1 from ${transferLinks} tl
-              where tl.out_transaction_id = ${transactions.id} or tl.in_transaction_id = ${transactions.id})`,
-          ),
-        );
+      const result = await tx.execute(sql`
+        SELECT t.id
+        FROM transactions t
+        WHERE t.user_id = ${userId}
+          AND t.deleted_at IS NULL
+          AND abs(t.date::date - ${input.occurredAt}::date) <= ${TRANSFER_WINDOW_DAYS}
+          AND EXISTS (
+            SELECT 1 FROM postings p
+            JOIN accounts a ON a.id = p.account_id AND a.system_kind IS NULL
+            WHERE p.transaction_id = t.id
+              AND p.account_id = ${input.fromAccountId}
+              AND p.amount_paise = ${-claimed.amountPaise}
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM postings p
+            JOIN accounts a ON a.id = p.account_id AND a.system_kind = 'opening'
+            WHERE p.transaction_id = t.id
+          )
+          AND 2 > (
+            SELECT count(*) FROM postings p2
+            JOIN accounts a2 ON a2.id = p2.account_id AND a2.system_kind IS NULL
+            WHERE p2.transaction_id = t.id
+          )
+      `);
+      const candidates = result.rows as { id: string }[];
       const selection = selectRepaymentCandidate(candidates);
       if (selection.kind === "ambiguous") {
         throw new HttpError(

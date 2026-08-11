@@ -12,8 +12,8 @@ test("accountBalancesAtDate returns typed balances and passes correct params", a
       captured.push(q);
       return Promise.resolve({
         rows: [
-          { type: "bank", opening: "50000", posting_total: "100000" },
-          { type: "loan", opening: "-2500000", posting_total: "0" },
+          { type: "bank", posting_total: "100000" },
+          { type: "loan", posting_total: "0" },
         ],
       });
     },
@@ -22,8 +22,8 @@ test("accountBalancesAtDate returns typed balances and passes correct params", a
   const result = await accountBalancesAtDate(stub as never, "user-1", "2026-07-25");
 
   assert.deepEqual(result, [
-    { type: "bank", balancePaise: 150000 },
-    { type: "loan", balancePaise: -2500000 },
+    { type: "bank", balancePaise: 100000 },
+    { type: "loan", balancePaise: 0 },
   ]);
 
   const { params } = new PgDialect().sqlToQuery(captured[0] as SQL);
@@ -38,7 +38,7 @@ test("accountBalancesAtDate throws a 500 when the posting aggregate exceeds a sa
   const stub = {
     execute: () =>
       Promise.resolve({
-        rows: [{ type: "investment", opening: "0", posting_total: "9007199254740993" }],
+        rows: [{ type: "investment", posting_total: "9007199254740993" }],
       }),
   };
 

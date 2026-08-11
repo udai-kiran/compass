@@ -22,10 +22,8 @@ export interface AccountBalance {
  * The per-account activity total is summed from `postings` (dual-write mirror
  * of `transactions.amount_paise`), joined to the non-deleted parent transaction
  * for the date cut — see postings-balance-parity.test.ts for the parity proof.
- * `opening_balance_paise` remains an explicit addend: bank/cash accounts carry
- * their opening balance as a real `is_opening` transaction (already inside the
- * postings sum, column pinned at 0); other real-account types keep it on the
- * column with no posting.
+ * `opening_balance_paise` is always 0 (boot-time check enforces this), so
+ * the balance is the posting total only.
  */
 export async function bankCashBalances(
   db: Db,
@@ -34,7 +32,6 @@ export async function bankCashBalances(
 ): Promise<AccountBalance[]> {
   const res = await db.execute(sql`
     select a.id, a.name,
-           a.opening_balance_paise as opening,
            coalesce(p.total, 0) as posting_total
     from accounts a
     left join (
@@ -47,13 +44,9 @@ export async function bankCashBalances(
     where a.user_id = ${userId} and a.archived_at is null and a.type in ('bank', 'cash')
   `);
   return (
-    res.rows as Array<{ id: string; name: string; opening: string; posting_total: string }>
+    res.rows as Array<{ id: string; name: string; posting_total: string }>
   ).map((r) => {
-    const postingTotal = Number(r.posting_total);
-    if (!Number.isSafeInteger(postingTotal)) {
-      throw new HttpError(500, "Balance aggregate exceeded a safe integer — refusing to lose paise");
-    }
-    const balancePaise = Number(r.opening) + postingTotal;
+    const balancePaise = Number(r.posting_total);
     if (!Number.isSafeInteger(balancePaise)) {
       throw new HttpError(500, "Balance aggregate exceeded a safe integer — refusing to lose paise");
     }

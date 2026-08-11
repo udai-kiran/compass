@@ -1251,7 +1251,7 @@ test("acceptRepayment AC4b: a candidate linked by a concurrent request between d
   // Connection A: opens an explicit transaction, links the candidate to the
   // spurious credit, and holds the transaction open (uncommitted) via the gate.
   const aTxPromise = db.transaction(async (tx) => {
-    await linkTransfer(tx, userId, candidate.id, spuriousCredit.id, false);
+    await linkTransfer(tx, userId, candidate.id, spuriousCredit.id);
     started.release();
     await release.opened;
   });
@@ -1664,7 +1664,7 @@ test("SQL eligibility predicate: a debit already referenced by transfer_links is
     tags: [],
     source: "manual",
   });
-  await linkTransfer(db, userId, alreadyLinked.id, otherCredit.id, false);
+  await linkTransfer(db, userId, alreadyLinked.id, otherCredit.id);
 
   const draftId = await repaymentDraft(userId, ingestionId);
   await acceptRepayment(db, userId, draftId, { cardAccountId, fromAccountId, occurredAt: BASE_DATE });
