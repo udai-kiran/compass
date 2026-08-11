@@ -132,13 +132,13 @@ export async function acceptExtracted(
  * with a live transaction (409).
  *
  * Transfer-leg rule: restoring one leg of an `acceptTransfer` pair makes it
- * an ordinary pending draft — no stored transfer pairing is resurrected
- * (hard-deleting one leg already cascaded away the `transfer_links` row). If
- * its partner is also orphaned and later restored, `pickTransferPairs`
- * re-pairs them heuristically from `listInbox("pending")`, exactly like any
- * other pending debit/credit pair, only when uniquely matchable. If the
- * partner's transaction still exists, the partner stays `accepted` and the
- * restored leg is reviewed alone as an ordinary draft.
+ * an ordinary pending draft. Under PR-G1 a transfer is one merged header;
+ * hard-deleting that header cascades its postings and nulls both drafts'
+ * transaction_id — both become orphans simultaneously. Restoring one makes
+ * only that draft pending; the other remains an orphaned accepted draft until
+ * separately restored. Once both are restored, `pickTransferPairs` may re-pair
+ * them heuristically from `listInbox("pending")`, exactly like any other pending
+ * debit/credit pair, only when uniquely matchable.
  */
 export async function restoreOrphan(db: DbOrTx, userId: string, id: string): Promise<ExtractedTransaction> {
   const [claimed] = await db
