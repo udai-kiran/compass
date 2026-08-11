@@ -672,6 +672,8 @@ test("absorbCarryover: a concurrent advisory lock (an opening-balance edit in pr
   // therefore includes it.
   const aTxPromise = (async () => {
     const clientA = await pool.connect();
+    let unlocked = false;
+    let destroyA: boolean;
     try {
       await clientA.query(
         "SELECT pg_advisory_lock(hashtextextended($1, 0))",
@@ -701,20 +703,23 @@ test("absorbCarryover: a concurrent advisory lock (an opening-balance edit in pr
           buildOpeningPostings({ accountId, amountPaise: -50000, systemOpeningAccountId: sys.opening }),
         );
       });
+    } finally {
       // Release advisory lock. The opening transaction above committed on the pool, so
       // absorbCarryover's SERIALIZABLE snapshot (taken after lock acquisition) includes it.
-      const unlockResult = await clientA.query(
-        "SELECT pg_advisory_unlock(hashtextextended($1, 0)) AS unlocked",
-        [accountId],
-      );
-      assert.equal(
-        (unlockResult.rows as Array<{ unlocked: boolean }>)[0]?.unlocked,
-        true,
-        "advisory unlock must report success",
-      );
-    } finally {
-      clientA.release();
+      try {
+        const unlockResult = await clientA.query(
+          "SELECT pg_advisory_unlock(hashtextextended($1, 0)) AS unlocked",
+          [accountId],
+        );
+        unlocked = (unlockResult.rows as Array<{ unlocked: boolean }>)[0]?.unlocked === true;
+        destroyA = !unlocked;
+      } catch {
+        destroyA = true;
+      }
+      clientA.release(destroyA);
     }
+    // assert after finally so cleanup always runs even if assertion fails
+    assert.equal(unlocked, true, "advisory unlock must report success");
   })();
   await started.opened;
 
