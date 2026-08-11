@@ -1,7 +1,11 @@
 # Task: CLAUDE.md — document transitional thin-schema vs. physical schema ownership
 
 ## Status
-BLOCKED — structural, not a process defect (see "Second decline" below)
+SUPERSEDED — The CLAUDE.md has been comprehensively rewritten by task 020
+(cross-module-ports, COMPLETE) and later tasks. The thin-surface/physical-ownership
+distinction this task wanted to document no longer applies: all module schemas now
+use physical ownership via `db/shared/` layered files. This task's proposed
+CLAUDE.md paragraph is obsolete. No further action required.
 
 ### Second decline — standalone retry also refused, for a sharper reason than the first
 The standalone retry delegation (this task, `DELEGATION.md`) was declined again by the implementing

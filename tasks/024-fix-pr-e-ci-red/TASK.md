@@ -1,7 +1,10 @@
 # Task 024: Fix the 57 apps/api failures that turned `main` red (issue #176)
 
 ## Status
-IMPLEMENTING (plan review closed at review-1; DELEGATION.md iteration 1 issued)
+SUPERSEDED — All 57 failures this task targeted were fixed by task 027
+(tasks/027-pr179-fix-regressions/) as part of the PR #179 regression-fix pass.
+CI is green on main as of commit f671b17. GitHub issue #176 tracked separately.
+No further action required here.
 
 ## Objective
 `main` is green on CI, with no test weakened, skipped or deleted, and each failure
