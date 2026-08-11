@@ -131,7 +131,6 @@ export function ambShortfallPaise(sumPaise: number, days: number, requiredPaise:
 
 interface AccountRow {
   account_id: string;
-  opening_balance_paise: string;
   required_paise: string;
   first_activity: string | null;
   carried_in_delta: string;
@@ -145,7 +144,7 @@ interface DeltaRow {
 
 export interface AmbInputs {
   accountId: string;
-  /** balance carried into the month: opening-balance column + all txns before the 1st */
+  /** balance carried into the month: sum of all postings before the 1st */
   carriedInPaise: number;
   requiredPaise: number;
   /**
@@ -212,7 +211,6 @@ export async function accountAverageBalances(
   const accountRes = await db.execute(sql`
     select
       a.id as account_id,
-      a.opening_balance_paise as opening_balance_paise,
       coalesce(bd.required_amb_paise, 0) as required_paise,
       (
         select min(t.date)
@@ -260,15 +258,7 @@ export async function accountAverageBalances(
 
   const results: AccountAverageBalance[] = [];
   for (const row of accountRows) {
-    const openingBalancePaise = Number(row.opening_balance_paise);
-    if (!Number.isSafeInteger(openingBalancePaise)) {
-      throw new HttpError(500, "Balance aggregate exceeded a safe integer — refusing to lose paise");
-    }
-    const carriedInDelta = Number(row.carried_in_delta);
-    if (!Number.isSafeInteger(carriedInDelta)) {
-      throw new HttpError(500, "Balance aggregate exceeded a safe integer — refusing to lose paise");
-    }
-    const carriedInPaise = openingBalancePaise + carriedInDelta;
+    const carriedInPaise = Number(row.carried_in_delta);
     if (!Number.isSafeInteger(carriedInPaise)) {
       throw new HttpError(500, "Balance aggregate exceeded a safe integer — refusing to lose paise");
     }

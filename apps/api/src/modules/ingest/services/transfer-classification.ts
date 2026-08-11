@@ -1,10 +1,9 @@
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import type { AcceptRepayment, AcceptTransfer, ExtractedTransaction } from "@compass/shared";
 import type { Db, DbOrTx } from "../../../db/index.ts";
 import { extractedTransactions } from "../schema.ts";
-import { accounts, transactions, transferLinks } from "../../../db/schema.ts";
+import { accounts } from "../../../db/schema.ts";
 import { HttpError } from "../../../lib/errors.ts";
-import { isUniqueViolation } from "../../investments/services/sip-lifecycle.ts";
 import { createTransaction } from "../../ledger/services/transactions.ts";
 import { linkTransfer, TRANSFER_WINDOW_DAYS } from "../../ledger/services/transfers.ts";
 import { reload } from "./inbox-shared.ts";
@@ -171,15 +170,17 @@ export function selectRepaymentCandidate(candidates: { id: string }[]): Repaymen
  * one is right.
  *
  * The candidate read is not itself an atomic claim — another request could
- * link the same candidate between this SELECT and the `linkTransfer` INSERT.
- * Deliberately not using `SELECT ... FOR UPDATE` here: other `linkTransfer`
- * callers (`transfers.ts:75-98`, `autoLinkTransfers`) never take that lock,
- * so it wouldn't exclude them. The real atomic claim is the `transfer_links`
- * insert itself — `transfer_links_out_transaction_id_unique` guarantees only
- * one link can ever commit for a given out-leg — so the race is resolved by
- * catching that specific unique-violation *outside* the aborted transaction
- * and reporting a defined 409, instead of letting a raw Postgres error escape
- * as a 500.
+ * link the same candidate between this SELECT and `linkTransfer`. Deliberately
+ * not using `SELECT ... FOR UPDATE` here: other `linkTransfer` callers
+ * (`transfers.ts`, `autoLinkTransfers`) never take that lock, so it wouldn't
+ * exclude them. The real atomic claim is `linkTransfer`'s sorted `FOR UPDATE`
+ * header locks on both transaction rows
+ * (`apps/api/src/modules/ledger/services/transfers.ts`) — whichever concurrent
+ * call acquires both locks first wins, and the loser's post-lock posting-shape
+ * validation via `classifyShape` detects that the transaction is already part
+ * of a transfer and throws `HttpError(409, "Transaction is already part of a
+ * transfer")`, which `acceptRepayment` catches outside the aborted transaction
+ * and re-wraps in the friendlier "reload and try again" message.
  *
  * Timestamp/date provenance: newly created legs take the reviewer's `date`
  * (the in leg always; the out leg only in the zero-candidate branch). The in
@@ -232,21 +233,31 @@ export async function acceptRepayment(
         throw new HttpError(400, "The paying account is archived");
       }
 
-      const candidates = await tx
-        .select({ id: transactions.id })
-        .from(transactions)
-        .where(
-          and(
-            eq(transactions.userId, userId),
-            eq(transactions.accountId, input.fromAccountId),
-            eq(transactions.amountPaise, -claimed.amountPaise),
-            isNull(transactions.deletedAt),
-            eq(transactions.isOpening, false),
-            sql`abs(${transactions.date} - ${input.occurredAt}::date) <= ${TRANSFER_WINDOW_DAYS}`,
-            sql`not exists (select 1 from ${transferLinks} tl
-              where tl.out_transaction_id = ${transactions.id} or tl.in_transaction_id = ${transactions.id})`,
-          ),
-        );
+      const result = await tx.execute(sql`
+        SELECT t.id
+        FROM transactions t
+        WHERE t.user_id = ${userId}
+          AND t.deleted_at IS NULL
+          AND abs(t.date::date - ${input.occurredAt}::date) <= ${TRANSFER_WINDOW_DAYS}
+          AND EXISTS (
+            SELECT 1 FROM postings p
+            JOIN accounts a ON a.id = p.account_id AND a.system_kind IS NULL
+            WHERE p.transaction_id = t.id
+              AND p.account_id = ${input.fromAccountId}
+              AND p.amount_paise = ${-claimed.amountPaise}
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM postings p
+            JOIN accounts a ON a.id = p.account_id AND a.system_kind = 'opening'
+            WHERE p.transaction_id = t.id
+          )
+          AND 2 > (
+            SELECT count(*) FROM postings p2
+            JOIN accounts a2 ON a2.id = p2.account_id AND a2.system_kind IS NULL
+            WHERE p2.transaction_id = t.id
+          )
+      `);
+      const candidates = result.rows as { id: string }[];
       const selection = selectRepaymentCandidate(candidates);
       if (selection.kind === "ambiguous") {
         throw new HttpError(
@@ -294,11 +305,8 @@ export async function acceptRepayment(
         .where(and(eq(extractedTransactions.id, id), eq(extractedTransactions.userId, userId)));
     });
   } catch (err) {
-    if (isUniqueViolation(err, "transfer_links_out_transaction_id_unique")) {
-      throw new HttpError(
-        409,
-        "That payment was linked to another transfer just now — reload and try again.",
-      );
+    if (err instanceof HttpError && err.statusCode === 409 && err.message === "Transaction is already part of a transfer") {
+      throw new HttpError(409, "That payment was linked to another transfer just now — reload and try again.");
     }
     throw err;
   }

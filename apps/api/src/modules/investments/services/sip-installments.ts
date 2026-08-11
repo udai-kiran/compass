@@ -446,7 +446,7 @@ async function linkedInstallmentRows(
       from postings p
       join accounts a on a.id = p.account_id
       where p.transaction_id = t.id and a.system_kind is null
-      order by p.id
+      order by (p.amount_paise > 0) desc, p.id
       limit 1
     ) rp on true
     where t.user_id = ${userId} and t.sip_id = ${sipId} and t.deleted_at is null

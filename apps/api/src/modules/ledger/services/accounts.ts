@@ -10,16 +10,17 @@ import type { Db } from "../../../db/index.ts";
 import { accounts, postings, transactions } from "../schema.ts";
 import { bankDetails, retirementDetails, sips } from "../../../db/schema.ts";
 import { HttpError } from "../../../lib/errors.ts";
+import { withAccountAdvisoryLock } from "../../../lib/account-lock.ts";
 import { assertOwnedGoal } from "../../../lib/ownership.ts";
 import { assertPublicAccountType } from "../../../lib/account-type.ts";
 import { postTransaction, resolveSystemAccounts } from "./post-entry.ts";
 import { buildOpeningPostings } from "./postings.ts";
 
-/** Only these carry their opening balance as a ledger transaction; other types
- * (cards/loans/schemes) keep it on the accounts.opening_balance_paise column,
- * which their statement/valuation logic reads directly. */
-function carriesOpeningAsTransaction(type: AccountType): boolean {
-  return type === "bank" || type === "cash";
+/** All account types carry their opening balance as a ledger transaction; the
+ * accounts.opening_balance_paise column is always 0 after PR-G1 (the boot check
+ * enforces this), and every balance surface reads from postings only. */
+function carriesOpeningAsTransaction(_type: AccountType): boolean {
+  return true;
 }
 
 function seedsOpeningTransaction(type: AccountType, openingBalancePaise: number): boolean {
@@ -164,7 +165,6 @@ export async function accountBalancesAtDate(
 ): Promise<AccountBalanceAtDate[]> {
   const res = await db.execute(sql`
     select a.type,
-           a.opening_balance_paise as opening,
            coalesce(p.total, 0) as posting_total
     from accounts a
     left join (
@@ -177,13 +177,9 @@ export async function accountBalancesAtDate(
     where a.user_id = ${userId} and a.archived_at is null and a.system_kind is null
   `);
   return (
-    res.rows as Array<{ type: string; opening: string; posting_total: string }>
+    res.rows as Array<{ type: string; posting_total: string }>
   ).map((r) => {
-    const postingTotal = Number(r.posting_total);
-    if (!Number.isSafeInteger(postingTotal)) {
-      throw new HttpError(500, "Balance aggregate exceeded a safe integer — refusing to lose paise");
-    }
-    const balancePaise = Number(r.opening) + postingTotal;
+    const balancePaise = Number(r.posting_total);
     if (!Number.isSafeInteger(balancePaise)) {
       throw new HttpError(500, "Balance aggregate exceeded a safe integer — refusing to lose paise");
     }
@@ -215,7 +211,7 @@ export async function listAccounts(db: Db, userId: string): Promise<AccountWithB
     if (!Number.isSafeInteger(sum)) {
       throw new HttpError(500, "Balance aggregate exceeded a safe integer — refusing to lose paise");
     }
-    const balancePaise = account.openingBalancePaise + sum;
+    const balancePaise = sum;
     if (!Number.isSafeInteger(balancePaise)) {
       throw new HttpError(500, "Balance aggregate exceeded a safe integer — refusing to lose paise");
     }
@@ -365,7 +361,8 @@ export async function updateAccount(
 ): Promise<Account> {
   const { archived, openingBalancePaise, ...fields } = input;
 
-  return db.transaction(async (tx) => {
+  return withAccountAdvisoryLock(db, id, (lockedDb) =>
+    lockedDb.transaction(async (tx) => {
     // Lock the account row first — this is what serializes against a
     // concurrent SIP creation/update targeting the same account (sips.ts's
     // lockedAccountForSip locks the same row before its own checks): whichever
@@ -434,40 +431,49 @@ export async function updateAccount(
     // somewhere else (column vs ledger row), so leaving it put would drift from
     // the invariant and force the user to edit the amount just to migrate it.
     if (openingBalancePaise !== undefined || typeChanged) {
-      // `is_opening` is not settable through any route or schema — only
-      // createAccount, this function and the demo seed ever write it, each at most
-      // once per account — so there is normally exactly one row. Ordered anyway so
-      // that if one ever did exist twice, the row this may delete is deterministic.
-      const existingRow = await tx.query.transactions.findFirst({
-        where: and(
-          eq(transactions.accountId, id),
-          eq(transactions.userId, userId),
-          eq(transactions.isOpening, true),
-          isNull(transactions.deletedAt),
-        ),
-        orderBy: (t, { asc }) => [asc(t.date), asc(t.id)],
-        columns: { id: true, amountPaise: true },
-      });
-      const earliest = await tx
-        .select({ min: sql<string | null>`min(${transactions.date})` })
-        .from(transactions)
-        .where(
-          and(
-            eq(transactions.accountId, id),
-            eq(transactions.userId, userId),
-            eq(transactions.isOpening, false),
-            isNull(transactions.deletedAt),
-          ),
-        );
+      // Opening transaction is identified by having a posting on an account with
+      // system_kind = 'opening' AND a posting on this real account. Ordered so
+      // that if more than one ever exists, the earliest is deterministic.
+      const existingResult = await tx.execute(sql`
+        select t.id, p.amount_paise
+        from transactions t
+        join postings p on p.transaction_id = t.id and p.account_id = ${id}
+        where t.user_id = ${userId}
+          and t.deleted_at is null
+          and exists (
+            select 1 from postings p_sys
+            join accounts a_sys on a_sys.id = p_sys.account_id and a_sys.system_kind = 'opening'
+            where p_sys.transaction_id = t.id
+          )
+        order by t.date asc, t.id asc
+        limit 1
+      `);
+      const existingRow = (existingResult.rows as Array<{ id: string; amount_paise: number }>)[0];
+      const earliestResult = await tx.execute(sql`
+        select min(t.date)::text as min_date
+        from transactions t
+        where t.user_id = ${userId}
+          and t.deleted_at is null
+          and not exists (
+            select 1 from postings p
+            join accounts a_sys on a_sys.id = p.account_id and a_sys.system_kind = 'opening'
+            where p.transaction_id = t.id
+          )
+          and exists (
+            select 1 from postings p2
+            where p2.transaction_id = t.id and p2.account_id = ${id}
+          )
+      `);
+      const earliest = earliestResult.rows as Array<{ min_date: string | null }>;
       const plan = planOpeningBalanceChange({
         type: nextType,
         requestedPaise: openingBalanceToReconcile({
           requestedPaise: openingBalancePaise,
-          existingRowPaise: existingRow?.amountPaise ?? null,
+          existingRowPaise: existingRow ? Number(existingRow.amount_paise) : null,
           columnPaise: current.openingBalancePaise,
         }),
-        existing: existingRow ? { id: existingRow.id, amountPaise: existingRow.amountPaise } : null,
-        earliestTxnDate: earliest[0]?.min ?? null,
+        existing: existingRow ? { id: existingRow.id, amountPaise: Number(existingRow.amount_paise) } : null,
+        earliestTxnDate: earliest[0]?.min_date ?? null,
         today: new Date().toISOString().slice(0, 10),
       });
       openingColumn = { openingBalancePaise: plan.columnPaise };
@@ -520,7 +526,6 @@ export async function updateAccount(
           .where(
             and(
               eq(transactions.id, plan.txn.id),
-              eq(transactions.accountId, id),
               eq(transactions.userId, userId),
             ),
           );
@@ -551,7 +556,8 @@ export async function updateAccount(
     }
 
     return toAccount(rows[0]!);
-  });
+  }),
+  );
 }
 
 /** Message for the "account is a SIP source" delete guard — pure so it's testable without a DB. */
@@ -575,13 +581,13 @@ export async function deleteAccount(db: Db, userId: string, id: string): Promise
     // account management.
     if (currentRows[0]!.systemKind !== null) throw new HttpError(404, "Account not found");
 
-    // Any transaction counts, including soft-deleted ones: they still hold a
-    // (non-cascading) FK to the account, so deleting would hit a constraint error
-    // at the DB. Archive is the path for an account that has ever been used.
-    const used = await tx.query.transactions.findFirst({
-      where: eq(transactions.accountId, id),
-    });
-    if (used) {
+    // Any posting on this account means it has been used (postings are never
+    // hard-deleted — soft-deleted transactions retain their postings). Archive
+    // is the path for an account that has ever been used.
+    const usedResult = await tx.execute(sql`
+      select 1 from postings p where p.account_id = ${id} limit 1
+    `);
+    if (usedResult.rows.length > 0) {
       throw new HttpError(409, "Account has transactions — archive it instead of deleting");
     }
     // sips.source_account_id has no delete action (unlike target_account_id,

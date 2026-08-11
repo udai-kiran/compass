@@ -27,8 +27,11 @@ import { evaluateLargeTransactions } from "../../system/services/prefs.ts";
  * large-transaction alert now compute from `postings`; this DB-backed suite
  * seeds fixtures via the REAL writers (so postings are dual-written) and asserts
  * the converted readers equal a formula computed DIRECTLY from legacy
- * `transactions` / `transaction_splits` / `transfer_links` tables — never by
- * calling another planning helper.
+ * `transactions` / `transaction_splits` tables — never by calling another
+ * planning helper. Transfer classification in the legacy helpers uses an
+ * independent postings-shape predicate (2 real postings + 0 system postings)
+ * rather than a `transfer_links` lookup; `transfer_links` is never populated
+ * under PR-G1 so a legacy-column marker would make the comparison tautological.
  * `findInconsistentPostings` is also asserted empty so a coincidentally-equal
  * aggregate can't hide drift.
  */
@@ -173,8 +176,13 @@ test("postings-planning-parity: 1 — getTrends totals match legacy SQL per mont
     where t.user_id = ${userId} and t.deleted_at is null
       and t.date >= ${from} and t.date <= ${to}
       and not t.is_opening
-      and not exists (select 1 from transfer_links tl
-        where tl.out_transaction_id = t.id or tl.in_transaction_id = t.id)
+      and not (
+        (select count(*) from postings pr join accounts ar on ar.id = pr.account_id
+         where pr.transaction_id = t.id and ar.system_kind is null) = 2
+        and
+        (select count(*) from postings ps join accounts asys on asys.id = ps.account_id
+         where ps.transaction_id = t.id and asys.system_kind is not null) = 0
+      )
     group by 1
   `);
   const legByMonth = new Map(
@@ -260,8 +268,13 @@ test("postings-planning-parity: 2 — getTrends byCategory matches legacy SQL pe
     where t.user_id = ${userId} and t.deleted_at is null
       and t.date >= ${from} and t.date <= ${to}
       and t.amount_paise < 0 and not t.is_opening
-      and not exists (select 1 from transfer_links tl
-        where tl.out_transaction_id = t.id or tl.in_transaction_id = t.id)
+      and not (
+        (select count(*) from postings pr join accounts ar on ar.id = pr.account_id
+         where pr.transaction_id = t.id and ar.system_kind is null) = 2
+        and
+        (select count(*) from postings ps join accounts asys on asys.id = ps.account_id
+         where ps.transaction_id = t.id and asys.system_kind is not null) = 0
+      )
       and not exists (select 1 from transaction_splits s where s.transaction_id = t.id)
     group by 1, 2
   `);
@@ -444,8 +457,13 @@ test("postings-planning-parity: 4 — topMerchants and largest match legacy; bla
       and t.date >= ${from} and t.date <= ${to}
       and t.amount_paise < 0
       and not t.is_opening
-      and not exists (select 1 from transfer_links tl
-        where tl.out_transaction_id = t.id or tl.in_transaction_id = t.id)
+      and not (
+        (select count(*) from postings pr join accounts ar on ar.id = pr.account_id
+         where pr.transaction_id = t.id and ar.system_kind is null) = 2
+        and
+        (select count(*) from postings ps join accounts asys on asys.id = ps.account_id
+         where ps.transaction_id = t.id and asys.system_kind is not null) = 0
+      )
     order by t.amount_paise asc limit 1
   `);
   const legLargest = legLargestRes.rows[0] as { id: string; merchant: string; amt: string; date: string } | undefined;
@@ -597,8 +615,13 @@ test("postings-planning-parity: 6 — getForecast burnRes matches legacy SQL", a
     where t.user_id = ${userId} and t.deleted_at is null
       and t.date >= ${from90} and t.date <= ${today}
       and not t.is_opening
-      and not exists (select 1 from transfer_links tl
-        where tl.out_transaction_id = t.id or tl.in_transaction_id = t.id)
+      and not (
+        (select count(*) from postings pr join accounts ar on ar.id = pr.account_id
+         where pr.transaction_id = t.id and ar.system_kind is null) = 2
+        and
+        (select count(*) from postings ps join accounts asys on asys.id = ps.account_id
+         where ps.transaction_id = t.id and asys.system_kind is not null) = 0
+      )
   `);
   const legBurn = legRes.rows[0] as { expense: string; income: string; discretionary: string };
   const legExpense = Number(legBurn.expense);
@@ -768,20 +791,12 @@ test("postings-planning-parity: 9 — mappedContributionRate postings SQL matche
 
   const accountIds = [savings.id, savingsWithOpening.id];
 
-  // Legacy SQL
-  const legRes = await db.execute(sql`
-    select coalesce(sum(t.amount_paise), 0)::bigint as total
-    from transactions t
-    where t.user_id = ${userId}
-      and t.account_id = any(array[${sql.join(accountIds.map((id) => sql`${id}::uuid`), sql`, `)}])
-      and t.amount_paise > 0
-      and t.deleted_at is null
-      and t.date >= ${cutoffIso}
-      and t.date <= ${today}
-  `);
-  const legTotal = Number((legRes.rows[0] as { total: string }).total);
+  // Under PR-G1 the transfer in-leg transaction is hard-deleted; only the outflow
+  // survivor row exists.  A legacy transactions.amount_paise sum would miss the
+  // +30000 posting credit to savings entirely, yielding 150000 instead of 200000.
+  // We use the postings formula exclusively and assert the fixture-derived total.
 
-  // New postings SQL (same as the converted mappedContributionRate)
+  // Postings SQL (same as the converted mappedContributionRate)
   const newRes = await db.execute(sql`
     select coalesce(sum(p.amount_paise), 0)::bigint as total
     from postings p
@@ -797,13 +812,11 @@ test("postings-planning-parity: 9 — mappedContributionRate postings SQL matche
   `);
   const newTotal = Number((newRes.rows[0] as { total: string }).total);
 
-  assert.equal(newTotal, legTotal, "postings SQL must match legacy SQL for mappedContributionRate");
-
-  // Spot-check expected values:
-  // savings: +100000 + +50000 + +30000 (transfer in real posting) = 180000
-  // savingsWithOpening: opening is_opening transaction +20000 = 20000
+  // Fixture-derived expected value (independent of any production query):
+  // savings: +100000 (ordinary) + +50000 (ordinary) + +30000 (transfer-in posting) = 180000
+  // savingsWithOpening: opening posting +20000 = 20000
   // Total = 200000
-  assert.equal(legTotal, 200000, "legacy total must be 200000 (100k + 50k + 30k + 20k opening)");
+  assert.equal(newTotal, 200000, "postings total must be 200000 (100k + 50k + 30k transfer-in + 20k opening)");
 
   assert.deepEqual(await findInconsistentPostings(db, userId), []);
 });

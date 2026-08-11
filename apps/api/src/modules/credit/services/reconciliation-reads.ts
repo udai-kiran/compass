@@ -111,7 +111,6 @@ export async function ledgerDuesAtDates(
   db: DbOrTx,
   userId: string,
   accountId: string,
-  openingBalancePaise: number,
   dates: readonly string[],
 ): Promise<Map<string, number>> {
   const result = new Map<string, number>();
@@ -140,10 +139,7 @@ export async function ledgerDuesAtDates(
     if (!Number.isSafeInteger(sum)) {
       throw new HttpError(500, "Ledger balance aggregate exceeded a safe integer — refusing to lose paise");
     }
-    const ledgerDuePaise = -(openingBalancePaise + sum);
-    if (!Number.isSafeInteger(ledgerDuePaise)) {
-      throw new HttpError(500, "Ledger balance aggregate exceeded a safe integer — refusing to lose paise");
-    }
+    const ledgerDuePaise = -sum;
     result.set(row.stmt_date, ledgerDuePaise);
   }
   return result;
@@ -168,7 +164,7 @@ export async function listReconciliations(
   userId: string,
   accountId: string,
 ): Promise<StatementReconciliation[]> {
-  const acc = await ownedCardAccount(db, userId, accountId);
+  await ownedCardAccount(db, userId, accountId);
   const rows = await db.query.statementReconciliations.findMany({
     where: and(
       eq(statementReconciliations.userId, userId),
@@ -178,7 +174,7 @@ export async function listReconciliations(
     limit: 24,
   });
   const dates = rows.map((r) => r.statementDate).filter((d): d is string => d !== null);
-  const ledgerDueByDate = await ledgerDuesAtDates(db, userId, accountId, acc.openingBalancePaise, dates);
+  const ledgerDueByDate = await ledgerDuesAtDates(db, userId, accountId, dates);
   return rows.map((r) =>
     toReconciliationDto(r, r.statementDate !== null ? (ledgerDueByDate.get(r.statementDate) ?? null) : null),
   );

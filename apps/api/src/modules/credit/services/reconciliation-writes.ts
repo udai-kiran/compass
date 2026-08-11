@@ -1,12 +1,16 @@
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Redis } from "ioredis";
-import type { StatementReconciliation } from "@compass/shared";
+import type { AccountType, StatementReconciliation } from "@compass/shared";
 import type { Db } from "../../../db/index.ts";
 import { accounts, extractedTransactions, transactions } from "../../../db/schema.ts";
 import { statementReconciliations } from "../schema.ts";
 import { HttpError } from "../../../lib/errors.ts";
+import { withAccountAdvisoryLock } from "../../../lib/account-lock.ts";
 import { withSerializableRetry } from "../../../lib/serializable.ts";
 import { repairSnapshots } from "../../investments/services/networth.ts";
+import { planOpeningBalanceChange } from "../../ledger/services/accounts.ts";
+import { buildOpeningPostings } from "../../ledger/services/postings.ts";
+import { postTransaction, resolveSystemAccounts } from "../../ledger/services/post-entry.ts";
 import { ownedCardAccount } from "./cards.ts";
 import { dueDrift, ledgerDuesAtDates, summarizeStatementLines, toReconciliationDto } from "./reconciliation-reads.ts";
 
@@ -153,14 +157,10 @@ export async function recomputeReconciliation(
     // through this same transaction handle (not a follow-up call after commit) so
     // the returned drift describes the identical ledger snapshot as `row`'s stats
     // — see review-1/2 on recompute's enrichment needing one consistent instant.
-    const [acctRow] = await tx
-      .select({ openingBalancePaise: accounts.openingBalancePaise })
-      .from(accounts)
-      .where(and(eq(accounts.id, accountId), eq(accounts.userId, userId)));
     const ledgerDuePaise =
-      row!.statementDate !== null && acctRow
+      row!.statementDate !== null
         ? ((
-            await ledgerDuesAtDates(tx, userId, accountId, acctRow.openingBalancePaise, [row!.statementDate])
+            await ledgerDuesAtDates(tx, userId, accountId, [row!.statementDate])
           ).get(row!.statementDate) ?? null)
         : null;
     return { row: row!, ledgerDuePaise };
@@ -237,12 +237,15 @@ export async function absorbCarryover(
   reconciliationId: string,
   hooks?: AbsorbCarryoverHooks,
 ): Promise<StatementReconciliation> {
-  const { dto, createdAt } = await withSerializableRetry(() =>
-    db.transaction(
-      async (tx) => {
-        // Lock the account first — this is what serializes against a concurrent
-        // opening-balance edit (updateAccount locks the same row the same way
-        // before its own edit) or a second absorb on this same card.
+  const { dto, createdAt } = await withAccountAdvisoryLock(db, accountId, (lockedDb) =>
+    withSerializableRetry(() =>
+      lockedDb.transaction(
+        async (tx) => {
+        // Lock the account first — this row lock serializes against concurrent
+        // SIP creation/update (lockedAccountForSip takes the same FOR UPDATE lock)
+        // and validates account state. The advisory lock wrapping this entire
+        // transaction handles serialization against updateAccount and a concurrent
+        // second absorbCarryover on this same card.
         const [account] = await tx
           .select()
           .from(accounts)
@@ -276,7 +279,6 @@ export async function absorbCarryover(
           tx,
           userId,
           accountId,
-          account.openingBalancePaise,
           [statementDate],
         );
         const ledgerDuePaise = beforeLedgerDueByDate.get(statementDate) ?? null;
@@ -292,17 +294,118 @@ export async function absorbCarryover(
           throw new HttpError(409, "Nothing to carry forward");
         }
 
-        // Sign proof: ledgerDue = −(opening + Σtx); want −(opening' + Σtx) =
-        // totalDue ⇒ opening' = opening − drift (see dueDrift and TASK.md P1).
-        const nextOpeningBalancePaise = account.openingBalancePaise - drift;
-        if (!Number.isSafeInteger(nextOpeningBalancePaise)) {
+        // Find the current Opening transaction for this card (via postings).
+        const openingTxnRow = await tx.execute(sql`
+          select t.id, t.date
+          from transactions t
+          where t.user_id = ${userId}
+            and t.deleted_at is null
+            and exists (
+              select 1 from postings p
+              join accounts a_sys on a_sys.id = p.account_id and a_sys.system_kind = 'opening'
+              where p.transaction_id = t.id
+            )
+            and exists (
+              select 1 from postings p2
+              where p2.transaction_id = t.id and p2.account_id = ${accountId}
+            )
+          order by t.date asc, t.id asc
+          limit 1
+        `) as unknown as { rows: Array<{ id: string; date: string }> };
+
+        // Read the real-leg posting amount as the current Opening paise.
+        let currentOpeningPaise = 0;
+        if (openingTxnRow.rows.length > 0) {
+          const realLeg = await tx.execute(sql`
+            select p.amount_paise from postings p
+            where p.transaction_id = ${openingTxnRow.rows[0]!.id}
+              and p.account_id = ${accountId}
+            limit 1
+          `) as unknown as { rows: Array<{ amount_paise: number }> };
+          currentOpeningPaise = Number(realLeg.rows[0]?.amount_paise ?? 0);
+        }
+
+        // Sign proof: ledgerDue = −(Σtx); want −(Σtx') = totalDue
+        // Opening tx paise' = Opening tx paise − drift (see dueDrift and TASK.md P1).
+        const nextOpeningPaise = currentOpeningPaise - drift;
+        if (!Number.isSafeInteger(nextOpeningPaise)) {
           throw new HttpError(500, "Adjusted opening balance exceeded a safe integer — refusing to lose paise");
         }
 
-        await tx
-          .update(accounts)
-          .set({ openingBalancePaise: nextOpeningBalancePaise })
-          .where(and(eq(accounts.id, accountId), eq(accounts.userId, userId)));
+        // Find the earliest non-opening transaction date for insertion positioning.
+        const earliestDateRow = await tx.execute(sql`
+          select min(t.date)::text as min_date
+          from transactions t
+          where t.user_id = ${userId}
+            and t.deleted_at is null
+            and not exists (
+              select 1 from postings p
+              join accounts a_sys on a_sys.id = p.account_id and a_sys.system_kind = 'opening'
+              where p.transaction_id = t.id
+            )
+            and exists (
+              select 1 from postings p2
+              where p2.transaction_id = t.id and p2.account_id = ${accountId}
+            )
+        `) as unknown as { rows: Array<{ min_date: string | null }> };
+        const earliestTxnDate = earliestDateRow.rows[0]?.min_date ?? null;
+
+        const plan = planOpeningBalanceChange({
+          type: account.type as AccountType,
+          requestedPaise: nextOpeningPaise,
+          existing: openingTxnRow.rows.length > 0
+            ? { id: openingTxnRow.rows[0]!.id, amountPaise: currentOpeningPaise }
+            : null,
+          earliestTxnDate,
+          today: new Date().toISOString().slice(0, 10),
+        });
+
+        if (plan.txn.kind === "insert") {
+          const [openingTxn] = await tx
+            .insert(transactions)
+            .values({
+              userId,
+              accountId,
+              date: plan.txn.date,
+              amountPaise: plan.txn.amountPaise,
+              merchant: "Opening balance",
+              isOpening: true,
+            })
+            .returning({ id: transactions.id });
+          const sys = await resolveSystemAccounts(tx, userId);
+          await postTransaction(
+            tx,
+            openingTxn!.id,
+            userId,
+            buildOpeningPostings({
+              accountId,
+              amountPaise: plan.txn.amountPaise,
+              systemOpeningAccountId: sys.opening,
+            }),
+          );
+        } else if (plan.txn.kind === "update") {
+          const sys = await resolveSystemAccounts(tx, userId);
+          await postTransaction(
+            tx,
+            plan.txn.id,
+            userId,
+            buildOpeningPostings({
+              accountId,
+              amountPaise: plan.txn.amountPaise,
+              systemOpeningAccountId: sys.opening,
+            }),
+          );
+        } else if (plan.txn.kind === "delete") {
+          await tx
+            .update(transactions)
+            .set({ deletedAt: new Date(), updatedAt: new Date() })
+            .where(
+              and(
+                eq(transactions.id, plan.txn.id),
+                eq(transactions.userId, userId),
+              ),
+            );
+        }
 
         // Re-derive from the post-update state through this SAME tx handle (not a
         // follow-up call after commit), mirroring recomputeReconciliation's own
@@ -312,7 +415,6 @@ export async function absorbCarryover(
           tx,
           userId,
           accountId,
-          nextOpeningBalancePaise,
           [statementDate],
         );
         const afterLedgerDuePaise = afterLedgerDueByDate.get(statementDate) ?? null;
@@ -324,6 +426,7 @@ export async function absorbCarryover(
       },
       { isolationLevel: "serializable" },
     ),
+  ),
   );
 
   // Post-commit, fire-and-forget: never let a repair failure fail this

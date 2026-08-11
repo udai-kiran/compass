@@ -1,7 +1,7 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { and, eq, gte, isNull, lte, sql } from "drizzle-orm";
+import { and, eq, gte, isNotNull, isNull, lte, sql } from "drizzle-orm";
 import type { AccountType } from "@compass/shared";
 import {
   accounts,
@@ -22,6 +22,8 @@ import { createPool } from "../../../infra/db.ts";
 import { findInconsistentPostings } from "./reconcile-postings.ts";
 import { seedSystemAccounts } from "./post-entry.ts";
 import { createAccount } from "./accounts.ts";
+import { suggestCategoriesFor } from "../../automation/services/categorize.ts";
+import type { AiProvider } from "@compass/ai";
 import { createTransaction, setSplits } from "./transactions.ts";
 import { createTransfer } from "./transfers.ts";
 import { listUserTasks, getUserTask } from "./user-tasks.ts";
@@ -135,7 +137,7 @@ test("postings-pr-e-parity: PE1 — listCardHolders and getCardActivity aggregat
       where p.account_id = ${cardAcct.id} and t.user_id = ${userId} and t.deleted_at is null
     `)
   ).rows[0] as { total: string };
-  assert.equal(holders[0]!.cards[0]!.balancePaise, 5000 + Number(legRow.total));
+  assert.equal(holders[0]!.cards[0]!.balancePaise, Number(legRow.total));
 
   const act = await getCardActivity(db, userId, cardAcct.id, ref);
   assert.equal(act.balancePaise, -10000);
@@ -253,10 +255,12 @@ test("postings-pr-e-parity: PE3 — ledgerDuesAtDates matches opening+postings s
           and t.deleted_at is null and t.date < ${cutDate}
       `)
     ).rows[0] as { s: string };
-    return -(8000 + Number(r.s));
+    // After PR-G1 the Opening balance is stored as a posting (not the column),
+    // so the sum already includes it — no manual addend needed.
+    return -Number(r.s);
   }
 
-  const result = await ledgerDuesAtDates(db, userId, cardAcct.id, 8000, [d1, d2, d3]);
+  const result = await ledgerDuesAtDates(db, userId, cardAcct.id, [d1, d2, d3]);
   assert.equal(result.get(d1), await expectedDue(d1));
   assert.equal(result.get(d2), await expectedDue(d2));
   assert.equal(result.get(d3), await expectedDue(d3));
@@ -333,10 +337,10 @@ test("postings-pr-e-parity: PE4 — SIP installment readers use postings", async
 });
 
 // ---------------------------------------------------------------------------
-// PE5 — categorize.ts: suggestCategoriesFor SQL returns real posting amounts
+// PE5 — categorize.ts: suggestCategoriesFor calls AI with uncategorized transactions
 // ---------------------------------------------------------------------------
 
-test("postings-pr-e-parity: PE5 — suggestCategoriesFor SQL returns real posting amounts", async (t) => {
+test("postings-pr-e-parity: PE5 — suggestCategoriesFor passes correct transactions to AI (postings-based inclusion/exclusion)", async (t) => {
   const userId = await createUser();
   t.after(() => cleanupUser(userId));
   await seedSystemAccounts(db, userId);
@@ -344,42 +348,71 @@ test("postings-pr-e-parity: PE5 — suggestCategoriesFor SQL returns real postin
   const bank1 = await createAcct(userId, "Bank1", "bank");
   const bank2 = await createAcct(userId, "Bank2", "bank");
 
+  // Look up system expenses account (needed to build split-shaped postings directly).
+  const sysRows = await db
+    .select({ id: accounts.id, systemKind: accounts.systemKind })
+    .from(accounts)
+    .where(and(eq(accounts.userId, userId), isNotNull(accounts.systemKind)));
+  const sysExpensesId = sysRows.find((r) => r.systemKind === "expenses")!.id;
+
   const [cat] = await db
     .insert(categories)
     .values({ userId, name: "Food", kind: "expense" })
     .returning({ id: categories.id });
   const catId = cat!.id;
 
-  // Ordinary uncategorized
-  await createTransaction(db, userId, {
+  // 1. Ordinary uncategorized — included; amount = real posting (-500).
+  const ordinaryTxn = await createTransaction(db, userId, {
     accountId: bank1.id,
-    date: iso(-5),
+    date: iso(-6),
     amountPaise: -500,
     merchant: "Zomato",
   });
 
-  // Split uncategorized (parent null categoryId)
-  const splitTxn = await createTransaction(db, userId, {
+  // 2. Uncategorized split-like — included; amount = parent real posting (-1500).
+  //    suggestCategoriesFor includes it because NOT EXISTS(system posting with non-null category_id)
+  //    is TRUE (counter postings have null category_id) and hasCategoryDimension() is TRUE
+  //    (counter postings join to the Expenses system account).
+  //    Counter postings are inserted directly because setSplits/buildSplitPostings require non-null
+  //    categoryIds; this shape tests the reader's amount-from-real-posting behavior.
+  const uncatSplitTxn = await createTransaction(db, userId, {
     accountId: bank1.id,
-    date: iso(-4),
+    date: iso(-5),
     amountPaise: -1500,
     merchant: "Swiggy",
   });
-  await setSplits(db, userId, splitTxn.id, [
-    { categoryId: catId, amountPaise: -800, note: "" },
-    { categoryId: catId, amountPaise: -700, note: "" },
+  await db.delete(postings).where(eq(postings.transactionId, uncatSplitTxn.id));
+  await db.insert(postings).values([
+    { transactionId: uncatSplitTxn.id, accountId: bank1.id, amountPaise: -1500 },
+    { transactionId: uncatSplitTxn.id, accountId: sysExpensesId, amountPaise: 800 },
+    { transactionId: uncatSplitTxn.id, accountId: sysExpensesId, amountPaise: 700 },
   ]);
 
-  // Transfer (excluded via clearing postings)
-  await createTransfer(db, userId, {
+  // 3. Categorized split — EXCLUDED; counter postings have non-null category_id so
+  //    NOT EXISTS(system posting with non-null category_id) is FALSE.
+  //    This is the exact case the old duplicated SQL got backwards (old SQL included it
+  //    because it only excluded clearing/opening postings, not categorized expenses postings).
+  const catSplitTxn = await createTransaction(db, userId, {
+    accountId: bank1.id,
+    date: iso(-4),
+    amountPaise: -800,
+    merchant: "Groceries",
+  });
+  await setSplits(db, userId, catSplitTxn.id, [
+    { categoryId: catId, amountPaise: -400, note: "" },
+    { categoryId: catId, amountPaise: -400, note: "" },
+  ]);
+
+  // 4. Transfer — EXCLUDED; no Expenses/Income counter postings so hasCategoryDimension() is FALSE.
+  const xfer = await createTransfer(db, userId, {
     fromAccountId: bank1.id,
     toAccountId: bank2.id,
     amountPaise: 2000,
     date: iso(-3),
   });
 
-  // Categorized ordinary (excluded)
-  await createTransaction(db, userId, {
+  // 5. Categorized ordinary — EXCLUDED; expenses counter has non-null category_id.
+  const catOrdinaryTxn = await createTransaction(db, userId, {
     accountId: bank1.id,
     date: iso(-2),
     amountPaise: -300,
@@ -387,49 +420,67 @@ test("postings-pr-e-parity: PE5 — suggestCategoriesFor SQL returns real postin
     categoryId: catId,
   });
 
-  // Run the same SQL as suggestCategoriesFor
-  const rows = (
-    await db.execute(sql`
-      select t.id, p.amount_paise
-      from postings p
-      join accounts a on a.id = p.account_id
-      join transactions t on t.id = p.transaction_id
-      where t.user_id = ${userId} and t.deleted_at is null and t.category_id is null
-        and a.system_kind is null
-        and not exists (
-          select 1 from postings p2
-          join accounts a2 on a2.id = p2.account_id
-          where p2.transaction_id = t.id and a2.system_kind in ('clearing', 'opening')
-        )
-      order by t.date desc limit 200
-    `)
-  ).rows as Array<{ id: string; amount_paise: string }>;
+  // 6. Opening — EXCLUDED; Opening system posting fails hasCategoryDimension() (not expenses/income).
+  const openingAcct = await createAcct(userId, "Bank3", "bank", 100000);
+  const [openingTxnRow] = await db
+    .select({ id: transactions.id })
+    .from(transactions)
+    .where(
+      and(
+        eq(transactions.userId, userId),
+        eq(transactions.accountId, openingAcct.id),
+        eq(transactions.isOpening, true),
+      ),
+    );
+  const openingTxnId = openingTxnRow!.id;
 
-  assert.equal(rows.length, 2, "ordinary + split only");
-  const splitRow = rows.find((r) => r.id === splitTxn.id);
-  assert.ok(splitRow, "split txn appears in query");
+  // Capturing fake AiProvider: records what transactions were passed to suggestCategories.
+  const capturedTxns: Array<{ id: string; amountPaise: number }> = [];
+  const fakeAi: AiProvider = {
+    name: "fake",
+    enabled: true,
+    suggestCategories: async (input) => {
+      for (const txn of input.transactions) {
+        capturedTxns.push({ id: txn.id, amountPaise: txn.amountPaise });
+      }
+      return [];
+    },
+    generateSummary: async () => "",
+    chat: async () => ({ text: "", toolCalls: [] }),
+  };
+
+  await suggestCategoriesFor(db, fakeAi, userId, undefined);
+
+  // Exactly 2 transactions passed to AI: ordinary uncategorized and uncategorized split.
+  assert.equal(capturedTxns.length, 2, "exactly 2 uncategorized transactions passed to AI");
+
+  const capturedIds = new Set(capturedTxns.map((txn) => txn.id));
+
+  // 1. Ordinary uncategorized — included; amount = real posting amount.
+  assert.ok(capturedIds.has(ordinaryTxn.id), "ordinary uncategorized included");
+  const capturedOrdinary = capturedTxns.find((txn) => txn.id === ordinaryTxn.id)!;
+  assert.equal(capturedOrdinary.amountPaise, -500, "ordinary amount = real posting amount (-500)");
+
+  // 2. Uncategorized split — included; amount = parent real posting amount (not sub-amounts).
+  assert.ok(capturedIds.has(uncatSplitTxn.id), "uncategorized split included");
+  const capturedSplit = capturedTxns.find((txn) => txn.id === uncatSplitTxn.id)!;
   assert.equal(
-    Number(splitRow!.amount_paise),
+    capturedSplit.amountPaise,
     -1500,
-    "split amount = real posting (-1500), not split sub-amount",
+    "split amount = parent real posting (-1500), not sub-amounts (800 or 700)",
   );
 
-  // Legacy comparison (same transaction IDs)
-  const legRows = (
-    await db.execute(sql`
-      select t.id from transactions t
-      where t.user_id = ${userId} and t.deleted_at is null and t.category_id is null
-        and not t.is_opening
-        and not exists (select 1 from transfer_links tl
-          where tl.out_transaction_id = t.id or tl.in_transaction_id = t.id)
-      order by t.date desc limit 200
-    `)
-  ).rows as Array<{ id: string }>;
-  assert.deepEqual(
-    rows.map((r) => r.id).sort(),
-    legRows.map((r) => r.id).sort(),
-    "postings query and legacy query return same transaction IDs",
-  );
+  // 3. Categorized split — excluded (category-bearing counter postings block inclusion).
+  assert.ok(!capturedIds.has(catSplitTxn.id), "categorized split excluded");
+
+  // 4. Transfer — excluded (no expenses/income counter; hasCategoryDimension() is false).
+  assert.ok(!capturedIds.has(xfer.transactionId), "transfer excluded");
+
+  // 5. Categorized ordinary — excluded.
+  assert.ok(!capturedIds.has(catOrdinaryTxn.id), "categorized ordinary excluded");
+
+  // 6. Opening — excluded (Opening system posting, not expenses/income).
+  assert.ok(!capturedIds.has(openingTxnId), "opening transaction excluded");
 
   assert.deepEqual(await findInconsistentPostings(db, userId), []);
 });
@@ -516,10 +567,10 @@ test("postings-pr-e-parity: PE7 — search returns one result per transaction, r
     date: iso(-3),
   });
 
-  // Update out-leg merchant to force a match with the search term
-  // createTransfer returns TransferResult = { transferLinkId, outTransactionId, inTransactionId }
+  // Update the transfer header's merchant (createTransfer returns { transactionId } —
+  // the outflow leg; PR-G1 replaced the old three-field result)
   await db.execute(
-    sql`UPDATE transactions SET merchant = 'PE7Merchant' WHERE id = ${xfer.outTransactionId}`,
+    sql`UPDATE transactions SET merchant = 'PE7Merchant' WHERE id = ${xfer.transactionId}`,
   );
 
   const results = await search(db, userId, "PE7Merchant");

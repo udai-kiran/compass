@@ -161,7 +161,7 @@ export async function transactionsCsv(db: Db, userId: string): Promise<string> {
                      and a.user_id = t.user_id
                      and a.system_kind is null
       where p.transaction_id = t.id
-      order by p.id
+      order by (p.amount_paise < 0) desc, p.id
       limit 1
     ) rp on true
     left join lateral (

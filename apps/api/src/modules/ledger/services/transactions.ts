@@ -416,7 +416,7 @@ function safeTotal(value: string): number {
   return n;
 }
 
-export async function getTransaction(db: Db, userId: string, id: string): Promise<Transaction> {
+export async function getTransaction(db: DbOrTx, userId: string, id: string): Promise<Transaction> {
   const row = await db.query.transactions.findFirst({
     where: and(eq(transactions.id, id), eq(transactions.userId, userId)),
   });

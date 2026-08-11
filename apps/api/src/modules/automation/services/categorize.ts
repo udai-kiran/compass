@@ -53,7 +53,12 @@ export async function suggestCategoriesFor(
       from postings p
       join accounts a on a.id = p.account_id
       join transactions t on t.id = p.transaction_id
-      where t.user_id = ${userId} and t.deleted_at is null and t.category_id is null
+      where t.user_id = ${userId} and t.deleted_at is null
+        and not exists (
+          select 1 from postings cp
+          join accounts ca on ca.id = cp.account_id and ca.system_kind is not null
+          where cp.transaction_id = t.id and cp.category_id is not null
+        )
         and a.system_kind is null
         and ${hasCategoryDimension()}
         ${restrict ? sql`and t.id in (${sql.join(transactionIds!.map((id) => sql`${id}::uuid`), sql`, `)})` : sql``}

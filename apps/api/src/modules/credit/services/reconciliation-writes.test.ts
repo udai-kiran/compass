@@ -7,7 +7,9 @@ import { createPool } from "../../../infra/db.ts";
 import { accounts, emailIngestions, postings, transactions, users } from "../../../db/schema.ts";
 import { cardDetails, statementReconciliations } from "../schema.ts";
 import { HttpError, pgError } from "../../../lib/errors.ts";
-import { listAccounts } from "../../ledger/services/accounts.ts";
+import { createAccount, listAccounts } from "../../ledger/services/accounts.ts";
+import { postTransaction, resolveSystemAccounts } from "../../ledger/services/post-entry.ts";
+import { buildOpeningPostings } from "../../ledger/services/postings.ts";
 import { createTransaction } from "../../ledger/services/transactions.ts";
 import { getCardActivity } from "./cards.ts";
 import { listReconciliations } from "./reconciliation-reads.ts";
@@ -50,11 +52,21 @@ async function createUser(): Promise<string> {
 }
 
 async function createCardAccount(userId: string, openingBalancePaise = 0): Promise<string> {
-  const [a] = await db
-    .insert(accounts)
-    .values({ userId, name: "Test card", type: "credit_card", openingBalancePaise })
-    .returning({ id: accounts.id });
-  return a!.id;
+  // Call the real createAccount so a nonzero openingBalancePaise seeds a real
+  // is_opening transaction and its postings, matching what production does.
+  // accounts.opening_balance_paise is frozen at 0 after PR-G1 (boot check enforces
+  // this), so a raw db.insert with a nonzero column value would be invisible to every
+  // postings-based reader (ledgerDuesAtDates, listAccounts, getCardActivity).
+  const account = await createAccount(db, userId, {
+    name: "Test card",
+    type: "credit_card",
+    openingBalancePaise,
+    institution: null,
+    accountLast4: null,
+    holderName: null,
+    currency: "INR",
+  });
+  return account.id;
 }
 
 async function createTxn(
@@ -106,6 +118,13 @@ test("listReconciliations/recomputeReconciliation: Diners-shaped constituent row
   t.after(() => cleanupUser(userId));
   // Balance carried forward before this card was tracked in the app.
   const accountId = await createCardAccount(userId, -2000000);
+  // createAccount dates the opening transaction at real wall-clock "today", which has now
+  // drifted past the fixture's statement close (2026-07-20). Pin it to a date safely before
+  // all fixture dates so date-range queries include it correctly.
+  await db.execute(sql`
+    UPDATE transactions SET date = '2020-01-01'
+    WHERE account_id = ${accountId} AND is_opening = true
+  `);
   const close = "2026-07-20";
   await createTxn(userId, accountId, "2026-07-02", -3000000); // purchase
   await createTxn(userId, accountId, "2026-07-10", 4559100); // BPPY payment
@@ -307,7 +326,16 @@ test("absorbCarryover: Diners numbers — opening_balance_paise becomes −45591
   assert.equal(result.dueDriftPaise, 0);
 
   const [row] = await db.select().from(accounts).where(eq(accounts.id, accountId));
-  assert.equal(row!.openingBalancePaise, -4559125);
+  // accounts.opening_balance_paise is frozen at 0 after PR-G1; the effective balance lives
+  // in the is_opening transaction's posting, which absorbCarryover creates/updates.
+  assert.equal(row!.openingBalancePaise, 0, "opening_balance_paise column is frozen at 0 under PR-G1");
+  const openingPostings = await db.execute(sql`
+    select p.amount_paise from postings p
+    join transactions t on t.id = p.transaction_id
+    where p.account_id = ${accountId} and t.is_opening = true and t.deleted_at is null
+  `);
+  assert.equal((openingPostings.rows as Array<{ amount_paise: string }>).length, 1, "absorbCarryover created exactly one opening posting");
+  assert.equal(Number((openingPostings.rows as Array<{ amount_paise: string }>)[0]!.amount_paise), -4559125);
 
   const activity = await getCardActivity(db, userId, accountId, "2028-01-25");
   assert.equal(activity.totalDuePaise, 7099600);
@@ -415,7 +443,16 @@ test("absorbCarryover: a nonzero preexisting opening balance", async (t) => {
   const result = await absorbCarryover(db, redis as never, userId, accountId, reconciliationId);
   assert.equal(result.dueDriftPaise, 0);
   const [row] = await db.select().from(accounts).where(eq(accounts.id, accountId));
-  assert.equal(row!.openingBalancePaise, -800000); // -500000 - 300000
+  assert.equal(row!.openingBalancePaise, 0, "opening_balance_paise column is frozen at 0 under PR-G1");
+  // absorbCarryover updates the existing is_opening posting: -500000 (seeded by createAccount)
+  // − drift(300000) = -800000.
+  const openingPostings = await db.execute(sql`
+    select p.amount_paise from postings p
+    join transactions t on t.id = p.transaction_id
+    where p.account_id = ${accountId} and t.is_opening = true and t.deleted_at is null
+  `);
+  assert.equal((openingPostings.rows as Array<{ amount_paise: string }>).length, 1, "exactly one opening posting after absorb");
+  assert.equal(Number((openingPostings.rows as Array<{ amount_paise: string }>)[0]!.amount_paise), -800000); // -500000 − 300000
 });
 
 test("absorbCarryover: a negative-drift fixture 409s and changes nothing", async (t) => {
@@ -550,16 +587,27 @@ test("absorbCarryover: only transactions strictly before statement_date count to
   const result = await absorbCarryover(db, redis as never, userId, accountId, reconciliationId);
   assert.equal(result.dueDriftPaise, 0);
   const [row] = await db.select().from(accounts).where(eq(accounts.id, accountId));
-  // ledgerDue(before) = -(0 + -100000) = 100000; drift = 300000-100000=200000
-  assert.equal(row!.openingBalancePaise, -200000);
+  assert.equal(row!.openingBalancePaise, 0, "opening_balance_paise column is frozen at 0 under PR-G1");
+  // ledgerDue(before) = -(0 + -100000) = 100000; drift = 300000 − 100000 = 200000;
+  // nextOpeningPaise = 0 − 200000 = -200000.
+  const openingPostings = await db.execute(sql`
+    select p.amount_paise from postings p
+    join transactions t on t.id = p.transaction_id
+    where p.account_id = ${accountId} and t.is_opening = true and t.deleted_at is null
+  `);
+  assert.equal((openingPostings.rows as Array<{ amount_paise: string }>).length, 1, "exactly one opening posting inserted by absorbCarryover");
+  assert.equal(Number((openingPostings.rows as Array<{ amount_paise: string }>)[0]!.amount_paise), -200000);
 });
 
 test("absorbCarryover: listAccounts reflects the new opening balance", async (t) => {
   const userId = await createUser();
   t.after(() => cleanupUser(userId));
   const accountId = await createCardAccount(userId, 0);
-  const close = "2029-02-20";
-  await createTxn(userId, accountId, "2029-02-05", -100000);
+  // Use past dates so listAccounts's `date <= current_date` filter includes all seeded
+  // postings. Future-dated postings are intentionally excluded from the account-list balance
+  // (they have not settled yet), so a meaningful assertion requires past dates.
+  const close = "2026-07-20";
+  await createTxn(userId, accountId, "2026-07-05", -100000);
   const reconciliationId = await createReconciliation(userId, accountId, {
     statementDate: close,
     totalDuePaise: 300000,
@@ -570,7 +618,11 @@ test("absorbCarryover: listAccounts reflects the new opening balance", async (t)
 
   const list = await listAccounts(db, userId);
   const found = list.find((a) => a.id === accountId)!;
-  assert.equal(found.openingBalancePaise, -200000);
+  // After absorb: opening posting -200000 (dated "2026-07-04", dayBefore the earliest
+  // non-opening transaction "2026-07-05") + regular transaction posting -100000 = -300000.
+  // Both dates are before today so listAccounts includes both; accounts.opening_balance_paise
+  // is frozen at 0, so balancePaise is the correct PR-G1 observable.
+  assert.equal(found.balancePaise, -300000);
 });
 
 test("absorbCarryover: post-commit, a best-effort net-worth snapshot repair is triggered for this user (AC6)", async (t) => {
@@ -598,7 +650,7 @@ test("absorbCarryover: post-commit, a best-effort net-worth snapshot repair is t
 
 // ---------- P6a: the serializable + retry concurrency contract ----------
 
-test("absorbCarryover: a concurrent account-row lock (an opening-balance edit in progress) blocks absorb until it commits — the final state matches a serial order", async (t) => {
+test("absorbCarryover: a concurrent advisory lock (an opening-balance edit in progress via updateAccount's new protocol) blocks absorb until it commits — the final state matches a serial order", async (t) => {
   const userId = await createUser();
   t.after(() => cleanupUser(userId));
   const accountId = await createCardAccount(userId, 0);
@@ -612,22 +664,63 @@ test("absorbCarryover: a concurrent account-row lock (an opening-balance edit in
   const started = makeGate();
   const release = makeGate();
 
-  // Connection A: locks the account row the same way updateAccount does
-  // before its own opening-balance edit, holds it open, then commits a
-  // change — while a concurrent absorb is blocked waiting for that same lock.
-  const aTxPromise = db.transaction(async (tx) => {
-    await tx
-      .select()
-      .from(accounts)
-      .where(and(eq(accounts.id, accountId), eq(accounts.userId, userId)))
-      .for("update");
-    started.release();
-    await release.opened;
-    await tx
-      .update(accounts)
-      .set({ openingBalancePaise: -50000 })
-      .where(and(eq(accounts.id, accountId), eq(accounts.userId, userId)));
-  });
+  // Connection A: acquires the same account advisory lock that the updated updateAccount
+  // uses, holds it open, then commits an opening transaction before releasing — while a
+  // concurrent absorbCarryover is blocked at pg_advisory_lock waiting for that same lock.
+  // The opening transaction is inserted via the pool (a separate connection) so it commits
+  // before the advisory lock is released; absorbCarryover's fresh SERIALIZABLE snapshot
+  // therefore includes it.
+  const aTxPromise = (async () => {
+    const clientA = await pool.connect();
+    let unlocked = false;
+    let destroyA: boolean;
+    try {
+      await clientA.query(
+        "SELECT pg_advisory_lock(hashtextextended($1, 0))",
+        [accountId],
+      );
+      started.release();
+      await release.opened;
+      // Mutate opening balance through the production path — same mechanism createAccount
+      // and absorbCarryover use — so postings-based readers (ledgerDuesAtDates) see it.
+      await db.transaction(async (tx) => {
+        const [openingTxn] = await tx
+          .insert(transactions)
+          .values({
+            userId,
+            accountId,
+            date: new Date().toISOString().slice(0, 10),
+            amountPaise: -50000,
+            merchant: "Opening balance",
+            isOpening: true,
+          })
+          .returning({ id: transactions.id });
+        const sys = await resolveSystemAccounts(tx, userId);
+        await postTransaction(
+          tx,
+          openingTxn!.id,
+          userId,
+          buildOpeningPostings({ accountId, amountPaise: -50000, systemOpeningAccountId: sys.opening }),
+        );
+      });
+    } finally {
+      // Release advisory lock. The opening transaction above committed on the pool, so
+      // absorbCarryover's SERIALIZABLE snapshot (taken after lock acquisition) includes it.
+      try {
+        const unlockResult = await clientA.query(
+          "SELECT pg_advisory_unlock(hashtextextended($1, 0)) AS unlocked",
+          [accountId],
+        );
+        unlocked = (unlockResult.rows as Array<{ unlocked: boolean }>)[0]?.unlocked === true;
+        destroyA = !unlocked;
+      } catch {
+        destroyA = true;
+      }
+      clientA.release(destroyA);
+    }
+    // assert after finally so cleanup always runs even if assertion fails
+    assert.equal(unlocked, true, "advisory unlock must report success");
+  })();
   await started.opened;
 
   const { redis } = stubRedis();
@@ -642,7 +735,7 @@ test("absorbCarryover: a concurrent account-row lock (an opening-balance edit in
     },
   );
   await new Promise((r) => setTimeout(r, 250));
-  assert.equal(absorbSettled, false, "absorb should still be blocked on A's held account-row lock");
+  assert.equal(absorbSettled, false, "absorb should still be blocked on A's held advisory lock");
 
   release.release();
   await aTxPromise;
@@ -654,7 +747,16 @@ test("absorbCarryover: a concurrent account-row lock (an opening-balance edit in
   // opening' = -50000-100000 = -150000.
   assert.equal(result.dueDriftPaise, 0);
   const [row] = await db.select().from(accounts).where(eq(accounts.id, accountId));
-  assert.equal(row!.openingBalancePaise, -150000);
+  assert.equal(row!.openingBalancePaise, 0, "opening_balance_paise column is frozen at 0 under PR-G1");
+  // Serial order A → absorb: A seeded opening -50000, then absorb updated it by -100000 drift.
+  // nextOpeningPaise = -50000 − 100000 = -150000.
+  const openingPostings = await db.execute(sql`
+    select p.amount_paise from postings p
+    join transactions t on t.id = p.transaction_id
+    where p.account_id = ${accountId} and t.is_opening = true and t.deleted_at is null
+  `);
+  assert.equal((openingPostings.rows as Array<{ amount_paise: string }>).length, 1, "exactly one opening posting after serial A → absorb");
+  assert.equal(Number((openingPostings.rows as Array<{ amount_paise: string }>)[0]!.amount_paise), -150000);
 });
 
 // NOTE on this pair of tests — a deviation from TASK.md P6a's literal wording,
@@ -741,11 +843,19 @@ test("absorbCarryover: a genuine SSI dependency cycle forces 40001, and withSeri
 
   assert.equal(hookCalls, 2, "the retry must have happened — the hook fires again on the second attempt");
   assert.equal(result.dueDriftPaise, 0);
-  // opening' = −totalDue − Σ(post-conflict ledger before statement_date), from
-  // the FRESH state (B's overwritten −150000), never the stale aggregate
-  // absorb's first attempt read (−100000).
+  // On retry: fresh ledger has B's overwritten -150000 posting, so
+  // ledgerDuePaise = 150000, drift = 500000 − 150000 = 350000,
+  // nextOpeningPaise = 0 − 350000 = -350000 (no prior opening before the retry).
+  // The stale first-attempt read (-100000) was never committed.
   const [row] = await db.select().from(accounts).where(eq(accounts.id, accountId));
-  assert.equal(row!.openingBalancePaise, -350000); // -500000 - -150000
+  assert.equal(row!.openingBalancePaise, 0, "opening_balance_paise column is frozen at 0 under PR-G1");
+  const openingPostings = await db.execute(sql`
+    select p.amount_paise from postings p
+    join transactions t on t.id = p.transaction_id
+    where p.account_id = ${accountId} and t.is_opening = true and t.deleted_at is null
+  `);
+  assert.equal((openingPostings.rows as Array<{ amount_paise: string }>).length, 1, "exactly one opening posting after SSI retry on fresh ledger");
+  assert.equal(Number((openingPostings.rows as Array<{ amount_paise: string }>)[0]!.amount_paise), -350000);
 });
 
 test("absorbCarryover: an SSI cycle reproduced on BOTH attempts surfaces 40001 with no committed change", async (t) => {

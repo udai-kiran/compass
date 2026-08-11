@@ -147,7 +147,7 @@ test("recordEpfContribution: creates exactly one income transaction on the retir
   // Also prove it via the real API-facing read path: the hydrated transaction
   // (not just the raw table row) reports transferLinkId === null.
   const hydrated = await getTransaction(db, userId, result.transactionId);
-  assert.equal(hydrated.transferLinkId, null);
+  assert.equal(hydrated.isTransfer, false);
 
   // Exactly one transaction total for this user (no second/bank leg created).
   const all = await allTransactionsFor(userId);

@@ -13,7 +13,6 @@ import {
   createTransaction,
   softDeleteTransaction,
   setSplits,
-  rebuildPostingsForTransaction,
 } from "../modules/ledger/services/transactions.ts";
 import { createTransfer, linkTransfer, unlinkTransfer } from "../modules/ledger/services/transfers.ts";
 import type { NecessitySpendRow } from "./periods.ts";
@@ -25,6 +24,10 @@ import { spentByCategory, spendByNecessity, incomeExpense, LIABILITY_TYPES_SQL }
  * writers (so postings are dual-written) and asserts the converted readers
  * equal a formula computed DIRECTLY from legacy `transactions` /
  * `transaction_splits` tables — never by calling another periods helper.
+ * Transfer classification in the legacy helpers uses an independent
+ * postings-shape predicate (2 real postings + 0 system postings) rather than
+ * a `transfer_links` lookup, because `transfer_links` is never populated under
+ * PR-G1 and a legacy-column marker would make the comparison tautological.
  * `findInconsistentPostings` is also asserted empty so a coincidentally-equal
  * aggregate can't hide drift.
  */
@@ -100,8 +103,13 @@ async function legacySpentByCategory(
     where t.user_id = ${userId} and t.deleted_at is null
       and t.date >= ${from} and t.date <= ${to}
       and t.amount_paise < 0 and not t.is_opening
-      and not exists (select 1 from transfer_links tl
-        where tl.out_transaction_id = t.id or tl.in_transaction_id = t.id)
+      and not (
+        (select count(*) from postings pr join accounts ar on ar.id = pr.account_id
+         where pr.transaction_id = t.id and ar.system_kind is null) = 2
+        and
+        (select count(*) from postings ps join accounts asys on asys.id = ps.account_id
+         where ps.transaction_id = t.id and asys.system_kind is not null) = 0
+      )
       and not exists (select 1 from transaction_splits s where s.transaction_id = t.id)
     group by t.category_id
   `);
@@ -141,8 +149,13 @@ async function legacyIncomeExpense(
     where t.user_id = ${userId} and t.deleted_at is null
       and t.date >= ${from} and t.date <= ${to}
       and not t.is_opening
-      and not exists (select 1 from transfer_links tl
-        where tl.out_transaction_id = t.id or tl.in_transaction_id = t.id)
+      and not (
+        (select count(*) from postings pr join accounts ar on ar.id = pr.account_id
+         where pr.transaction_id = t.id and ar.system_kind is null) = 2
+        and
+        (select count(*) from postings ps join accounts asys on asys.id = ps.account_id
+         where ps.transaction_id = t.id and asys.system_kind is not null) = 0
+      )
   `);
   const row = res.rows[0] as { income: string; expense: string };
   return { incomePaise: Number(row.income), expensePaise: Number(row.expense) };
@@ -486,7 +499,8 @@ test("postings-periods-parity: 7 — transfer lifecycle: link / unlink / re-link
   }
 
   // 7b: unlink → both legs appear as ordinary spend/income
-  await unlinkTransfer(db, userId, transfer.transferLinkId);
+  const unlinked = await unlinkTransfer(db, userId, transfer.transactionId);
+  const [outId, inId] = unlinked.transactionIds;
   {
     const legIe = await legacyIncomeExpense(userId, FROM, TO);
     const ie = await incomeExpense(db, userId, FROM, TO);
@@ -504,7 +518,7 @@ test("postings-periods-parity: 7 — transfer lifecycle: link / unlink / re-link
   }
 
   // 7c: re-link → both excluded again
-  const newLink = await linkTransfer(db, userId, transfer.outTransactionId, transfer.inTransactionId, false);
+  const newLink = await linkTransfer(db, userId, outId, inId);
   {
     const ie = await incomeExpense(db, userId, FROM, TO);
     const sbc = await spentByCategory(db, userId, FROM, TO);
@@ -514,22 +528,9 @@ test("postings-periods-parity: 7 — transfer lifecycle: link / unlink / re-link
     const sbn7c = await spendByNecessity(db, userId, FROM, TO); assert.equal(totalNecessitySpend(sbn7c), 0, "7c: re-linked excluded from spendByNecessity");
   }
 
-  // 7d: hard-delete the in-leg transaction (cascades transfer_links + its postings)
-  //     then rebuild out-leg postings: no longer in transfer_links → ordinary expense shape
-  await db.delete(transactions).where(eq(transactions.id, transfer.inTransactionId));
-  await rebuildPostingsForTransaction(db, userId, transfer.outTransactionId);
-  {
-    const ie = await incomeExpense(db, userId, FROM, TO);
-    const sbc = await spentByCategory(db, userId, FROM, TO);
-    assert.equal(ie.expensePaise, 30000, "7d: surviving out-leg appears as ordinary expense");
-    assert.equal(ie.incomePaise, 0, "7d: no income after in-leg hard-deleted");
-    assert.equal(sbc.get(null) ?? 0, 30000, "7d: out-leg appears in spentByCategory with null category");
-    const sbn7d = await spendByNecessity(db, userId, FROM, TO); assert.equal(totalNecessitySpend(sbn7d), 30000, "7d: surviving out-leg in spendByNecessity");
-  }
-
-  // findInconsistentPostings: only out-leg remains; must be consistent
+  // findInconsistentPostings: re-linked transfer must be consistent
   assert.deepEqual(await findInconsistentPostings(db, userId), []);
-  assert.ok(true, "7: transfer lifecycle assertions complete with " + newLink.id);
+  assert.ok(true, "7: transfer lifecycle complete with " + newLink.id);
 });
 
 test("postings-periods-parity: 8 — opening row excluded from all three readers", async (t) => {

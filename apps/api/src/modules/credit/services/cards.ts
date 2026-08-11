@@ -239,14 +239,14 @@ export async function listCardHolders(
     if (!Number.isSafeInteger(Number(row.total)) || !Number.isSafeInteger(Number(row.at_close)) || !Number.isSafeInteger(Number(row.current_spend))) {
       throw new HttpError(500, "Card balance aggregate exceeded a safe integer — refusing to lose paise");
     }
-    const balance = acc.openingBalancePaise + Number(row.total);
+    const balance = Number(row.total);
 
     const rewards = await db
       .select({ points: sql<number>`coalesce(sum(points), 0)::int` })
       .from(rewardEntries)
       .where(eq(rewardEntries.accountId, acc.id));
 
-    const owedAtClose = -(acc.openingBalancePaise + Number(row.at_close));
+    const owedAtClose = -Number(row.at_close);
     built.push({
       institution: issuerKey(acc.institution),
       owed: Math.max(0, -balance),
@@ -335,17 +335,25 @@ export async function getCardActivity(
   if (!Number.isSafeInteger(Number(agg.total)) || !Number.isSafeInteger(Number(agg.at_close))) {
     throw new HttpError(500, "Card balance aggregate exceeded a safe integer — refusing to lose paise");
   }
-  const balancePaise = acc.openingBalancePaise + Number(agg.total);
-  const owedAtClose = -(acc.openingBalancePaise + Number(agg.at_close));
+  const balancePaise = Number(agg.total);
+  const owedAtClose = -Number(agg.at_close);
   const totalDuePaise = Math.max(0, cycle ? owedAtClose : -balancePaise);
 
   const rawRows = await db.execute(sql`
-    select t.id, t.date, t.merchant, t.reconciled_statement_id, t.category_id, p.amount_paise
+    select t.id, t.date, t.merchant, t.reconciled_statement_id, cat.category_id, p.amount_paise
     from postings p
     join transactions t on t.id = p.transaction_id
+    left join lateral (
+      select cp.category_id
+      from postings cp
+      join accounts ca on ca.id = cp.account_id and ca.system_kind is not null and ca.user_id = t.user_id
+      where cp.transaction_id = t.id and cp.category_id is not null
+      limit 1
+    ) cat on true
     where p.account_id = ${accountId}
       and t.user_id = ${userId} and t.deleted_at is null
       and t.date >= ${fromInclusive} and t.date <= ${ref}
+      and not t.is_opening
     order by t.date desc, t.id desc
   `);
   const rows = rawRows.rows as Array<{
