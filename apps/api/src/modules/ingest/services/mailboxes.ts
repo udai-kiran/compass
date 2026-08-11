@@ -138,3 +138,21 @@ export async function getCredentialsStatus(
   });
   return { configured: row !== undefined, clientId: row?.clientId ?? null };
 }
+
+/**
+ * Reset the IMAP resume watermark for a mailbox so the ingestor re-fetches all
+ * messages from UID 1 on the next sync. Sets last_uid=0 while preserving
+ * uid_validity so planSync() returns fromUid=1 (full re-fetch).
+ *
+ * Note: for a never-synced mailbox (uid_validity=null) this is a no-op — the
+ * behaviour is identical with or without the reset, since planSync baselines to
+ * "now" in either case.
+ */
+export async function resetMailboxWatermark(db: Db, userId: string, id: string): Promise<void> {
+  const updated = await db
+    .update(mailboxAccounts)
+    .set({ lastUid: 0, updatedAt: new Date() })
+    .where(and(eq(mailboxAccounts.id, id), eq(mailboxAccounts.userId, userId)))
+    .returning({ id: mailboxAccounts.id });
+  if (updated.length === 0) throw new HttpError(404, "Mailbox not found");
+}
