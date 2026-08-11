@@ -74,6 +74,7 @@ async function createAcct(
   name: string,
   type: AccountType,
   openingBalancePaise = 0,
+  openingDate?: string,
 ): Promise<{ id: string; type: AccountType }> {
   const account = await createAccount(db, userId, {
     name,
@@ -83,7 +84,7 @@ async function createAcct(
     holderName: null,
     currency: "INR",
     openingBalancePaise,
-  });
+  }, openingDate);
   return { id: account.id, type };
 }
 
@@ -120,8 +121,13 @@ async function legacySpentByCategory(
     where t.user_id = ${userId} and t.deleted_at is null
       and t.date >= ${from} and t.date <= ${to}
       and s.amount_paise < 0 and not t.is_opening
-      and not exists (select 1 from transfer_links tl
-        where tl.out_transaction_id = t.id or tl.in_transaction_id = t.id)
+      and not (
+        (select count(*) from postings pr join accounts ar on ar.id = pr.account_id
+         where pr.transaction_id = t.id and ar.system_kind is null) = 2
+        and
+        (select count(*) from postings ps join accounts asys on asys.id = ps.account_id
+         where ps.transaction_id = t.id and asys.system_kind is not null) = 0
+      )
     group by s.category_id
   `);
   const out = new Map<string | null, number>();
@@ -174,8 +180,13 @@ async function legacySpendByNecessity(
     where t.user_id = ${userId} and t.deleted_at is null
       and t.date >= ${from} and t.date <= ${to}
       and t.amount_paise < 0 and not t.is_opening
-      and not exists (select 1 from transfer_links tl
-        where tl.out_transaction_id = t.id or tl.in_transaction_id = t.id)
+      and not (
+        (select count(*) from postings pr join accounts ar on ar.id = pr.account_id
+         where pr.transaction_id = t.id and ar.system_kind is null) = 2
+        and
+        (select count(*) from postings ps join accounts asys on asys.id = ps.account_id
+         where ps.transaction_id = t.id and asys.system_kind is not null) = 0
+      )
       and not exists (select 1 from transaction_splits s where s.transaction_id = t.id)
     group by t.necessity, c.necessity, c.kind
   `);
@@ -188,8 +199,13 @@ async function legacySpendByNecessity(
     where t.user_id = ${userId} and t.deleted_at is null
       and t.date >= ${from} and t.date <= ${to}
       and s.amount_paise < 0 and not t.is_opening
-      and not exists (select 1 from transfer_links tl
-        where tl.out_transaction_id = t.id or tl.in_transaction_id = t.id)
+      and not (
+        (select count(*) from postings pr join accounts ar on ar.id = pr.account_id
+         where pr.transaction_id = t.id and ar.system_kind is null) = 2
+        and
+        (select count(*) from postings ps join accounts asys on asys.id = ps.account_id
+         where ps.transaction_id = t.id and asys.system_kind is not null) = 0
+      )
     group by t.necessity, c.necessity, c.kind
   `);
   type Row = {
@@ -539,7 +555,8 @@ test("postings-periods-parity: 8 — opening row excluded from all three readers
   await seedSystemAccounts(db, userId);
 
   // createAccount with nonzero opening balance seeds an is_opening transaction
-  await createAcct(userId, "Bank", "bank", 50000);
+  // openingDate within FROM/TO so the is_opening filter is genuinely exercised
+  await createAcct(userId, "Bank", "bank", 50000, "2020-06-01");
 
   const sbc = await spentByCategory(db, userId, FROM, TO);
   const sbn = await spendByNecessity(db, userId, FROM, TO);
@@ -766,7 +783,7 @@ test("postings-periods-parity: 15 — findInconsistentPostings returns [] for a 
   t.after(() => cleanupUser(userId));
   await seedSystemAccounts(db, userId);
 
-  const bank = await createAcct(userId, "Bank", "bank", 10000);
+  const bank = await createAcct(userId, "Bank", "bank", 10000, "2020-01-01");
   const card = await createAcct(userId, "Card", "credit_card");
   const loan = await createAcct(userId, "Loan", "loan");
   const bankB = await createAcct(userId, "Bank B", "bank");
