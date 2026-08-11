@@ -1,7 +1,11 @@
 # Task: 2.1 Postings model & balance invariant
 
 ## Status
-IMPLEMENTING (dual-write strategy — see `PLAN-dualwrite.md`, which SUPERSEDES the atomic SP0/SP1/SP2 plan recorded below).
+COMPLETE — Full dual-write PR series (PR-A through PR-G1) merged and tagged.
+v2.1.0 (SP0), v2.2.0 (PR-A), v2.3.0/v2.4.0 (PR-B+C), v2.5.0 (PR-D), v2.6.0 (PR-E),
+v2.8.0 (PR-G1 / PR #179), v2.8.1 (task 028 follow-ups / PR #180). GitHub issue #145 closed.
+Historical implementation log preserved below.
+(dual-write strategy — see `PLAN-dualwrite.md`, which SUPERSEDES the atomic SP0/SP1/SP2 plan recorded below).
 - SP0 (pure posting builders + `SafePaiseSchema`) MERGED → tag v2.1.0 (9130b85).
 - PR-A (additive migration 0067, 4 system accounts incl. Clearing, full dual-write writer graph, per-transaction invariant, restore compat) MERGED → tag v2.2.0 (a77f1ce).
 - The atomic branch `feat/postings-model-sp1` (which DROPPED legacy columns) is ABANDONED — it never produced a green mergeable intermediate. The dual-write approach keeps all legacy columns and converts readers PR-by-PR (PR-A→PR-G), each green + releasable.
