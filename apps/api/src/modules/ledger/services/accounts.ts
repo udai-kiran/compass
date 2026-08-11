@@ -10,6 +10,7 @@ import type { Db } from "../../../db/index.ts";
 import { accounts, postings, transactions } from "../schema.ts";
 import { bankDetails, retirementDetails, sips } from "../../../db/schema.ts";
 import { HttpError } from "../../../lib/errors.ts";
+import { withAccountAdvisoryLock } from "../../../lib/account-lock.ts";
 import { assertOwnedGoal } from "../../../lib/ownership.ts";
 import { assertPublicAccountType } from "../../../lib/account-type.ts";
 import { postTransaction, resolveSystemAccounts } from "./post-entry.ts";
@@ -360,7 +361,8 @@ export async function updateAccount(
 ): Promise<Account> {
   const { archived, openingBalancePaise, ...fields } = input;
 
-  return db.transaction(async (tx) => {
+  return withAccountAdvisoryLock(db, id, (lockedDb) =>
+    lockedDb.transaction(async (tx) => {
     // Lock the account row first — this is what serializes against a
     // concurrent SIP creation/update targeting the same account (sips.ts's
     // lockedAccountForSip locks the same row before its own checks): whichever
@@ -554,7 +556,8 @@ export async function updateAccount(
     }
 
     return toAccount(rows[0]!);
-  });
+  }),
+  );
 }
 
 /** Message for the "account is a SIP source" delete guard — pure so it's testable without a DB. */

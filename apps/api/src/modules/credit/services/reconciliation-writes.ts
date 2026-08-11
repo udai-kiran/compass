@@ -5,6 +5,7 @@ import type { Db } from "../../../db/index.ts";
 import { accounts, extractedTransactions, transactions } from "../../../db/schema.ts";
 import { statementReconciliations } from "../schema.ts";
 import { HttpError } from "../../../lib/errors.ts";
+import { withAccountAdvisoryLock } from "../../../lib/account-lock.ts";
 import { withSerializableRetry } from "../../../lib/serializable.ts";
 import { repairSnapshots } from "../../investments/services/networth.ts";
 import { planOpeningBalanceChange } from "../../ledger/services/accounts.ts";
@@ -236,12 +237,15 @@ export async function absorbCarryover(
   reconciliationId: string,
   hooks?: AbsorbCarryoverHooks,
 ): Promise<StatementReconciliation> {
-  const { dto, createdAt } = await withSerializableRetry(() =>
-    db.transaction(
-      async (tx) => {
-        // Lock the account first — this is what serializes against a concurrent
-        // opening-balance edit (updateAccount locks the same row the same way
-        // before its own edit) or a second absorb on this same card.
+  const { dto, createdAt } = await withAccountAdvisoryLock(db, accountId, (lockedDb) =>
+    withSerializableRetry(() =>
+      lockedDb.transaction(
+        async (tx) => {
+        // Lock the account first — this row lock serializes against concurrent
+        // SIP creation/update (lockedAccountForSip takes the same FOR UPDATE lock)
+        // and validates account state. The advisory lock wrapping this entire
+        // transaction handles serialization against updateAccount and a concurrent
+        // second absorbCarryover on this same card.
         const [account] = await tx
           .select()
           .from(accounts)
@@ -422,6 +426,7 @@ export async function absorbCarryover(
       },
       { isolationLevel: "serializable" },
     ),
+  ),
   );
 
   // Post-commit, fire-and-forget: never let a repair failure fail this

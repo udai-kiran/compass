@@ -788,6 +788,13 @@ test("AC15: reuses listCardHolders' handling of a non-zero opening balance", asy
   const cycleDay = findCycleDay(today, close);
   const dueDay = findDueDay(close, today);
   const accountId = await createCardAccount(userId, "Opening balance card", -300000);
+  // createAccount dates the opening transaction at real wall-clock "today", which has now
+  // drifted past the fixture's cycle close. Pin it to a date safely before all fixture
+  // dates so date-range queries include it correctly.
+  await db.execute(sql`
+    UPDATE transactions SET date = '2020-01-01'
+    WHERE account_id = ${accountId} AND is_opening = true
+  `);
   await db.insert(cardDetails).values({ accountId, userId, cycleDay, dueDay });
   await createTxn(userId, accountId, shiftIso(close, -3), -50000);
 

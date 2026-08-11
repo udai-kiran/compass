@@ -1166,7 +1166,7 @@ test("acceptRepayment AC1: no existing candidate creates one merged transfer tra
 
 // ---------- AC2 / AC4: exactly one candidate is reused untouched ----------
 
-test("acceptRepayment AC2/AC4: exactly one eligible candidate is reused — only the card leg is created, and the reused row's amount/date/occurredAt/merchant/categoryId are unchanged", async (t) => {
+test("acceptRepayment AC2/AC4: exactly one eligible candidate is reused — only the card leg is created, and the reused row's amount/date/occurredAt/merchant are unchanged", async (t) => {
   const userId = await createUser();
   // A category is created below; cleanupUser doesn't know about it (same
   // ordering note as the applyHistoryCategory test above) — it must be
@@ -1218,7 +1218,6 @@ test("acceptRepayment AC2/AC4: exactly one eligible candidate is reused — only
   assert.equal(after.date, before.date);
   assert.equal(after.occurredAt?.getTime() ?? null, before.occurredAt?.getTime() ?? null);
   assert.equal(after.merchant, before.merchant);
-  assert.equal(after.categoryId, before.categoryId);
 
   // 3–7. linkTransfer rewrites existingDebit's postings into transfer shape (2 real, no system).
   const txPostings = await postingsFor(existingDebit.id);

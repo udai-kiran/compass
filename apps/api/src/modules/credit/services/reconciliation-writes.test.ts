@@ -118,6 +118,13 @@ test("listReconciliations/recomputeReconciliation: Diners-shaped constituent row
   t.after(() => cleanupUser(userId));
   // Balance carried forward before this card was tracked in the app.
   const accountId = await createCardAccount(userId, -2000000);
+  // createAccount dates the opening transaction at real wall-clock "today", which has now
+  // drifted past the fixture's statement close (2026-07-20). Pin it to a date safely before
+  // all fixture dates so date-range queries include it correctly.
+  await db.execute(sql`
+    UPDATE transactions SET date = '2020-01-01'
+    WHERE account_id = ${accountId} AND is_opening = true
+  `);
   const close = "2026-07-20";
   await createTxn(userId, accountId, "2026-07-02", -3000000); // purchase
   await createTxn(userId, accountId, "2026-07-10", 4559100); // BPPY payment
@@ -643,7 +650,7 @@ test("absorbCarryover: post-commit, a best-effort net-worth snapshot repair is t
 
 // ---------- P6a: the serializable + retry concurrency contract ----------
 
-test("absorbCarryover: a concurrent account-row lock (an opening-balance edit in progress) blocks absorb until it commits — the final state matches a serial order", async (t) => {
+test("absorbCarryover: a concurrent advisory lock (an opening-balance edit in progress via updateAccount's new protocol) blocks absorb until it commits — the final state matches a serial order", async (t) => {
   const userId = await createUser();
   t.after(() => cleanupUser(userId));
   const accountId = await createCardAccount(userId, 0);
@@ -657,41 +664,58 @@ test("absorbCarryover: a concurrent account-row lock (an opening-balance edit in
   const started = makeGate();
   const release = makeGate();
 
-  // Connection A: locks the account row the same way updateAccount does
-  // before its own opening-balance edit, holds it open, then commits a
-  // change — while a concurrent absorb is blocked waiting for that same lock.
-  const aTxPromise = db.transaction(async (tx) => {
-    await tx
-      .select()
-      .from(accounts)
-      .where(and(eq(accounts.id, accountId), eq(accounts.userId, userId)))
-      .for("update");
-    started.release();
-    await release.opened;
-    // Mutate opening balance through the production path — same mechanism createAccount
-    // and absorbCarryover use — so postings-based readers (ledgerDuesAtDates) see it.
-    // A direct accounts.opening_balance_paise column write would be invisible after
-    // PR-G1: the boot check (assertNoLegacyShapes) freezes that column at 0, and every
-    // balance surface reads from postings only.
-    const [openingTxn] = await tx
-      .insert(transactions)
-      .values({
-        userId,
-        accountId,
-        date: new Date().toISOString().slice(0, 10),
-        amountPaise: -50000,
-        merchant: "Opening balance",
-        isOpening: true,
-      })
-      .returning({ id: transactions.id });
-    const sys = await resolveSystemAccounts(tx, userId);
-    await postTransaction(
-      tx,
-      openingTxn!.id,
-      userId,
-      buildOpeningPostings({ accountId, amountPaise: -50000, systemOpeningAccountId: sys.opening }),
-    );
-  });
+  // Connection A: acquires the same account advisory lock that the updated updateAccount
+  // uses, holds it open, then commits an opening transaction before releasing — while a
+  // concurrent absorbCarryover is blocked at pg_advisory_lock waiting for that same lock.
+  // The opening transaction is inserted via the pool (a separate connection) so it commits
+  // before the advisory lock is released; absorbCarryover's fresh SERIALIZABLE snapshot
+  // therefore includes it.
+  const aTxPromise = (async () => {
+    const clientA = await pool.connect();
+    try {
+      await clientA.query(
+        "SELECT pg_advisory_lock(hashtextextended($1, 0))",
+        [accountId],
+      );
+      started.release();
+      await release.opened;
+      // Mutate opening balance through the production path — same mechanism createAccount
+      // and absorbCarryover use — so postings-based readers (ledgerDuesAtDates) see it.
+      await db.transaction(async (tx) => {
+        const [openingTxn] = await tx
+          .insert(transactions)
+          .values({
+            userId,
+            accountId,
+            date: new Date().toISOString().slice(0, 10),
+            amountPaise: -50000,
+            merchant: "Opening balance",
+            isOpening: true,
+          })
+          .returning({ id: transactions.id });
+        const sys = await resolveSystemAccounts(tx, userId);
+        await postTransaction(
+          tx,
+          openingTxn!.id,
+          userId,
+          buildOpeningPostings({ accountId, amountPaise: -50000, systemOpeningAccountId: sys.opening }),
+        );
+      });
+      // Release advisory lock. The opening transaction above committed on the pool, so
+      // absorbCarryover's SERIALIZABLE snapshot (taken after lock acquisition) includes it.
+      const unlockResult = await clientA.query(
+        "SELECT pg_advisory_unlock(hashtextextended($1, 0)) AS unlocked",
+        [accountId],
+      );
+      assert.equal(
+        (unlockResult.rows as Array<{ unlocked: boolean }>)[0]?.unlocked,
+        true,
+        "advisory unlock must report success",
+      );
+    } finally {
+      clientA.release();
+    }
+  })();
   await started.opened;
 
   const { redis } = stubRedis();
@@ -706,7 +730,7 @@ test("absorbCarryover: a concurrent account-row lock (an opening-balance edit in
     },
   );
   await new Promise((r) => setTimeout(r, 250));
-  assert.equal(absorbSettled, false, "absorb should still be blocked on A's held account-row lock");
+  assert.equal(absorbSettled, false, "absorb should still be blocked on A's held advisory lock");
 
   release.release();
   await aTxPromise;
