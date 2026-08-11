@@ -17,14 +17,17 @@ import { createTransfer } from "./transfers.ts";
 import { HttpError } from "../../../lib/errors.ts";
 
 /**
- * PR-B parity proof: bankCashBalances/bankCashTotal/accountBalancesAtDate/
- * listAccounts/accountAverageBalances now compute the real-account component
- * from `postings`; this DB-backed suite seeds fixtures via the REAL writers
- * (so postings are dual-written, never hand-inserted) and asserts the
- * converted readers equal a formula computed DIRECTLY from the legacy
- * `transactions`/`accounts` tables inside this file — never by calling
- * another balance helper. `findInconsistentPostings` is also asserted empty
- * so a coincidentally-equal aggregate can't hide drift.
+ * PR-G1 parity proof: bankCashBalances/bankCashTotal/accountBalancesAtDate/
+ * listAccounts/accountAverageBalances all read the real-account component from
+ * `postings`. Under PR-G1 the `opening_balance_paise` column is frozen at 0
+ * and transfer in-legs are hard-deleted (no transactions row), so the only
+ * correct reference formula is also postings-based. This file's `legacyBalance`
+ * and `legacyAmb` helpers therefore query `postings` directly (NOT
+ * `transactions`/`accounts`) via INDEPENDENT flat SQL not copy-pasted from any
+ * production reader. `findInconsistentPostings` is also asserted empty so a
+ * coincidentally-equal aggregate can't hide drift. Literal fixture-derived
+ * expected values are asserted for transfers and corner-cases so the test is
+ * not a same-source tautology.
  */
 
 function requireDatabaseUrl(): string {
@@ -89,31 +92,30 @@ function shiftDate(iso: string, deltaDays: number): string {
 }
 
 /**
- * Legacy-formula balance, computed directly from `accounts`/`transactions`
- * (NOT `postings`) inside this test — the pre-PR-B formula every converted
- * reader must still match.
+ * Reference balance, computed directly from `postings` inside this test.
+ * Under PR-G1 `opening_balance_paise` is frozen at 0 and transfer in-legs
+ * have no transactions row, so a postings query is the only honest reference.
+ * This is an INDEPENDENT flat query — not copy-pasted from `bankCashBalances`.
  */
 async function legacyBalance(accountId: string, userId: string, asOf: string): Promise<number> {
   const res = await db.execute(sql`
-    select coalesce(a.opening_balance_paise + coalesce(t.total, 0), 0)::bigint as balance
-    from accounts a
-    left join (
-      select account_id, sum(amount_paise) as total
-      from transactions
-      where user_id = ${userId} and deleted_at is null and date <= ${asOf}
-      group by account_id
-    ) t on t.account_id = a.id
-    where a.id = ${accountId}
+    select coalesce(sum(po.amount_paise), 0)::bigint as balance
+    from postings po
+    join transactions t on t.id = po.transaction_id
+    where po.account_id = ${accountId}
+      and t.user_id = ${userId}
+      and t.deleted_at is null
+      and t.date <= ${asOf}
   `);
   return Number((res.rows[0] as { balance: string }).balance);
 }
 
 /**
- * Legacy-formula AMB inputs, computed directly from `transactions` (NOT
- * `postings`) inside this test, then assembled via the UNCHANGED pure
- * `buildAverageBalance` helper — the same assembly `accountAverageBalances`
- * itself performs, just fed from the legacy table instead of the postings
- * mirror.
+ * Reference AMB inputs, computed directly from `postings` inside this test,
+ * then assembled via the UNCHANGED pure `buildAverageBalance` helper — the
+ * same assembly `accountAverageBalances` performs. Under PR-G1 there is no
+ * `opening_balance_paise` column to add (frozen at 0) and transfer in-legs
+ * have no transactions row, so postings are the only honest source.
  */
 async function legacyAmb(
   accountId: string,
@@ -121,32 +123,37 @@ async function legacyAmb(
   today: string,
   monthStart: string,
 ): Promise<AccountAverageBalance | null> {
-  const openingRes = await db.execute(
-    sql`select opening_balance_paise as opening from accounts where id = ${accountId}`,
-  );
-  const opening = Number((openingRes.rows[0] as { opening: string }).opening);
   const firstRes = await db.execute(sql`
-    select min(date) as first_activity from transactions
-    where account_id = ${accountId} and user_id = ${userId} and deleted_at is null and date <= ${today}
+    select min(t.date) as first_activity
+    from postings po
+    join transactions t on t.id = po.transaction_id
+    where po.account_id = ${accountId} and t.user_id = ${userId}
+      and t.deleted_at is null and t.date <= ${today}
   `);
   const firstActivity = (firstRes.rows[0] as { first_activity: string | null }).first_activity;
   const carriedRes = await db.execute(sql`
-    select coalesce(sum(amount_paise), 0) as carried from transactions
-    where account_id = ${accountId} and user_id = ${userId} and deleted_at is null and date < ${monthStart}
+    select coalesce(sum(po.amount_paise), 0) as carried_in
+    from postings po
+    join transactions t on t.id = po.transaction_id
+    where po.account_id = ${accountId} and t.user_id = ${userId}
+      and t.deleted_at is null and t.date < ${monthStart}
   `);
-  const carried = Number((carriedRes.rows[0] as { carried: string }).carried);
+  const carriedIn = Number((carriedRes.rows[0] as { carried_in: string }).carried_in);
   const deltaRes = await db.execute(sql`
-    select date, sum(amount_paise) as delta from transactions
-    where account_id = ${accountId} and user_id = ${userId} and deleted_at is null
-      and date >= ${monthStart} and date <= ${today}
-    group by date
+    select t.date, sum(po.amount_paise) as delta
+    from postings po
+    join transactions t on t.id = po.transaction_id
+    where po.account_id = ${accountId} and t.user_id = ${userId}
+      and t.deleted_at is null
+      and t.date >= ${monthStart} and t.date <= ${today}
+    group by t.date
   `);
   const deltas = new Map<string, number>();
   for (const row of deltaRes.rows as Array<{ date: string; delta: string }>) {
     deltas.set(row.date, Number(row.delta));
   }
   return buildAverageBalance(
-    { accountId, carriedInPaise: opening + carried, requiredPaise: 0, firstActivity },
+    { accountId, carriedInPaise: carriedIn, requiredPaise: 0, firstActivity },
     deltas,
     today,
   );
@@ -328,19 +335,21 @@ test("postings-balance-parity: full fixture — every converted reader matches t
     undefined,
     "an account whose only activity is future-dated must have no AMB",
   );
-  // ---- Nonzero column-opening bank with no txn: readers must all see the raw
-  //      column, and it must have no AMB entry (no account-creation-date substitution).
+  // ---- Nonzero column-opening bank with no postings: under PR-G1 all readers
+  //      derive balance from postings only (opening_balance_paise is frozen at 0),
+  //      so a bank whose column was patched to 77_777 directly but has no postings
+  //      reports 0.  It must also have no AMB entry (no postings = no first_activity).
   const columnOpeningNonzeroExpected = await legacyBalance(columnOpeningNonzeroBank.id, userId, dbToday);
-  assert.equal(columnOpeningNonzeroExpected, 77_777);
+  assert.equal(columnOpeningNonzeroExpected, 0, "postings-based legacyBalance must return 0 for account with no postings");
   assert.equal(
     bcb.find((r) => r.id === columnOpeningNonzeroBank.id)!.balancePaise,
-    77_777,
-    "bankCashBalances must report the raw opening column for a bank with no txns",
+    0,
+    "bankCashBalances must return 0 for a bank with no postings (opening_balance_paise column is ignored)",
   );
   assert.equal(
     list.find((r) => r.id === columnOpeningNonzeroBank.id)!.balancePaise,
-    77_777,
-    "listAccounts must report the raw opening column for a bank with no txns",
+    0,
+    "listAccounts must return 0 for a bank with no postings (opening_balance_paise column is ignored)",
   );
   assert.equal(
     amb.find((r) => r.accountId === columnOpeningNonzeroBank.id),

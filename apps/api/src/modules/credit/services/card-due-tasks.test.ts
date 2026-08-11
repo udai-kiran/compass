@@ -10,6 +10,7 @@ import { cardDetails, cardIssuerSettings } from "../schema.ts";
 import { cardCycle, lastOccurrence, nextOccurrence } from "./cycle-math.ts";
 import { listCardHolders } from "./cards.ts";
 import { materializeCardDueTasks, truncateTaskTitle } from "./card-due-tasks.ts";
+import { createAccount } from "../../ledger/services/accounts.ts";
 import { createTransaction } from "../../ledger/services/transactions.ts";
 
 // DB-backed: this repo has no DB-mocking infrastructure (see emis.test.ts's
@@ -159,11 +160,20 @@ async function createCardAccount(
   openingBalancePaise = 0,
   institution?: string,
 ): Promise<string> {
-  const [a] = await db
-    .insert(accounts)
-    .values({ userId, name, type: "credit_card", openingBalancePaise, institution: institution ?? null })
-    .returning({ id: accounts.id });
-  return a!.id;
+  // Use the real createAccount so system accounts are seeded and a postings-based
+  // opening transaction is written when openingBalancePaise !== 0.  A raw
+  // db.insert(accounts) would bypass postings and make the balance invisible to
+  // any reader that was converted to query postings (e.g. listCardHolders).
+  const account = await createAccount(db, userId, {
+    name,
+    type: "credit_card",
+    institution: institution ?? null,
+    accountLast4: null,
+    holderName: null,
+    currency: "INR",
+    openingBalancePaise,
+  });
+  return account.id;
 }
 
 async function createTxn(

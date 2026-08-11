@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { and, eq, getTableColumns, getTableName, is, isNotNull, sql, Table } from "drizzle-orm";
+import { and, eq, getTableColumns, getTableName, is, isNull, isNotNull, sql, Table } from "drizzle-orm";
 import * as schema from "../../../db/schema.ts";
 import { accounts, attachments, categories, postings, transactions, userTasks, users } from "../../../db/schema.ts";
 import {
@@ -824,7 +824,7 @@ test("A6 AC3+AC4: restore re-synthesizes postings (never trusts archived rows)",
   );
 });
 
-test("A6 AC3 OLD-style (B1): restore re-synthesizes postings from an archive with no postings and no system accounts", async (t) => {
+test("A6 AC3 OLD-style: archive with no postings restores other rows without synthesis; validation reports missing posting shapes", async (t) => {
   const destUserId = await createUser();
   t.after(() => cleanupUser(destUserId));
 
@@ -872,7 +872,7 @@ test("A6 AC3 OLD-style (B1): restore re-synthesizes postings from an archive wit
       amount_paise: -10000, merchant: "Groceries", category_id: null, notes: "", tags: [],
       source: "manual", is_opening: false, created_at: now, updated_at: now,
     },
-    // 3. Transfer OUT
+    // 3. Transfer OUT (stored as two independent rows in old-style archives)
     {
       id: outLegId, user_id: "source", account_id: bankId, date: "2026-01-03",
       amount_paise: -20000, merchant: "Transfer out", category_id: null, notes: "", tags: [],
@@ -908,7 +908,7 @@ test("A6 AC3 OLD-style (B1): restore re-synthesizes postings from an archive wit
   // Archive has NO postings (old-style) — deliberately empty array.
   header.tables.postings = [];
 
-  // Count non-posting rows for B5 assertion.
+  // Count non-posting rows for summary assertion.
   const nonPostingRows = Object.entries(header.tables)
     .filter(([table]) => table !== "postings")
     .reduce((sum, [, rows]) => sum + (Array.isArray(rows) ? rows.length : 0), 0);
@@ -928,99 +928,62 @@ test("A6 AC3 OLD-style (B1): restore re-synthesizes postings from an archive wit
 
   // --- Assertions ---
 
-  // B1: postings synthesized with no failures.
+  // Post-commit validation: postings are restored verbatim from archive (PR-G1);
+  // repaired is always 0. This archive has postings: [] so findInconsistentPostings
+  // reports one "no postings" failure per transaction — 6 transactions, 6 failures.
   assert.ok(summary.postings, "summary must have postings field");
-  assert.ok(summary.postings!.repaired > 0, `expected repaired > 0, got ${summary.postings!.repaired}`);
-  assert.equal(summary.postings!.failed, 0, "no reconcile failures");
+  assert.equal(
+    summary.postings!.repaired,
+    0,
+    `expected repaired === 0 (no synthesis; postings are the authority), got ${summary.postings!.repaired}`,
+  );
+  assert.equal(
+    summary.postings!.failed,
+    6,
+    `expected failed === 6 (one per transaction with no postings), got ${summary.postings!.failed}`,
+  );
 
-  // Every txn zero-sum.
+  // Zero postings restored — the archive had none.
+  const destPostingCount = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(postings)
+    .innerJoin(transactions, eq(postings.transactionId, transactions.id))
+    .where(eq(transactions.userId, destUserId));
+  assert.equal(
+    Number(destPostingCount[0]!.count),
+    0,
+    "no postings restored (archive had postings: [])",
+  );
+
+  // Non-posting rows were preserved: 2 accounts, 2 categories, 6 transactions, 2 splits, 1 transfer_link.
+  const destRealAccounts = await db
+    .select({ id: accounts.id })
+    .from(accounts)
+    .where(and(eq(accounts.userId, destUserId), isNull(accounts.systemKind)));
+  assert.equal(destRealAccounts.length, 2, "2 real accounts restored (Bank + Wallet)");
+
   const destTxns = await db
     .select({ id: transactions.id })
     .from(transactions)
     .where(eq(transactions.userId, destUserId));
-  for (const txn of destTxns) {
-    const legs = await db
-      .select({ amountPaise: postings.amountPaise })
-      .from(postings)
-      .where(eq(postings.transactionId, txn.id));
-    const sum = legs.reduce((a, b) => a + Number(b.amountPaise), 0);
-    assert.equal(sum, 0, `postings for transaction ${txn.id} must be zero-sum`);
-  }
+  assert.equal(destTxns.length, 6, "6 transactions restored (all 6 archive rows)");
 
-  // findInconsistentPostings returns [].
-  const inconsistent = await findInconsistentPostings(db, destUserId);
-  assert.deepEqual(inconsistent, [], "all dest postings must be consistent with derived shape");
-
-  // --- B2: per-shape leg multiset assertions (LITERAL hardcoded values) ---
-  const sysRows = await db
-    .select({ id: accounts.id, systemKind: accounts.systemKind })
-    .from(accounts)
-    .where(and(eq(accounts.userId, destUserId), isNotNull(accounts.systemKind)));
-  const sysExpenses = sysRows.find((r) => r.systemKind === "expenses")!.id;
-  const sysClearing = sysRows.find((r) => r.systemKind === "clearing")!.id;
-  const sysOpening = sysRows.find((r) => r.systemKind === "opening")!.id;
-
-  async function assertLegs(txnId: string, expected: Array<{ accountId: string; amountPaise: number }>) {
-    const legs = await db
-      .select({ accountId: postings.accountId, amountPaise: postings.amountPaise })
-      .from(postings)
-      .where(eq(postings.transactionId, txnId));
-    const legSet = legs.map((l) => JSON.stringify([l.accountId, l.amountPaise])).sort();
-    const expSet = expected.map((e) => JSON.stringify([e.accountId, e.amountPaise])).sort();
-    assert.deepEqual(legSet, expSet, `postings for transaction ${txnId} must match expected legs`);
-  }
-
-  // Ordinary expense: -5000 bank,food → {bank, -5000} + {sys expenses, +5000}
-  await assertLegs(ordinaryId, [
-    { accountId: bankId, amountPaise: -5000 },
-    { accountId: sysExpenses, amountPaise: 5000 },
-  ]);
-
-  // Split: -10000 bank; food -6000, transport -4000 → {bank, -10000} + {sys expenses, +6000} + {sys expenses, +4000}
-  await assertLegs(splitId, [
-    { accountId: bankId, amountPaise: -10000 },
-    { accountId: sysExpenses, amountPaise: 6000 },
-    { accountId: sysExpenses, amountPaise: 4000 },
-  ]);
-
-  // Transfer OUT: -20000 bank → {bank, -20000} + {sys clearing, +20000}
-  await assertLegs(outLegId, [
-    { accountId: bankId, amountPaise: -20000 },
-    { accountId: sysClearing, amountPaise: 20000 },
-  ]);
-
-  // Transfer IN: +20000 wallet → {wallet, +20000} + {sys clearing, -20000}
-  await assertLegs(inLegId, [
-    { accountId: walletId, amountPaise: 20000 },
-    { accountId: sysClearing, amountPaise: -20000 },
-  ]);
-
-  // Opening: +100000 bank, isOpening → {bank, +100000} + {sys opening, -100000}
-  await assertLegs(openingId, [
-    { accountId: bankId, amountPaise: 100000 },
-    { accountId: sysOpening, amountPaise: -100000 },
-  ]);
-
-  // Soft-deleted: -7000 bank, food → {bank, -7000} + {sys expenses, +7000}
-  await assertLegs(deletedId, [
-    { accountId: bankId, amountPaise: -7000 },
-    { accountId: sysExpenses, amountPaise: 7000 },
-  ]);
-
-  // --- B5: summary counts exclude discarded archived posting rows ---
+  // summary.rows and summary.tables: archive has no postings (empty array), so
+  // counts are all non-posting rows. restoreUserBackup only increments counters
+  // for tables with rows.length > 0, so the empty postings table is not counted.
   assert.equal(
     summary.rows,
     nonPostingRows,
-    `summary.rows (${summary.rows}) must equal non-posting rows (${nonPostingRows}) — archived postings excluded`,
+    `summary.rows (${summary.rows}) must equal non-posting rows (${nonPostingRows})`,
   );
   assert.equal(
     summary.tables,
     nonPostingTables,
-    `summary.tables (${summary.tables}) must equal non-posting tables (${nonPostingTables}) — postings table excluded`,
+    `summary.tables (${summary.tables}) must equal non-posting tables (${nonPostingTables})`,
   );
 });
 
-test("A6 AC5: a posting with a foreign account_id is skipped (never inserted)", async (t) => {
+test("A6 AC5: a posting with a foreign account_id causes FK violation — full rollback, no rows committed", async (t) => {
   const destUserId = await createUser();
   t.after(() => cleanupUser(destUserId));
 
@@ -1064,30 +1027,20 @@ test("A6 AC5: a posting with a foreign account_id is skipped (never inserted)", 
       updated_at: now,
     },
   ];
-  // A posting whose account_id is NOT in the archive — must never be inserted.
+  // A posting whose account_id is NOT in the archive — triggers a Postgres FK violation on insert.
   const foreignAccountId = randomUUID();
-  const foreignCategoryId = randomUUID();
   header.tables.postings = [
     {
       id: randomUUID(),
       transaction_id: txnId,
-      account_id: foreignAccountId, // foreign account id — not in the archive
-      category_id: foreignCategoryId, // foreign category id — not in the archive
+      account_id: foreignAccountId, // FK violation: not in the archive, so not in accounts table
+      category_id: null,
       amount_paise: 5000,
       necessity: null,
       note: "",
       created_at: now,
     },
   ];
-
-  // B5: compute expected non-posting row/table counts from the header
-  // (P=1 archived posting row; accounts=1 + transactions=1 = 2 non-posting rows).
-  const nonPostingRows = Object.entries(header.tables)
-    .filter(([table]) => table !== "postings")
-    .reduce((sum, [, rows]) => sum + (Array.isArray(rows) ? rows.length : 0), 0);
-  const nonPostingTables = Object.entries(header.tables)
-    .filter(([table, rows]) => table !== "postings" && Array.isArray(rows) && rows.length > 0)
-    .length;
 
   const plaintextPath = join(tmpdir(), `a6-ac5-foreign-${randomUUID()}.archive`);
   t.after(() => unlink(plaintextPath).catch(() => {}));
@@ -1097,41 +1050,35 @@ test("A6 AC5: a posting with a foreign account_id is skipped (never inserted)", 
   );
 
   await seedSystemAccounts(db, destUserId);
-  const summary = await restoreUserBackup(pool, stubStorage, destUserId, plaintextPath);
 
-  // The archived posting (foreign account) was skipped; reconcile derived
-  // postings from txn1's real account (acc1).
+  // restore-user.ts inserts archived posting rows verbatim (postings are the data in PR-G1).
+  // The foreign account_id causes a Postgres FK violation (SQLSTATE 23503) on the postings insert.
+  // restore-user.ts catches it, rolls back the full transaction, and re-throws — NOTHING commits.
+  await assert.rejects(
+    () => restoreUserBackup(pool, stubStorage, destUserId, plaintextPath),
+    (err: unknown) =>
+      typeof err === "object" && err !== null && (err as { code?: string }).code === "23503",
+  );
+
+  // Rollback proof: no real account, no transaction, no posting committed for destUserId.
+  const realAccounts = await db
+    .select()
+    .from(accounts)
+    .where(and(eq(accounts.userId, destUserId), isNull(accounts.systemKind)));
+  assert.equal(realAccounts.length, 0, "no real accounts committed (restore rolled back)");
+
+  const destTxns = await db
+    .select({ id: transactions.id })
+    .from(transactions)
+    .where(eq(transactions.userId, destUserId));
+  assert.equal(destTxns.length, 0, "no transactions committed (restore rolled back)");
+
   const destPostings = await db
     .select()
     .from(postings)
     .innerJoin(transactions, eq(postings.transactionId, transactions.id))
     .where(eq(transactions.userId, destUserId));
-  // Ordinary transaction produces exactly 2 postings (asset + Expenses counter).
-  assert.equal(destPostings.length, 2, "dest must have exactly 2 derived postings");
-  // Zero-sum.
-  const sum = destPostings.reduce((a, p) => a + Number(p.postings.amountPaise), 0);
-  assert.equal(sum, 0, "derived postings must be zero-sum");
-  // No posting references the foreign (never-inserted) account or category from the archive.
-  for (const p of destPostings) {
-    assert.notEqual(p.postings.accountId, foreignAccountId, "foreign account must not be referenced");
-    assert.notEqual(p.postings.categoryId, foreignCategoryId, "foreign category must not be referenced");
-  }
-  // Exactly one posting references the restored real account (the asset leg);
-  // the other is the system Expenses counter leg.
-  const assetLegs = destPostings.filter((p) => p.postings.accountId === accId);
-  assert.equal(assetLegs.length, 1, "asset leg must reference the restored account");
-
-  // B5 (non-vacuous, P=1>0): the 1 archived posting row must be excluded from summary counts.
-  assert.equal(
-    summary.rows,
-    nonPostingRows,
-    `summary.rows (${summary.rows}) must equal non-posting rows (${nonPostingRows}) — archived posting row must be excluded from summary.rows`,
-  );
-  assert.equal(
-    summary.tables,
-    nonPostingTables,
-    `summary.tables (${summary.tables}) must equal non-posting tables (${nonPostingTables}) — postings table must not be counted in summary.tables`,
-  );
+  assert.equal(destPostings.length, 0, "no postings committed (restore rolled back)");
 });
 
 test("A6 AC5 post-commit throw: reconcile failure does not roll back committed restore or delete blobs", async (t) => {

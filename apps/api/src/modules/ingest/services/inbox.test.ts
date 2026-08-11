@@ -1,12 +1,12 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { and, eq, or } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { AccountType, ExtractedTransaction } from "@compass/shared";
 import { ExtractedTransactionSchema } from "@compass/shared";
 import { createDb } from "../../../db/index.ts";
 import { createPool } from "../../../infra/db.ts";
-import { accounts, categories, transactions, transferLinks, users } from "../../../db/schema.ts";
+import { accounts, categories, postings, transactions, transferLinks, users } from "../../../db/schema.ts";
 import { emailIngestions, extractedTransactions } from "../schema.ts";
 import { HttpError } from "../../../lib/errors.ts";
 import { incomeExpense } from "../../../lib/periods.ts";
@@ -731,7 +731,7 @@ test("listOrphanedAccepts / restoreOrphan: a soft-deleted (not hard-deleted) ref
 
 // ---------- transfer reconstruction, through re-acceptance (P3b) ----------
 
-test("transfer reconstruction: one leg hard-deleted, restored, and re-accepted relinks to the surviving leg when uniquely matchable", async (t) => {
+test("transfer reconstruction: hard-deleted survivor orphans both drafts; two independent re-acceptances trigger autoLinkTransfers and reconstruct the transfer (D8)", async (t) => {
   const userId = await createUser();
   t.after(() => cleanupUser(userId));
   const accountA = await createAccount(userId, "bank");
@@ -749,7 +749,9 @@ test("transfer reconstruction: one leg hard-deleted, restored, and re-accepted r
     suggestedAccountId: accountB,
   });
 
-  const [outResult, inResult] = await acceptTransferPair(userId, {
+  // D8 step 1: accept the pair as a transfer → linkTransfer merges into ONE survivor S1.
+  // Both drafts' transactionId point to S1 (remapReferences moves inDraftId's reference).
+  const [outResult] = await acceptTransferPair(userId, {
     outId: outDraftId,
     inId: inDraftId,
     fromAccountId: accountA,
@@ -757,41 +759,78 @@ test("transfer reconstruction: one leg hard-deleted, restored, and re-accepted r
     occurredAt: BASE_DATE,
   });
   assert.ok(outResult.transactionId);
-  assert.ok(inResult.transactionId);
+  const s1 = outResult.transactionId!;
 
-  // Hard-deleting one leg cascades away the transfer_links row (the out/in
-  // transaction FKs are ON DELETE CASCADE), leaving the surviving leg
-  // unlinked but still a healthy accepted draft.
-  await hardDeleteTransaction(outResult.transactionId!);
-  const linksAfterDelete = await db
-    .select()
-    .from(transferLinks)
-    .where(
-      or(
-        eq(transferLinks.outTransactionId, inResult.transactionId!),
-        eq(transferLinks.inTransactionId, inResult.transactionId!),
-      ),
-    );
-  assert.equal(linksAfterDelete.length, 0);
+  // D8 step 2: hard-delete S1. The FK is ON DELETE SET NULL — BOTH drafts lose
+  // their transactionId simultaneously, because both were pointing at the same
+  // survivor S1. Both become orphans in one cascade (not just one leg).
+  await hardDeleteTransaction(s1);
+  const orphansAfterDelete = await listOrphanedAccepts(db, userId);
+  const orphanIds = orphansAfterDelete.map((o) => o.id);
+  assert.ok(orphanIds.includes(outDraftId), "outDraftId must be orphaned after S1 deleted");
+  assert.ok(orphanIds.includes(inDraftId), "inDraftId must also be orphaned — both pointed at S1");
 
-  const orphans = await listOrphanedAccepts(db, userId);
-  assert.ok(orphans.map((o) => o.id).includes(outDraftId));
-
+  // D8 step 3: restore both orphans back to pending.
   await restoreOrphan(db, userId, outDraftId);
-  const reaccepted = await acceptDraft(userId, outDraftId, accountA, 400000, "debit");
-  assert.ok(reaccepted.transactionId);
+  await restoreOrphan(db, userId, inDraftId);
 
-  const newLinks = await db
-    .select()
-    .from(transferLinks)
-    .where(
-      or(
-        eq(transferLinks.outTransactionId, reaccepted.transactionId!),
-        eq(transferLinks.inTransactionId, reaccepted.transactionId!),
-      ),
-    );
-  assert.equal(newLinks.length, 1);
-  assert.equal(newLinks[0]!.inTransactionId, inResult.transactionId);
+  // D8 step 4: accept the out draft as an ordinary transaction T_out.
+  // autoLinkTransfers runs post-commit, but finds no matching credit in the
+  // ledger yet (inDraftId is still a pending draft, not a ledger row).
+  // T_out must have ordinary shape: exactly 1 real posting.
+  const outDto = await acceptDraft(userId, outDraftId, accountA, 400000, "debit");
+  assert.ok(outDto.transactionId);
+  const outPostings = await postingsFor(outDto.transactionId!);
+  const outRealPostings = outPostings.filter((p) => p.systemKind === null);
+  assert.equal(outRealPostings.length, 1, "T_out has ordinary shape (1 real posting) before auto-link");
+
+  // D8 step 5: accept the in draft as an ordinary transaction T_in.
+  // autoLinkTransfers now finds T_out (debit 400000) and T_in (credit 400000) as
+  // an unambiguous pair — same amount, different accounts, within TRANSFER_WINDOW_DAYS —
+  // and calls linkTransfer, which merges them into S2 (T_out's id survives; T_in is
+  // hard-deleted). remapReferences updates inDraftId's transactionId to S2.
+  const inDto = await acceptDraft(userId, inDraftId, accountB, 400000, "credit");
+  assert.ok(inDto.transactionId);
+
+  // D8 step 6: final assertions — one survivor, two real postings, zero transfer_links.
+
+  // 1. Exactly one non-deleted transaction (S2).
+  const rows = await ledgerRowsFor(userId);
+  assert.equal(rows.length, 1, "only S2 remains — T_in was absorbed by autoLinkTransfers");
+
+  // 2. Both drafts reference S2 (the survivor = T_out's id).
+  const s2 = outDto.transactionId!;
+  const outDraft = await draftRow(outDraftId);
+  const inDraft = await draftRow(inDraftId);
+  assert.equal(outDraft!.transactionId, s2);
+  assert.equal(inDraft!.transactionId, s2, "remapReferences moved inDraftId's transactionId to S2");
+  // autoLinkTransfers also reported S2 in the in-dto reload
+  assert.equal(inDto.transactionId, s2);
+
+  // 3. Exactly 2 postings on S2.
+  const s2Postings = await postingsFor(s2);
+  assert.equal(s2Postings.length, 2);
+
+  // 4. Both postings join to real accounts (system_kind IS NULL).
+  assert.ok(s2Postings.every((p) => p.systemKind === null));
+
+  // 5. Unordered tuples equal expected [accountA, -400000] / [accountB, +400000].
+  const outP = s2Postings.find((p) => p.accountId === accountA)!;
+  const inP = s2Postings.find((p) => p.accountId === accountB)!;
+  assert.ok(outP, "accountA posting must exist on S2");
+  assert.ok(inP, "accountB posting must exist on S2");
+  assert.equal(outP.amountPaise, -400000);
+  assert.equal(inP.amountPaise, 400000);
+
+  // 6. Sum zero.
+  assert.equal(s2Postings.reduce((s, p) => s + p.amountPaise, 0), 0);
+
+  // 7. No category-dimension/system posting.
+  assert.ok(s2Postings.every((p) => p.categoryId === null));
+
+  // 8. zero transfer_links — explicit retired-invariant assertion.
+  const links = await linksFor(userId);
+  assert.equal(links.length, 0);
 });
 
 test("transfer reconstruction: restoring and re-accepting with a non-matching amount leaves an ordinary unlinked transaction (no-match case)", async (t) => {
@@ -812,7 +851,7 @@ test("transfer reconstruction: restoring and re-accepting with a non-matching am
     suggestedAccountId: accountB,
   });
 
-  const [outResult, inResult] = await acceptTransferPair(userId, {
+  const [outResult] = await acceptTransferPair(userId, {
     outId: outDraftId,
     inId: inDraftId,
     fromAccountId: accountA,
@@ -820,36 +859,33 @@ test("transfer reconstruction: restoring and re-accepting with a non-matching am
     occurredAt: BASE_DATE,
   });
 
+  // Hard-deleting outResult.transactionId! (= S1) cascade-nulls BOTH drafts'
+  // transactionId (both pointed at S1), so both become orphans simultaneously.
   await hardDeleteTransaction(outResult.transactionId!);
   await restoreOrphan(db, userId, outDraftId);
   // The reviewer corrects the amount before accepting — no candidate matches it anymore.
+  // inDraftId was never restored; it stays orphaned.
   const reaccepted = await acceptDraft(userId, outDraftId, accountA, 450000, "debit");
   assert.ok(reaccepted.transactionId);
 
-  const links = await db
-    .select()
-    .from(transferLinks)
-    .where(
-      or(
-        eq(transferLinks.outTransactionId, reaccepted.transactionId!),
-        eq(transferLinks.inTransactionId, reaccepted.transactionId!),
-      ),
-    );
-  assert.equal(links.length, 0);
-  // the surviving leg also remains unlinked
-  const survivorLinks = await db
-    .select()
-    .from(transferLinks)
-    .where(
-      or(
-        eq(transferLinks.outTransactionId, inResult.transactionId!),
-        eq(transferLinks.inTransactionId, inResult.transactionId!),
-      ),
-    );
-  assert.equal(survivorLinks.length, 0);
+  // F6(a): reaccepted transaction has ordinary shape — exactly 1 real posting,
+  // never became a transfer (autoLinkTransfers found no 450000 credit in the ledger).
+  const reacceptedPostings = await postingsFor(reaccepted.transactionId!);
+  assert.equal(
+    reacceptedPostings.filter((p) => p.systemKind === null).length,
+    1,
+    "reaccepted has ordinary shape (1 real posting, not a transfer)",
+  );
+
+  // F6(b): inDraftId was never restored, so it remains an orphaned accept.
+  const orphans = await listOrphanedAccepts(db, userId);
+  assert.ok(
+    orphans.map((o) => o.id).includes(inDraftId),
+    "inDraftId must still be orphaned — it was never restored",
+  );
 });
 
-test("transfer reconstruction: both legs hard-deleted, both restored, re-paired by pickTransferPairs, and acceptTransfer recreates two transactions plus a link", async (t) => {
+test("transfer reconstruction: both legs hard-deleted, both restored, re-paired by pickTransferPairs, and acceptTransferPair recreates one collapsed transfer transaction with two real postings", async (t) => {
   const userId = await createUser();
   t.after(() => cleanupUser(userId));
   const accountA = await createAccount(userId, "bank");
@@ -905,17 +941,38 @@ test("transfer reconstruction: both legs hard-deleted, both restored, re-paired 
   assert.ok(newIn.transactionId);
   assert.notEqual(newOut.transactionId, outResult.transactionId);
   assert.notEqual(newIn.transactionId, inResult.transactionId);
+  // Both drafts point to the same survivor (linkTransfer merges into one).
+  assert.equal(newOut.transactionId, newIn.transactionId);
+  const s2 = newOut.transactionId!;
 
-  const links = await db
-    .select()
-    .from(transferLinks)
-    .where(
-      and(
-        eq(transferLinks.outTransactionId, newOut.transactionId!),
-        eq(transferLinks.inTransactionId, newIn.transactionId!),
-      ),
-    );
-  assert.equal(links.length, 1);
+  // 1. Exactly one non-deleted transaction (S2).
+  const rows = await ledgerRowsFor(userId);
+  assert.equal(rows.length, 1);
+
+  // 3. Exactly 2 postings on S2.
+  const s2Postings = await postingsFor(s2);
+  assert.equal(s2Postings.length, 2);
+
+  // 4. Both postings join to real accounts (system_kind IS NULL).
+  assert.ok(s2Postings.every((p) => p.systemKind === null));
+
+  // 5. Unordered tuples equal expected [accountA, -400000] / [accountB, +400000].
+  const outP = s2Postings.find((p) => p.accountId === accountA)!;
+  const inP = s2Postings.find((p) => p.accountId === accountB)!;
+  assert.ok(outP, "accountA posting must exist on S2");
+  assert.ok(inP, "accountB posting must exist on S2");
+  assert.equal(outP.amountPaise, -400000);
+  assert.equal(inP.amountPaise, 400000);
+
+  // 6. Sum zero.
+  assert.equal(s2Postings.reduce((s, p) => s + p.amountPaise, 0), 0);
+
+  // 7. No category-dimension/system posting.
+  assert.ok(s2Postings.every((p) => p.categoryId === null));
+
+  // 8. Zero transfer_links — explicit retired-invariant assertion.
+  const links = await linksFor(userId);
+  assert.equal(links.length, 0);
 });
 
 // ---------- re-accept after restore: exactly-once + dedupe_hash stability ----------
@@ -1028,6 +1085,19 @@ async function linksFor(userId: string) {
   return db.select().from(transferLinks).where(eq(transferLinks.userId, userId));
 }
 
+async function postingsFor(transactionId: string) {
+  return db
+    .select({
+      accountId: postings.accountId,
+      amountPaise: postings.amountPaise,
+      categoryId: postings.categoryId,
+      systemKind: accounts.systemKind,
+    })
+    .from(postings)
+    .innerJoin(accounts, eq(accounts.id, postings.accountId))
+    .where(eq(postings.transactionId, transactionId));
+}
+
 async function repaymentDraft(
   userId: string,
   ingestionId: string,
@@ -1043,7 +1113,7 @@ async function repaymentDraft(
 
 // ---------- AC1: zero candidates creates both legs ----------
 
-test("acceptRepayment AC1: no existing candidate creates exactly two ledger rows, equal and opposite, both uncategorized, and one transfer_links row", async (t) => {
+test("acceptRepayment AC1: no existing candidate creates one merged transfer transaction with two real postings, zero transfer_links", async (t) => {
   const userId = await createUser();
   t.after(() => cleanupUser(userId));
   const fromAccountId = await createAccount(userId, "bank");
@@ -1057,26 +1127,41 @@ test("acceptRepayment AC1: no existing candidate creates exactly two ledger rows
     occurredAt: BASE_DATE,
   });
 
+  // 1. Exactly one non-deleted transaction (the outflow survivor).
   const rows = await ledgerRowsFor(userId);
-  assert.equal(rows.length, 2);
-  const outRow = rows.find((r) => r.accountId === fromAccountId)!;
-  const inRow = rows.find((r) => r.accountId === cardAccountId)!;
-  assert.ok(outRow);
-  assert.ok(inRow);
-  assert.equal(outRow.amountPaise, -500000);
-  assert.equal(inRow.amountPaise, 500000);
-  assert.equal(outRow.categoryId, null);
-  assert.equal(inRow.categoryId, null);
-  assert.equal(dto.transactionId, inRow.id);
+  assert.equal(rows.length, 1);
 
-  const links = await linksFor(userId);
-  assert.equal(links.length, 1);
-  assert.equal(links[0]!.outTransactionId, outRow.id);
-  assert.equal(links[0]!.inTransactionId, inRow.id);
-
+  // 2. DTO and draft both reference the survivor (the outflow/from-account leg).
+  const survivorId = dto.transactionId!;
+  assert.ok(survivorId);
   const row = await draftRow(draftId);
   assert.equal(row?.status, "accepted");
-  assert.equal(row?.transactionId, inRow.id);
+  assert.equal(row?.transactionId, survivorId);
+
+  // 3. Exactly 2 postings on survivor.
+  const txPostings = await postingsFor(survivorId);
+  assert.equal(txPostings.length, 2);
+
+  // 4. Both postings join to real accounts (system_kind IS NULL).
+  assert.ok(txPostings.every((p) => p.systemKind === null));
+
+  // 5. Unordered tuples equal expected [fromAccountId, -500000] / [cardAccountId, +500000].
+  const outP = txPostings.find((p) => p.accountId === fromAccountId)!;
+  const inP = txPostings.find((p) => p.accountId === cardAccountId)!;
+  assert.ok(outP, "fromAccountId posting must exist");
+  assert.ok(inP, "cardAccountId posting must exist");
+  assert.equal(outP.amountPaise, -500000);
+  assert.equal(inP.amountPaise, 500000);
+
+  // 6. Sum zero.
+  assert.equal(txPostings.reduce((s, p) => s + p.amountPaise, 0), 0);
+
+  // 7. No category-dimension/system posting.
+  assert.ok(txPostings.every((p) => p.categoryId === null));
+
+  // 8. Zero transfer_links — explicit retired-invariant assertion.
+  const links = await linksFor(userId);
+  assert.equal(links.length, 0);
 });
 
 // ---------- AC2 / AC4: exactly one candidate is reused untouched ----------
@@ -1119,8 +1204,14 @@ test("acceptRepayment AC2/AC4: exactly one eligible candidate is reused — only
     occurredAt: BASE_DATE,
   });
 
+  // 1. Only the survivor remains (existingDebit); the new card inTxn was absorbed and deleted.
   const rows = await ledgerRowsFor(userId);
-  assert.equal(rows.length, 2); // the reused debit + the new card leg — no new debit
+  assert.equal(rows.length, 1);
+
+  // 2. Reused ID IS the survivor; DTO points to it.
+  assert.equal(dto.transactionId, existingDebit.id);
+
+  // Header fields are unchanged (linkTransfer only modifies notes/tags, not header).
   const after = rows.find((r) => r.id === existingDebit.id)!;
   assert.ok(after);
   assert.equal(after.amountPaise, before.amountPaise);
@@ -1129,10 +1220,22 @@ test("acceptRepayment AC2/AC4: exactly one eligible candidate is reused — only
   assert.equal(after.merchant, before.merchant);
   assert.equal(after.categoryId, before.categoryId);
 
+  // 3–7. linkTransfer rewrites existingDebit's postings into transfer shape (2 real, no system).
+  const txPostings = await postingsFor(existingDebit.id);
+  assert.equal(txPostings.length, 2);
+  assert.ok(txPostings.every((p) => p.systemKind === null));
+  const outP = txPostings.find((p) => p.accountId === fromAccountId)!;
+  const inP = txPostings.find((p) => p.accountId === cardAccountId)!;
+  assert.ok(outP, "fromAccountId posting must exist");
+  assert.ok(inP, "cardAccountId posting must exist");
+  assert.equal(outP.amountPaise, -500000);
+  assert.equal(inP.amountPaise, 500000);
+  assert.equal(txPostings.reduce((s, p) => s + p.amountPaise, 0), 0);
+  assert.ok(txPostings.every((p) => p.categoryId === null));
+
+  // 8. Zero transfer_links — explicit retired-invariant assertion.
   const links = await linksFor(userId);
-  assert.equal(links.length, 1);
-  assert.equal(links[0]!.outTransactionId, existingDebit.id);
-  assert.equal(links[0]!.inTransactionId, dto.transactionId);
+  assert.equal(links.length, 0);
 });
 
 // ---------- AC3: two or more candidates refuses ----------
@@ -1181,7 +1284,7 @@ test("acceptRepayment AC3: two or more eligible candidates 409s, naming the coun
 
 // ---------- AC4: timestamp/date provenance on newly created legs ----------
 
-test("acceptRepayment AC4: the synthetic out leg has occurredAt = null; the in leg carries the draft's occurredAtTs and the reviewer's date", async (t) => {
+test("acceptRepayment AC4: the synthetic out leg (survivor) has occurredAt = null and date = reviewer's date", async (t) => {
   const userId = await createUser();
   t.after(() => cleanupUser(userId));
   const fromAccountId = await createAccount(userId, "bank");
@@ -1192,20 +1295,47 @@ test("acceptRepayment AC4: the synthetic out leg has occurredAt = null; the in l
 
   const draftId = await repaymentDraft(userId, ingestionId, { occurredAtTs: draftOccurredAtTs });
 
-  await acceptRepayment(db, userId, draftId, {
+  const dto = await acceptRepayment(db, userId, draftId, {
     cardAccountId,
     fromAccountId,
     occurredAt: reviewerDate,
   });
 
+  // Under PR-G1, linkTransfer absorbs the in-leg (cardAccount) into the out-leg
+  // survivor. Only the survivor's header is visible; the in-leg's occurredAt/date
+  // are no longer separately accessible after the merge.
   const rows = await ledgerRowsFor(userId);
-  const outRow = rows.find((r) => r.accountId === fromAccountId)!;
-  const inRow = rows.find((r) => r.accountId === cardAccountId)!;
+  assert.equal(rows.length, 1); // only the out-leg survivor
 
+  // 2. DTO and draft both reference the survivor.
+  const survivorId = dto.transactionId!;
+  assert.ok(survivorId);
+  const row = await draftRow(draftId);
+  assert.equal(row?.transactionId, survivorId);
+
+  const outRow = rows.find((r) => r.accountId === fromAccountId)!;
+  assert.ok(outRow, "out-leg survivor must exist");
   assert.equal(outRow.occurredAt, null);
   assert.equal(outRow.date, reviewerDate);
-  assert.equal(inRow.date, reviewerDate);
-  assert.equal(inRow.occurredAt?.toISOString(), draftOccurredAtTs.toISOString());
+
+  // Transfer-shape postings on the survivor.
+  const txPostings = await postingsFor(survivorId);
+  assert.equal(txPostings.length, 2);
+  assert.ok(txPostings.every((p) => p.systemKind === null));
+
+  // 5. Unordered tuples equal expected [fromAccountId, -500000] / [cardAccountId, +500000].
+  const outP = txPostings.find((p) => p.accountId === fromAccountId)!;
+  const inP = txPostings.find((p) => p.accountId === cardAccountId)!;
+  assert.ok(outP, "fromAccountId posting must exist");
+  assert.ok(inP, "cardAccountId posting must exist");
+  assert.equal(outP.amountPaise, -500000);
+  assert.equal(inP.amountPaise, 500000);
+
+  assert.equal(txPostings.reduce((s, p) => s + p.amountPaise, 0), 0);
+  assert.ok(txPostings.every((p) => p.categoryId === null));
+
+  const links = await linksFor(userId);
+  assert.equal(links.length, 0);
 });
 
 // ---------- AC4b: a candidate linked concurrently between detection and linking ----------
@@ -1258,8 +1388,9 @@ test("acceptRepayment AC4b: a candidate linked by a concurrent request between d
   await started.opened;
 
   // Connection B: the real call under test. Its candidate SELECT (read-committed,
-  // A uncommitted) still sees the debit as unlinked, so it proceeds to
-  // `linkTransfer`'s insert — which blocks on A's held row lock.
+  // A uncommitted) still sees the debit as unlinked (< 2 real postings), so it
+  // proceeds to `linkTransfer`, which acquires `FOR UPDATE` locks on the header
+  // rows — which blocks on A's held lock on the same rows.
   const bPromise = acceptRepayment(db, userId, draftId, {
     cardAccountId,
     fromAccountId,
@@ -1289,14 +1420,31 @@ test("acceptRepayment AC4b: a candidate linked by a concurrent request between d
   const row = await draftRow(draftId);
   assert.equal(row?.status, "pending");
 
-  // A's link committed (one row); B's attempted in-leg insert rolled back with
-  // the rest of its transaction — no ledger row was left behind by B.
+  // A's transfer committed: candidate is the survivor (spuriousCredit absorbed and
+  // hard-deleted by linkTransfer). B rolled back entirely — B's new card leg was
+  // never committed and the draft was restored to pending by the rollback.
   const rows = await ledgerRowsFor(userId);
-  assert.equal(rows.length, 2); // candidate + spuriousCredit only
+  assert.equal(rows.length, 1); // only candidate — spuriousCredit absorbed by A, B rolled back
+
+  // A's committed transfer: 2 real postings on candidate, sum zero, no system posting.
+  const aPostings = await postingsFor(candidate.id);
+  assert.equal(aPostings.length, 2);
+  assert.ok(aPostings.every((p) => p.systemKind === null));
+  assert.equal(aPostings.reduce((s, p) => s + p.amountPaise, 0), 0);
+
+  // 5. Unordered tuples equal expected [fromAccountId, -500000] / [otherAccountId, +500000].
+  const fromP = aPostings.find((p) => p.accountId === fromAccountId)!;
+  const otherP = aPostings.find((p) => p.accountId === otherAccountId)!;
+  assert.ok(fromP, "fromAccountId posting must exist");
+  assert.ok(otherP, "otherAccountId posting must exist");
+  assert.equal(fromP.amountPaise, -500000);
+  assert.equal(otherP.amountPaise, 500000);
+
+  assert.ok(aPostings.every((p) => p.categoryId === null));
+
+  // No B-created survivor — B rolled back, zero transfer_links (retired invariant).
   const links = await linksFor(userId);
-  assert.equal(links.length, 1);
-  assert.equal(links[0]!.outTransactionId, candidate.id);
-  assert.equal(links[0]!.inTransactionId, spuriousCredit.id);
+  assert.equal(links.length, 0);
 });
 
 // ---------- AC5: neither leg counts as income or expense ----------
@@ -1360,10 +1508,30 @@ test("acceptRepayment AC6: a genuine concurrent double-accept of the same draft 
   assert.ok(rejected[0]!.reason instanceof HttpError);
   assert.equal((rejected[0]!.reason as HttpError).statusCode, 409);
 
+  // 1. Exactly one non-deleted transaction (the winner's survivor).
   const rows = await ledgerRowsFor(userId);
-  assert.equal(rows.length, 2);
+  assert.equal(rows.length, 1);
+
+  // 2. The winner's DTO references the survivor.
+  const survivorId = fulfilled[0]!.value.transactionId!;
+  assert.ok(survivorId);
+
+  // 3–7. Transfer-shape postings on survivor.
+  const txPostings = await postingsFor(survivorId);
+  assert.equal(txPostings.length, 2);
+  assert.ok(txPostings.every((p) => p.systemKind === null));
+  const outP = txPostings.find((p) => p.accountId === fromAccountId)!;
+  const inP = txPostings.find((p) => p.accountId === cardAccountId)!;
+  assert.ok(outP);
+  assert.ok(inP);
+  assert.equal(outP.amountPaise, -500000);
+  assert.equal(inP.amountPaise, 500000);
+  assert.equal(txPostings.reduce((s, p) => s + p.amountPaise, 0), 0);
+  assert.ok(txPostings.every((p) => p.categoryId === null));
+
+  // 8. Zero transfer_links — explicit retired-invariant assertion.
   const links = await linksFor(userId);
-  assert.equal(links.length, 1);
+  assert.equal(links.length, 0);
 });
 
 // ---------- AC8: rejected 400s, and a foreign account 404s (not grouped with 400) ----------
@@ -1503,15 +1671,37 @@ test("SQL eligibility predicate: a debit with the wrong amount is excluded — t
   });
 
   const draftId = await repaymentDraft(userId, ingestionId);
-  await acceptRepayment(db, userId, draftId, { cardAccountId, fromAccountId, occurredAt: BASE_DATE });
+  const dto = await acceptRepayment(db, userId, draftId, { cardAccountId, fromAccountId, occurredAt: BASE_DATE });
 
+  // 1. Two non-deleted transactions: wrongAmount (excluded, original shape) + new survivor.
   const rows = await ledgerRowsFor(userId);
-  assert.equal(rows.length, 3); // the wrong-amount debit, untouched, plus a new out+in pair
+  assert.equal(rows.length, 2);
+
+  // Excluded candidate keeps its original shape.
   const untouched = rows.find((r) => r.id === wrongAmount.id)!;
+  assert.ok(untouched);
   assert.equal(untouched.amountPaise, -400000);
+
+  // 2. A DISTINCT new survivor was created for the actual repayment.
+  const survivorId = dto.transactionId!;
+  assert.notEqual(survivorId, wrongAmount.id);
+
+  // 3–7. Transfer-shape postings on survivor.
+  const txPostings = await postingsFor(survivorId);
+  assert.equal(txPostings.length, 2);
+  assert.ok(txPostings.every((p) => p.systemKind === null));
+  const outP = txPostings.find((p) => p.accountId === fromAccountId)!;
+  const inP = txPostings.find((p) => p.accountId === cardAccountId)!;
+  assert.ok(outP);
+  assert.ok(inP);
+  assert.equal(outP.amountPaise, -500000);
+  assert.equal(inP.amountPaise, 500000);
+  assert.equal(txPostings.reduce((s, p) => s + p.amountPaise, 0), 0);
+  assert.ok(txPostings.every((p) => p.categoryId === null));
+
+  // 8. Zero transfer_links.
   const links = await linksFor(userId);
-  assert.equal(links.length, 1);
-  assert.notEqual(links[0]!.outTransactionId, wrongAmount.id);
+  assert.equal(links.length, 0);
 });
 
 test("SQL eligibility predicate: a debit exactly TRANSFER_WINDOW_DAYS away is included (reused)", async (t) => {
@@ -1535,13 +1725,37 @@ test("SQL eligibility predicate: a debit exactly TRANSFER_WINDOW_DAYS away is in
   });
 
   const draftId = await repaymentDraft(userId, ingestionId, { occurredAt: BASE_DATE });
-  await acceptRepayment(db, userId, draftId, { cardAccountId, fromAccountId, occurredAt: reviewerDate });
+  const dto = await acceptRepayment(db, userId, draftId, { cardAccountId, fromAccountId, occurredAt: reviewerDate });
 
+  // 1. Only one non-deleted transaction: boundary reused as the survivor; card inTxn absorbed.
   const rows = await ledgerRowsFor(userId);
-  assert.equal(rows.length, 2); // reused, no new debit
+  assert.equal(rows.length, 1);
+
+  // 2. Reused ID IS the survivor; DTO points to it.
+  assert.equal(dto.transactionId, boundary.id);
+
+  // Header fields of boundary are unchanged (linkTransfer only modifies notes/tags).
+  const afterBoundary = rows.find((r) => r.id === boundary.id)!;
+  assert.ok(afterBoundary);
+  assert.equal(afterBoundary.amountPaise, -500000);
+  assert.equal(afterBoundary.date, debitDate);
+
+  // 3–7. linkTransfer rewrites boundary's postings into transfer shape (2 real, no system).
+  const txPostings = await postingsFor(boundary.id);
+  assert.equal(txPostings.length, 2);
+  assert.ok(txPostings.every((p) => p.systemKind === null));
+  const outP = txPostings.find((p) => p.accountId === fromAccountId)!;
+  const inP = txPostings.find((p) => p.accountId === cardAccountId)!;
+  assert.ok(outP);
+  assert.ok(inP);
+  assert.equal(outP.amountPaise, -500000);
+  assert.equal(inP.amountPaise, 500000);
+  assert.equal(txPostings.reduce((s, p) => s + p.amountPaise, 0), 0);
+  assert.ok(txPostings.every((p) => p.categoryId === null));
+
+  // 8. Zero transfer_links.
   const links = await linksFor(userId);
-  assert.equal(links.length, 1);
-  assert.equal(links[0]!.outTransactionId, boundary.id);
+  assert.equal(links.length, 0);
 });
 
 test("SQL eligibility predicate: a debit one day beyond TRANSFER_WINDOW_DAYS is excluded — the create branch runs instead", async (t) => {
@@ -1565,13 +1779,37 @@ test("SQL eligibility predicate: a debit one day beyond TRANSFER_WINDOW_DAYS is 
   });
 
   const draftId = await repaymentDraft(userId, ingestionId, { occurredAt: BASE_DATE });
-  await acceptRepayment(db, userId, draftId, { cardAccountId, fromAccountId, occurredAt: reviewerDate });
+  const dto = await acceptRepayment(db, userId, draftId, { cardAccountId, fromAccountId, occurredAt: reviewerDate });
 
+  // 1. Two non-deleted transactions: tooFar (excluded) + new survivor.
   const rows = await ledgerRowsFor(userId);
-  assert.equal(rows.length, 3);
+  assert.equal(rows.length, 2);
+
+  // Excluded candidate keeps its original shape.
+  const untouched = rows.find((r) => r.id === tooFar.id)!;
+  assert.ok(untouched);
+  assert.equal(untouched.amountPaise, -500000);
+
+  // 2. A DISTINCT new survivor was created for the actual repayment.
+  const survivorId = dto.transactionId!;
+  assert.notEqual(survivorId, tooFar.id);
+
+  // 3–7. Transfer-shape postings on survivor.
+  const txPostings = await postingsFor(survivorId);
+  assert.equal(txPostings.length, 2);
+  assert.ok(txPostings.every((p) => p.systemKind === null));
+  const outP = txPostings.find((p) => p.accountId === fromAccountId)!;
+  const inP = txPostings.find((p) => p.accountId === cardAccountId)!;
+  assert.ok(outP);
+  assert.ok(inP);
+  assert.equal(outP.amountPaise, -500000);
+  assert.equal(inP.amountPaise, 500000);
+  assert.equal(txPostings.reduce((s, p) => s + p.amountPaise, 0), 0);
+  assert.ok(txPostings.every((p) => p.categoryId === null));
+
+  // 8. Zero transfer_links.
   const links = await linksFor(userId);
-  assert.equal(links.length, 1);
-  assert.notEqual(links[0]!.outTransactionId, tooFar.id);
+  assert.equal(links.length, 0);
 });
 
 test("SQL eligibility predicate: a soft-deleted debit is excluded — the create branch runs instead", async (t) => {
@@ -1594,13 +1832,37 @@ test("SQL eligibility predicate: a soft-deleted debit is excluded — the create
   await db.update(transactions).set({ deletedAt: new Date() }).where(eq(transactions.id, deleted.id));
 
   const draftId = await repaymentDraft(userId, ingestionId);
-  await acceptRepayment(db, userId, draftId, { cardAccountId, fromAccountId, occurredAt: BASE_DATE });
+  const dto = await acceptRepayment(db, userId, draftId, { cardAccountId, fromAccountId, occurredAt: BASE_DATE });
 
+  // 1. Two rows: soft-deleted (excluded, still present) + new survivor.
   const rows = await ledgerRowsFor(userId);
-  assert.equal(rows.length, 3); // the soft-deleted row plus the new out+in pair
+  assert.equal(rows.length, 2);
+
+  // Excluded candidate is still soft-deleted, original shape.
+  const softDeletedRow = rows.find((r) => r.id === deleted.id)!;
+  assert.ok(softDeletedRow);
+  assert.ok(softDeletedRow.deletedAt);
+
+  // 2. A DISTINCT new survivor was created for the actual repayment.
+  const survivorId = dto.transactionId!;
+  assert.notEqual(survivorId, deleted.id);
+
+  // 3–7. Transfer-shape postings on survivor.
+  const txPostings = await postingsFor(survivorId);
+  assert.equal(txPostings.length, 2);
+  assert.ok(txPostings.every((p) => p.systemKind === null));
+  const outP = txPostings.find((p) => p.accountId === fromAccountId)!;
+  const inP = txPostings.find((p) => p.accountId === cardAccountId)!;
+  assert.ok(outP);
+  assert.ok(inP);
+  assert.equal(outP.amountPaise, -500000);
+  assert.equal(inP.amountPaise, 500000);
+  assert.equal(txPostings.reduce((s, p) => s + p.amountPaise, 0), 0);
+  assert.ok(txPostings.every((p) => p.categoryId === null));
+
+  // 8. Zero transfer_links.
   const links = await linksFor(userId);
-  assert.equal(links.length, 1);
-  assert.notEqual(links[0]!.outTransactionId, deleted.id);
+  assert.equal(links.length, 0);
 });
 
 test("SQL eligibility predicate: an isOpening debit is excluded — the create branch runs instead", async (t) => {
@@ -1627,16 +1889,40 @@ test("SQL eligibility predicate: an isOpening debit is excluded — the create b
     .returning({ id: transactions.id });
 
   const draftId = await repaymentDraft(userId, ingestionId);
-  await acceptRepayment(db, userId, draftId, { cardAccountId, fromAccountId, occurredAt: BASE_DATE });
+  const dto = await acceptRepayment(db, userId, draftId, { cardAccountId, fromAccountId, occurredAt: BASE_DATE });
 
+  // 1. Two non-deleted rows: opening (excluded) + new survivor.
   const rows = await ledgerRowsFor(userId);
-  assert.equal(rows.length, 3);
+  assert.equal(rows.length, 2);
+
+  // Excluded candidate is still the opening balance row.
+  const openingRow = rows.find((r) => r.id === opening!.id)!;
+  assert.ok(openingRow);
+  assert.ok(openingRow.isOpening);
+
+  // 2. A DISTINCT new survivor was created for the actual repayment.
+  const survivorId = dto.transactionId!;
+  assert.notEqual(survivorId, opening!.id);
+
+  // 3–7. Transfer-shape postings on survivor.
+  const txPostings = await postingsFor(survivorId);
+  assert.equal(txPostings.length, 2);
+  assert.ok(txPostings.every((p) => p.systemKind === null));
+  const outP = txPostings.find((p) => p.accountId === fromAccountId)!;
+  const inP = txPostings.find((p) => p.accountId === cardAccountId)!;
+  assert.ok(outP);
+  assert.ok(inP);
+  assert.equal(outP.amountPaise, -500000);
+  assert.equal(inP.amountPaise, 500000);
+  assert.equal(txPostings.reduce((s, p) => s + p.amountPaise, 0), 0);
+  assert.ok(txPostings.every((p) => p.categoryId === null));
+
+  // 8. Zero transfer_links.
   const links = await linksFor(userId);
-  assert.equal(links.length, 1);
-  assert.notEqual(links[0]!.outTransactionId, opening!.id);
+  assert.equal(links.length, 0);
 });
 
-test("SQL eligibility predicate: a debit already referenced by transfer_links is excluded — the create branch runs instead", async (t) => {
+test("SQL eligibility predicate: a debit already a transfer (2 real postings) is excluded — the create branch runs instead", async (t) => {
   const userId = await createUser();
   t.after(() => cleanupUser(userId));
   const fromAccountId = await createAccount(userId, "bank");
@@ -1664,16 +1950,42 @@ test("SQL eligibility predicate: a debit already referenced by transfer_links is
     tags: [],
     source: "manual",
   });
+  // linkTransfer merges alreadyLinked+otherCredit: alreadyLinked survives (outflow),
+  // otherCredit is hard-deleted. alreadyLinked now has 2 real postings (transfer shape).
   await linkTransfer(db, userId, alreadyLinked.id, otherCredit.id);
 
   const draftId = await repaymentDraft(userId, ingestionId);
-  await acceptRepayment(db, userId, draftId, { cardAccountId, fromAccountId, occurredAt: BASE_DATE });
+  const dto = await acceptRepayment(db, userId, draftId, { cardAccountId, fromAccountId, occurredAt: BASE_DATE });
 
+  // 1. Two non-deleted rows: alreadyLinked (survivor of its own transfer) + new repayment survivor.
   const rows = await ledgerRowsFor(userId);
-  assert.equal(rows.length, 4); // alreadyLinked + otherCredit + new out+in pair
+  assert.equal(rows.length, 2);
+
+  // Exclusion was via postings shape (2 real postings on alreadyLinked), NOT via transfer_links.
+  const alreadyLinkedPostings = await postingsFor(alreadyLinked.id);
+  assert.equal(alreadyLinkedPostings.length, 2, "alreadyLinked has 2 real postings (transfer shape) — that is what excluded it");
+  assert.ok(alreadyLinkedPostings.every((p) => p.systemKind === null));
+
+  // 2. A DISTINCT new survivor was created for the actual repayment.
+  const survivorId = dto.transactionId!;
+  assert.notEqual(survivorId, alreadyLinked.id);
+
+  // 3–7. Transfer-shape postings on the new repayment survivor.
+  const txPostings = await postingsFor(survivorId);
+  assert.equal(txPostings.length, 2);
+  assert.ok(txPostings.every((p) => p.systemKind === null));
+  const outP = txPostings.find((p) => p.accountId === fromAccountId)!;
+  const inP = txPostings.find((p) => p.accountId === cardAccountId)!;
+  assert.ok(outP);
+  assert.ok(inP);
+  assert.equal(outP.amountPaise, -500000);
+  assert.equal(inP.amountPaise, 500000);
+  assert.equal(txPostings.reduce((s, p) => s + p.amountPaise, 0), 0);
+  assert.ok(txPostings.every((p) => p.categoryId === null));
+
+  // 8. Zero transfer_links — explicit retired-invariant assertion.
   const links = await linksFor(userId);
-  assert.equal(links.length, 2);
-  assert.ok(links.every((l) => l.outTransactionId !== alreadyLinked.id || l.inTransactionId === otherCredit.id));
+  assert.equal(links.length, 0);
 });
 
 test("SQL eligibility predicate: a debit on a different account is excluded — the create branch runs instead", async (t) => {
@@ -1696,13 +2008,36 @@ test("SQL eligibility predicate: a debit on a different account is excluded — 
   });
 
   const draftId = await repaymentDraft(userId, ingestionId);
-  await acceptRepayment(db, userId, draftId, { cardAccountId, fromAccountId, occurredAt: BASE_DATE });
+  const dto = await acceptRepayment(db, userId, draftId, { cardAccountId, fromAccountId, occurredAt: BASE_DATE });
 
+  // 1. Two non-deleted transactions: wrongAccount (excluded) + new survivor.
   const rows = await ledgerRowsFor(userId);
-  assert.equal(rows.length, 3);
+  assert.equal(rows.length, 2);
+
+  // Excluded candidate keeps its original shape.
+  const untouched = rows.find((r) => r.id === wrongAccount.id)!;
+  assert.ok(untouched);
+
+  // 2. A DISTINCT new survivor was created for the actual repayment.
+  const survivorId = dto.transactionId!;
+  assert.notEqual(survivorId, wrongAccount.id);
+
+  // 3–7. Transfer-shape postings on survivor.
+  const txPostings = await postingsFor(survivorId);
+  assert.equal(txPostings.length, 2);
+  assert.ok(txPostings.every((p) => p.systemKind === null));
+  const outP = txPostings.find((p) => p.accountId === fromAccountId)!;
+  const inP = txPostings.find((p) => p.accountId === cardAccountId)!;
+  assert.ok(outP);
+  assert.ok(inP);
+  assert.equal(outP.amountPaise, -500000);
+  assert.equal(inP.amountPaise, 500000);
+  assert.equal(txPostings.reduce((s, p) => s + p.amountPaise, 0), 0);
+  assert.ok(txPostings.every((p) => p.categoryId === null));
+
+  // 8. Zero transfer_links.
   const links = await linksFor(userId);
-  assert.equal(links.length, 1);
-  assert.notEqual(links[0]!.outTransactionId, wrongAccount.id);
+  assert.equal(links.length, 0);
 });
 
 test("SQL eligibility predicate: a row-level userId mismatch is excluded — the create branch runs instead", async (t) => {
@@ -1742,15 +2077,34 @@ test("SQL eligibility predicate: a row-level userId mismatch is excluded — the
   });
 
   const draftId = await repaymentDraft(userA, ingestionId);
-  await acceptRepayment(db, userA, draftId, { cardAccountId, fromAccountId, occurredAt: BASE_DATE });
+  const dto = await acceptRepayment(db, userA, draftId, { cardAccountId, fromAccountId, occurredAt: BASE_DATE });
 
+  // 1. One non-deleted transaction for userA (the survivor; in-leg absorbed and deleted).
   const rows = await ledgerRowsFor(userA);
-  assert.equal(rows.length, 2); // userA's own new out+in pair — the mismatched row isn't userA's
+  assert.equal(rows.length, 1); // only the out-leg survivor
 
+  // 2. A DISTINCT new survivor was created for the actual repayment (not the mismatched row).
+  const survivorId = dto.transactionId!;
+  assert.notEqual(survivorId, mismatched!.id);
+
+  // 3–7. Transfer-shape postings on survivor.
+  const txPostings = await postingsFor(survivorId);
+  assert.equal(txPostings.length, 2);
+  assert.ok(txPostings.every((p) => p.systemKind === null));
+  const outP = txPostings.find((p) => p.accountId === fromAccountId)!;
+  const inP = txPostings.find((p) => p.accountId === cardAccountId)!;
+  assert.ok(outP);
+  assert.ok(inP);
+  assert.equal(outP.amountPaise, -500000);
+  assert.equal(inP.amountPaise, 500000);
+  assert.equal(txPostings.reduce((s, p) => s + p.amountPaise, 0), 0);
+  assert.ok(txPostings.every((p) => p.categoryId === null));
+
+  // Mismatched row is untouched (excluded by userId filter).
   const [mismatchedAfter] = await db.select().from(transactions).where(eq(transactions.id, mismatched!.id));
-  assert.equal(mismatchedAfter!.amountPaise, -500000); // untouched
+  assert.equal(mismatchedAfter!.amountPaise, -500000);
 
+  // 8. Zero transfer_links for userA.
   const links = await linksFor(userA);
-  assert.equal(links.length, 1);
-  assert.notEqual(links[0]!.outTransactionId, mismatched!.id);
+  assert.equal(links.length, 0);
 });

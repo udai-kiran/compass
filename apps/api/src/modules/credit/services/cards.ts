@@ -353,6 +353,7 @@ export async function getCardActivity(
     where p.account_id = ${accountId}
       and t.user_id = ${userId} and t.deleted_at is null
       and t.date >= ${fromInclusive} and t.date <= ${ref}
+      and not t.is_opening
     order by t.date desc, t.id desc
   `);
   const rows = rawRows.rows as Array<{

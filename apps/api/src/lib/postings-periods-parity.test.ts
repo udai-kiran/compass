@@ -24,6 +24,10 @@ import { spentByCategory, spendByNecessity, incomeExpense, LIABILITY_TYPES_SQL }
  * writers (so postings are dual-written) and asserts the converted readers
  * equal a formula computed DIRECTLY from legacy `transactions` /
  * `transaction_splits` tables — never by calling another periods helper.
+ * Transfer classification in the legacy helpers uses an independent
+ * postings-shape predicate (2 real postings + 0 system postings) rather than
+ * a `transfer_links` lookup, because `transfer_links` is never populated under
+ * PR-G1 and a legacy-column marker would make the comparison tautological.
  * `findInconsistentPostings` is also asserted empty so a coincidentally-equal
  * aggregate can't hide drift.
  */
@@ -99,8 +103,13 @@ async function legacySpentByCategory(
     where t.user_id = ${userId} and t.deleted_at is null
       and t.date >= ${from} and t.date <= ${to}
       and t.amount_paise < 0 and not t.is_opening
-      and not exists (select 1 from transfer_links tl
-        where tl.out_transaction_id = t.id or tl.in_transaction_id = t.id)
+      and not (
+        (select count(*) from postings pr join accounts ar on ar.id = pr.account_id
+         where pr.transaction_id = t.id and ar.system_kind is null) = 2
+        and
+        (select count(*) from postings ps join accounts asys on asys.id = ps.account_id
+         where ps.transaction_id = t.id and asys.system_kind is not null) = 0
+      )
       and not exists (select 1 from transaction_splits s where s.transaction_id = t.id)
     group by t.category_id
   `);
@@ -140,8 +149,13 @@ async function legacyIncomeExpense(
     where t.user_id = ${userId} and t.deleted_at is null
       and t.date >= ${from} and t.date <= ${to}
       and not t.is_opening
-      and not exists (select 1 from transfer_links tl
-        where tl.out_transaction_id = t.id or tl.in_transaction_id = t.id)
+      and not (
+        (select count(*) from postings pr join accounts ar on ar.id = pr.account_id
+         where pr.transaction_id = t.id and ar.system_kind is null) = 2
+        and
+        (select count(*) from postings ps join accounts asys on asys.id = ps.account_id
+         where ps.transaction_id = t.id and asys.system_kind is not null) = 0
+      )
   `);
   const row = res.rows[0] as { income: string; expense: string };
   return { incomePaise: Number(row.income), expensePaise: Number(row.expense) };

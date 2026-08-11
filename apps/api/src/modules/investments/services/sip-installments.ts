@@ -437,7 +437,6 @@ async function linkedInstallmentRows(
   db: Db,
   userId: string,
   sipId: string,
-  targetAccountId: string,
 ): Promise<Array<{ id: string; date: string; amountPaise: number; merchant: string; notes: string }>> {
   const result = await db.execute(sql`
     select t.id, t.date, t.merchant, t.notes, rp.amount_paise
@@ -446,7 +445,8 @@ async function linkedInstallmentRows(
       select p.amount_paise
       from postings p
       join accounts a on a.id = p.account_id
-      where p.transaction_id = t.id and a.system_kind is null and p.account_id = ${targetAccountId}
+      where p.transaction_id = t.id and a.system_kind is null
+      order by (p.amount_paise > 0) desc, p.id
       limit 1
     ) rp on true
     where t.user_id = ${userId} and t.sip_id = ${sipId} and t.deleted_at is null
@@ -541,7 +541,7 @@ export async function listSipInstallmentCandidates(
   // its doc comment). `linked` comes from which query produced the row, so the
   // raw `sip_id` never has to be selected, let alone returned.
   const [linked, unlinked] = await Promise.all([
-    linkedInstallmentRows(db, userId, sipId, sip.targetAccountId!),
+    linkedInstallmentRows(db, userId, sipId),
     unlinkedInstallmentRows(db, userId, sip.targetAccountId!, candidateDateBounds(sip, asOf)),
   ]);
   return [
