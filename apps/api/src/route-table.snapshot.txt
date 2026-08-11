@@ -92,6 +92,7 @@
 │   ├── /credentials (GET, HEAD)
 │   ├── /sync (POST)
 │   └── /:id (DELETE)
+│       └── /reset-watermark (POST)
 ├── /api/recurring (GET, HEAD, POST)
 │   └── /:id (PATCH, DELETE)
 ├── /api/resources (GET, HEAD, POST)

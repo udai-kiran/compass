@@ -14,6 +14,7 @@ import {
   listMailboxes,
   mailboxSecret,
   removeMailbox,
+  resetMailboxWatermark,
 } from "../services/mailboxes.ts";
 import { enqueueIngestorRun } from "../../../jobs/index.ts";
 
@@ -62,6 +63,15 @@ export async function mailboxRoutes(app: FastifyInstance) {
       const windowMinutes = req.body.windowMinutes;
       await enqueueIngestorRun(app, req.session!.userId, windowMinutes);
       return { ok: true as const, runsInMinutes: windowMinutes };
+    },
+  );
+
+  r.post(
+    "/api/mailboxes/:id/reset-watermark",
+    { schema: { params: z.object({ id: z.uuid() }), response: { 200: z.object({ ok: z.literal(true) }) } } },
+    async (req) => {
+      await resetMailboxWatermark(app.db, req.session!.userId, req.params.id);
+      return { ok: true as const };
     },
   );
 }
