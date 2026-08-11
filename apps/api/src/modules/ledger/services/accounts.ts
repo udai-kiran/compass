@@ -227,6 +227,7 @@ export async function createAccount(
   db: Db,
   userId: string,
   input: CreateAccount,
+  openingDate?: string,
 ): Promise<Account> {
   // For bank/cash we move the opening balance into a real "Opening balance"
   // transaction and hold the column at 0, so the ledger reconciles and no
@@ -244,7 +245,7 @@ export async function createAccount(
         accountId: account.id,
         type: input.type,
         openingBalancePaise: input.openingBalancePaise,
-        date: new Date().toISOString().slice(0, 10),
+        date: openingDate ?? new Date().toISOString().slice(0, 10),
       });
       if (row) {
         const [openingTxn] = await tx.insert(transactions).values(row).returning({ id: transactions.id });

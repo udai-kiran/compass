@@ -93,6 +93,7 @@ async function createAcct(
   name: string,
   type: AccountType,
   openingBalancePaise = 0,
+  openingDate?: string,
 ): Promise<{ id: string; type: AccountType }> {
   const account = await createAccount(db, userId, {
     name,
@@ -102,7 +103,7 @@ async function createAcct(
     holderName: null,
     currency: "INR",
     openingBalancePaise,
-  });
+  }, openingDate);
   return { id: account.id, type };
 }
 
@@ -258,7 +259,7 @@ test("postings-planning-parity: 2 — getTrends byCategory matches legacy SQL pe
     date: `${endKey}-03`,
   });
   // opening balance (excluded naturally — no Expenses posting)
-  await createAcct(userId, "BankWithOpening", "bank", 5000);
+  await createAcct(userId, "BankWithOpening", "bank", 5000, "2020-01-01");
 
   // Legacy expected: nonSplitCat + splitCat query
   const legNonSplit = await db.execute(sql`
@@ -286,8 +287,13 @@ test("postings-planning-parity: 2 — getTrends byCategory matches legacy SQL pe
     where t.user_id = ${userId} and t.deleted_at is null
       and t.date >= ${from} and t.date <= ${to}
       and s.amount_paise < 0 and not t.is_opening
-      and not exists (select 1 from transfer_links tl
-        where tl.out_transaction_id = t.id or tl.in_transaction_id = t.id)
+      and not (
+        (select count(*) from postings pr join accounts ar on ar.id = pr.account_id
+         where pr.transaction_id = t.id and ar.system_kind is null) = 2
+        and
+        (select count(*) from postings ps join accounts asys on asys.id = ps.account_id
+         where ps.transaction_id = t.id and asys.system_kind is not null) = 0
+      )
     group by 1, 2
   `);
   type CatRow = { month: string; cid: string | null; spent: string };
@@ -334,7 +340,7 @@ test("postings-planning-parity: 3 — cashAndLiabilities equivalent matches lega
   t.after(() => cleanupUser(userId));
   await seedSystemAccounts(db, userId);
 
-  const bank = await createAcct(userId, "Bank", "bank", 50000); // opening balance
+  const bank = await createAcct(userId, "Bank", "bank", 50000, "2020-01-01"); // opening balance
   const card = await createAcct(userId, "Card", "credit_card");
   // investment: neither cash nor liabilities
   const inv = await createAcct(userId, "Investments", "investment");
@@ -429,7 +435,7 @@ test("postings-planning-parity: 4 — topMerchants and largest match legacy; bla
     date: from,
   });
   // Opening balance (excluded): bank2 already has 0 opening; create new bank with opening
-  await createAcct(userId, "OpeningBank", "bank", 30000);
+  await createAcct(userId, "OpeningBank", "bank", 30000, "2020-01-01");
 
   // Legacy expected for topMerchants: merchant <> '' filtered, transfers/openings excluded
   const legMerchantRes = await db.execute(sql`
@@ -439,8 +445,13 @@ test("postings-planning-parity: 4 — topMerchants and largest match legacy; bla
       and t.date >= ${from} and t.date <= ${to}
       and t.amount_paise < 0 and t.merchant <> ''
       and not t.is_opening
-      and not exists (select 1 from transfer_links tl
-        where tl.out_transaction_id = t.id or tl.in_transaction_id = t.id)
+      and not (
+        (select count(*) from postings pr join accounts ar on ar.id = pr.account_id
+         where pr.transaction_id = t.id and ar.system_kind is null) = 2
+        and
+        (select count(*) from postings ps join accounts asys on asys.id = ps.account_id
+         where ps.transaction_id = t.id and asys.system_kind is not null) = 0
+      )
     group by t.merchant order by spent desc limit 10
   `);
   type MerchantRow = { merchant: string; spent: string; n: number };
@@ -526,8 +537,13 @@ test("postings-planning-parity: 5 — buildReport merchants match legacy SQL", a
       and t.date >= ${from} and t.date <= ${to}
       and t.amount_paise < 0 and t.merchant <> ''
       and not t.is_opening
-      and not exists (select 1 from transfer_links tl
-        where tl.out_transaction_id = t.id or tl.in_transaction_id = t.id)
+      and not (
+        (select count(*) from postings pr join accounts ar on ar.id = pr.account_id
+         where pr.transaction_id = t.id and ar.system_kind is null) = 2
+        and
+        (select count(*) from postings ps join accounts asys on asys.id = ps.account_id
+         where ps.transaction_id = t.id and asys.system_kind is not null) = 0
+      )
     group by t.merchant order by spent desc limit 15
   `);
   type MRow = { merchant: string; spent: string; n: number };
@@ -675,7 +691,7 @@ test("postings-planning-parity: 7 — suggestSubscriptions detects 3-charge mont
     date: charge1,
   });
   // Opening balance (excluded — Opening posting)
-  await createAcct(userId, "OpeningBank", "bank", 50000);
+  await createAcct(userId, "OpeningBank", "bank", 50000, "2020-01-01");
 
   const suggestions = await suggestSubscriptions(db, userId);
 
@@ -729,7 +745,7 @@ test("postings-planning-parity: 8 — evaluateLargeTransactions fires exactly 1 
   });
   // Opening balance above threshold: excluded (Opening posting)
   // Note: openingBalancePaise > 0 seeds is_opening transaction AND Opening posting
-  await createAcct(userId, "OpeningLarge", "bank", 80000);
+  await createAcct(userId, "OpeningLarge", "bank", 80000, "2020-01-01");
   // Split parent above threshold: exactly ONE alert (D20 — not N alerts for N splits)
   const splitTxn = await createTransaction(db, userId, { accountId: bank.id, date: today, amountPaise: -80000 });
   await setSplits(db, userId, splitTxn.id, [
@@ -871,7 +887,7 @@ test("postings-planning-parity: 11 — findInconsistentPostings returns [] for f
   const endKey = currentPeriodKey("monthly", now);
   const recent = isoPlusDays(now, -10);
 
-  const bank = await createAcct(userId, "Bank", "bank", 10000);
+  const bank = await createAcct(userId, "Bank", "bank", 10000, "2020-01-01");
   const bank2 = await createAcct(userId, "Bank2", "bank");
   const card = await createAcct(userId, "Card", "credit_card");
   const [catExp] = await db.insert(categories).values({ userId, name: "ExpCat", kind: "expense" }).returning({ id: categories.id });

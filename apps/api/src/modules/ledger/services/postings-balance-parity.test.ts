@@ -72,6 +72,7 @@ async function createAcct(
   name: string,
   type: AccountType,
   openingBalancePaise: number,
+  openingDate?: string,
 ): Promise<{ id: string; type: AccountType }> {
   const account = await createAccount(db, userId, {
     name,
@@ -81,7 +82,7 @@ async function createAcct(
     holderName: null,
     currency: "INR",
     openingBalancePaise,
-  });
+  }, openingDate);
   return { id: account.id, type };
 }
 
@@ -182,12 +183,13 @@ test("postings-balance-parity: full fixture — every converted reader matches t
   const farFuture = shiftDate(dbToday, 3650);
 
   // 1. Bank with an is_opening row (createAccount seeds it) + ordinary +/-.
-  const bankOpening = await createAcct(userId, "Bank Opening", "bank", 500000);
+  const bankOpening = await createAcct(userId, "Bank Opening", "bank", 500000, "2020-01-01");
   await createTransaction(db, userId, { accountId: bankOpening.id, date: "2020-03-01", amountPaise: 200000 });
   await createTransaction(db, userId, { accountId: bankOpening.id, date: "2020-03-02", amountPaise: -75000 });
 
-  // 2. Card with a column-based opening balance + charges (no opening txn for card type).
-  const cardOpening = await createAcct(userId, "Card Opening", "credit_card", 250000);
+  // 2. Card with an is_opening row (under PR-G1, carriesOpeningAsTransaction returns true
+  //    for all account types including credit_card) + charges.
+  const cardOpening = await createAcct(userId, "Card Opening", "credit_card", 250000, "2020-01-01");
   await createTransaction(db, userId, { accountId: cardOpening.id, date: "2020-01-05", amountPaise: -30000 });
   await createTransaction(db, userId, { accountId: cardOpening.id, date: "2020-01-06", amountPaise: -20000 });
 

@@ -7,7 +7,7 @@ import { createPool } from "../../../infra/db.ts";
 import { accounts, emailIngestions, postings, transactions, users } from "../../../db/schema.ts";
 import { cardDetails, statementReconciliations } from "../schema.ts";
 import { HttpError, pgError } from "../../../lib/errors.ts";
-import { createAccount, listAccounts } from "../../ledger/services/accounts.ts";
+import { createAccount, listAccounts, updateAccount } from "../../ledger/services/accounts.ts";
 import { postTransaction, resolveSystemAccounts } from "../../ledger/services/post-entry.ts";
 import { buildOpeningPostings } from "../../ledger/services/postings.ts";
 import { createTransaction } from "../../ledger/services/transactions.ts";
@@ -51,7 +51,7 @@ async function createUser(): Promise<string> {
   return u!.id;
 }
 
-async function createCardAccount(userId: string, openingBalancePaise = 0): Promise<string> {
+async function createCardAccount(userId: string, openingBalancePaise = 0, openingDate?: string): Promise<string> {
   // Call the real createAccount so a nonzero openingBalancePaise seeds a real
   // is_opening transaction and its postings, matching what production does.
   // accounts.opening_balance_paise is frozen at 0 after PR-G1 (boot check enforces
@@ -65,7 +65,7 @@ async function createCardAccount(userId: string, openingBalancePaise = 0): Promi
     accountLast4: null,
     holderName: null,
     currency: "INR",
-  });
+  }, openingDate);
   return account.id;
 }
 
@@ -117,14 +117,7 @@ test("listReconciliations/recomputeReconciliation: Diners-shaped constituent row
   const userId = await createUser();
   t.after(() => cleanupUser(userId));
   // Balance carried forward before this card was tracked in the app.
-  const accountId = await createCardAccount(userId, -2000000);
-  // createAccount dates the opening transaction at real wall-clock "today", which has now
-  // drifted past the fixture's statement close (2026-07-20). Pin it to a date safely before
-  // all fixture dates so date-range queries include it correctly.
-  await db.execute(sql`
-    UPDATE transactions SET date = '2020-01-01'
-    WHERE account_id = ${accountId} AND is_opening = true
-  `);
+  const accountId = await createCardAccount(userId, -2000000, "2020-01-01");
   const close = "2026-07-20";
   await createTxn(userId, accountId, "2026-07-02", -3000000); // purchase
   await createTxn(userId, accountId, "2026-07-10", 4559100); // BPPY payment
@@ -244,7 +237,7 @@ test("listReconciliations: an individually-safe opening balance plus an individu
   // (review-5.md: reconciliation-reads.ts's ledgerDuesAtDates previously
   // checked only the raw `sum`).
   const openingBalancePaise = -(Number.MAX_SAFE_INTEGER - 1000);
-  const accountId = await createCardAccount(userId, openingBalancePaise);
+  const accountId = await createCardAccount(userId, openingBalancePaise, "2020-01-01");
   const close = "2027-02-20";
   await createTxn(userId, accountId, "2027-02-01", -2000);
   await createReconciliation(userId, accountId, { period: "2027-02", statementDate: close });
@@ -259,7 +252,7 @@ test("recomputeReconciliation: the same opening-balance overflow is refused (500
   const userId = await createUser();
   t.after(() => cleanupUser(userId));
   const openingBalancePaise = -(Number.MAX_SAFE_INTEGER - 1000);
-  const accountId = await createCardAccount(userId, openingBalancePaise);
+  const accountId = await createCardAccount(userId, openingBalancePaise, "2020-01-01");
   const close = "2027-03-20";
   await createTxn(userId, accountId, "2027-03-01", -2000);
   const ingestionId = await createIngestion(userId);
@@ -431,7 +424,7 @@ test("absorbCarryover: absorbing one reconciliation shifts every other row's dri
 test("absorbCarryover: a nonzero preexisting opening balance", async (t) => {
   const userId = await createUser();
   t.after(() => cleanupUser(userId));
-  const accountId = await createCardAccount(userId, -500000);
+  const accountId = await createCardAccount(userId, -500000, "2020-01-01");
   const close = "2028-07-20";
   await createTxn(userId, accountId, "2028-07-05", -100000);
   const reconciliationId = await createReconciliation(userId, accountId, {
@@ -757,6 +750,91 @@ test("absorbCarryover: a concurrent advisory lock (an opening-balance edit in pr
   `);
   assert.equal((openingPostings.rows as Array<{ amount_paise: string }>).length, 1, "exactly one opening posting after serial A → absorb");
   assert.equal(Number((openingPostings.rows as Array<{ amount_paise: string }>)[0]!.amount_paise), -150000);
+});
+
+test("absorbCarryover advisory lock blocks concurrent updateAccount — integration proof with real callers", async (t) => {
+  const userId = await createUser();
+  t.after(() => cleanupUser(userId));
+  const accountId = await createCardAccount(userId, 0);
+  // One charge so there is a positive drift when totalDuePaise > ledger due.
+  // statementDate must be in the future so the charge is within the window.
+  const close = "2029-06-20";
+  await createTxn(userId, accountId, "2029-06-05", -100000);
+  const reconciliationId = await createReconciliation(userId, accountId, {
+    statementDate: close,
+    totalDuePaise: 350000, // ledgerDue=100000, drift=250000, nextOpeningPaise=-250000
+  });
+
+  // Gate pattern identical to the existing advisory-lock concurrent test.
+  const absorbAcquired = makeGate();
+  const releaseAbsorb = makeGate();
+
+  const { redis } = stubRedis();
+  // Start absorbCarryover. The afterAggregate hook fires once the advisory lock
+  // is held and the SERIALIZABLE transaction is open (after the ledger aggregate
+  // read, before the account-row UPDATE). We pause there to ensure updateAccount
+  // is started while absorbCarryover still owns the lock.
+  const absorbPromise = absorbCarryover(
+    db,
+    redis as never,
+    userId,
+    accountId,
+    reconciliationId,
+    {
+      afterAggregate: async () => {
+        absorbAcquired.release(); // advisory lock is now held by absorbCarryover
+        await releaseAbsorb.opened; // hold until the test signals release
+      },
+    },
+  );
+
+  // Wait until absorbCarryover has acquired the lock.
+  await absorbAcquired.opened;
+
+  // Now attempt updateAccount on the same account — must try to acquire the
+  // same advisory lock (hashtextextended(accountId, 0)) and BLOCK.
+  const updatePromise = updateAccount(db, userId, accountId, { openingBalancePaise: -80000 });
+  let updateSettled = false;
+  void updatePromise.then(
+    () => { updateSettled = true; },
+    () => { updateSettled = true; },
+  );
+
+  // 250 ms: absorbCarryover still holds the lock; updateAccount must still be pending.
+  await new Promise<void>((r) => setTimeout(r, 250));
+  assert.equal(
+    updateSettled,
+    false,
+    "updateAccount must be blocked while absorbCarryover holds the account advisory lock",
+  );
+
+  // Release absorbCarryover. It will commit its opening posting (-250000),
+  // then release the advisory lock, allowing updateAccount to proceed.
+  releaseAbsorb.release();
+
+  // Await both operations — both must complete without error.
+  await Promise.all([absorbPromise, updatePromise]);
+
+  // Serial order is deterministic: absorbCarryover ran first (held the lock),
+  // created the opening posting (-250000); updateAccount ran second and
+  // updated it to -80000. Exactly ONE live opening posting must remain.
+  const openingPostings = await db.execute(sql`
+    select p.amount_paise from postings p
+    join transactions t on t.id = p.transaction_id
+    where p.account_id = ${accountId} and t.is_opening = true and t.deleted_at is null
+  `);
+  const rows = openingPostings.rows as Array<{ amount_paise: string }>;
+  assert.equal(rows.length, 1, "exactly one opening posting must exist after both operations");
+  assert.equal(
+    Number(rows[0]!.amount_paise),
+    -80000,
+    "updateAccount ran after absorbCarryover (serial order enforced by advisory lock), final opening = -80000",
+  );
+  assert.equal(
+    (await db.select().from(accounts).where(eq(accounts.id, accountId)))[0]!.openingBalancePaise,
+    0,
+    "accounts.opening_balance_paise remains frozen at 0 (PR-G1 invariant)",
+  );
 });
 
 // NOTE on this pair of tests — a deviation from TASK.md P6a's literal wording,

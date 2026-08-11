@@ -159,6 +159,7 @@ async function createCardAccount(
   name: string,
   openingBalancePaise = 0,
   institution?: string,
+  openingDate?: string,
 ): Promise<string> {
   // Use the real createAccount so system accounts are seeded and a postings-based
   // opening transaction is written when openingBalancePaise !== 0.  A raw
@@ -172,7 +173,7 @@ async function createCardAccount(
     holderName: null,
     currency: "INR",
     openingBalancePaise,
-  });
+  }, openingDate);
   return account.id;
 }
 
@@ -787,14 +788,7 @@ test("AC15: reuses listCardHolders' handling of a non-zero opening balance", asy
   const close = shiftIso(today, -10);
   const cycleDay = findCycleDay(today, close);
   const dueDay = findDueDay(close, today);
-  const accountId = await createCardAccount(userId, "Opening balance card", -300000);
-  // createAccount dates the opening transaction at real wall-clock "today", which has now
-  // drifted past the fixture's cycle close. Pin it to a date safely before all fixture
-  // dates so date-range queries include it correctly.
-  await db.execute(sql`
-    UPDATE transactions SET date = '2020-01-01'
-    WHERE account_id = ${accountId} AND is_opening = true
-  `);
+  const accountId = await createCardAccount(userId, "Opening balance card", -300000, undefined, "2020-01-01");
   await db.insert(cardDetails).values({ accountId, userId, cycleDay, dueDay });
   await createTxn(userId, accountId, shiftIso(close, -3), -50000);
 

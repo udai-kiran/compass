@@ -25,7 +25,7 @@ import type { Db } from "../db/index.ts";
 export async function withAccountAdvisoryLock<T>(
   db: Db,
   accountId: string,
-  fn: (lockedDb: Db) => Promise<T>,
+  fn: (lockedDb: Omit<Db, '$client'>) => Promise<T>,
 ): Promise<T> {
   const pool = db.$client;
   const client: pg.PoolClient = await pool.connect();
