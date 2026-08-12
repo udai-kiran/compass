@@ -197,6 +197,7 @@ export async function listAccounts(db: Db, userId: string): Promise<AccountWithB
       // The date/deleted/userId predicates live inside the aggregate FILTER (not
       // the outer WHERE) so the left join doesn't collapse zero-activity accounts.
       postingSum: sql<number>`coalesce(sum(${postings.amountPaise}) filter (where ${transactions.deletedAt} is null and ${transactions.date} <= current_date and ${transactions.userId} = ${userId}), 0)::bigint`,
+      openingTxnPaise: sql<number>`coalesce(sum(${postings.amountPaise}) filter (where ${transactions.isOpening} = true and ${transactions.deletedAt} is null and ${transactions.userId} = ${userId}), 0)::bigint`,
       subtype: bankDetails.subtype,
     })
     .from(accounts)
@@ -206,7 +207,7 @@ export async function listAccounts(db: Db, userId: string): Promise<AccountWithB
     .where(and(eq(accounts.userId, userId), isNull(accounts.systemKind)))
     .groupBy(accounts.id, bankDetails.subtype)
     .orderBy(accounts.sortOrder, accounts.createdAt);
-  return rows.map(({ account, postingSum, subtype }) => {
+  return rows.map(({ account, postingSum, openingTxnPaise, subtype }) => {
     const sum = Number(postingSum);
     if (!Number.isSafeInteger(sum)) {
       throw new HttpError(500, "Balance aggregate exceeded a safe integer — refusing to lose paise");
@@ -215,9 +216,14 @@ export async function listAccounts(db: Db, userId: string): Promise<AccountWithB
     if (!Number.isSafeInteger(balancePaise)) {
       throw new HttpError(500, "Balance aggregate exceeded a safe integer — refusing to lose paise");
     }
+    const openingTransactionPaise = Number(openingTxnPaise);
+    if (!Number.isSafeInteger(openingTransactionPaise)) {
+      throw new HttpError(500, "Opening aggregate exceeded a safe integer — refusing to lose paise");
+    }
     return {
       ...toAccount(account),
       balancePaise,
+      openingTransactionPaise,
       subtype: subtype ?? null,
     };
   });
