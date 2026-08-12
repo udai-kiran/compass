@@ -1,7 +1,37 @@
 # Task: Fix EPF opening balance save
 
 ## Status
-COMPLETE
+SUPERSEDED by task 039 — this task was wrongly marked COMPLETE.
+
+It shipped as PR #190 (`a89ef79`, CI green) and PR #191 (`0da6688`), but the #191
+**squash** merge left `main` failing to compile: `TS2393 Duplicate function
+implementation`. P1 and P2 (the shared schema field and the `listAccounts`
+`openingTxnPaise` aggregate) were correct and remain in place. **P3 was applied to
+the wrong component.**
+
+Two mistakes to learn from:
+
+1. **Out-of-scope work.** P3 authorised editing `OpeningBalanceSection` only.
+   `0da6688` additionally *created* a new `EpfOpeningSection` — never in the
+   approved plan, and directly against this file's own Non-Goal
+   "EpfOpeningSection UX redesign". PR #189, which this branch never contained
+   (it forked at `caa5f2d`), had already added a richer EPS-aware component of
+   that exact name. The squash merge replayed our diff onto it, producing two
+   declarations.
+2. **A misread CI signal.** A `pull_request` run checks out the **merge ref**, not
+   the PR head. `gh run list` reports `headSha` as the PR head, which is
+   misleading: run 31581474131 was already compiling the duplicated tree while
+   local `tsc` was clean. That divergence was wrongly dismissed as a stale run
+   instead of being investigated.
+
+Because the later of two same-named top-level `function` declarations wins at
+runtime, this task's fix would have been a **silent no-op** even had it compiled —
+users would have rendered #189's buggy component. The red CI is the only reason it
+did not ship that way.
+
+See `tasks/039-epf-opening-section-dedup/TASK.md`. Test debt raised in review-1 and
+review-2 and never closed is now tracked in
+`tasks/040-opening-transaction-test-debt/TASK.md`.
 
 ## Objective
 Saving the opening balance on an EPF account shows the correct value in the field
