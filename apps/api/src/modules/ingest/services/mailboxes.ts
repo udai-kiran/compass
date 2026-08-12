@@ -1,11 +1,11 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import {
   ConnectBundleSchema,
   type MailboxAccount,
   type MailboxCredentialsStatus,
 } from "@compass/shared";
 import type { Db } from "../../../db/index.ts";
-import { mailboxAccounts, mailboxCredentials } from "../schema.ts";
+import { mailboxAccounts, mailboxCredentials, emailIngestions } from "../schema.ts";
 import { HttpError } from "../../../lib/errors.ts";
 import { encryptSecret } from "../../../lib/secret-box.ts";
 
@@ -149,10 +149,27 @@ export async function getCredentialsStatus(
  * "now" in either case.
  */
 export async function resetMailboxWatermark(db: Db, userId: string, id: string): Promise<void> {
-  const updated = await db
-    .update(mailboxAccounts)
-    .set({ lastUid: 0, updatedAt: new Date() })
-    .where(and(eq(mailboxAccounts.id, id), eq(mailboxAccounts.userId, userId)))
-    .returning({ id: mailboxAccounts.id });
-  if (updated.length === 0) throw new HttpError(404, "Mailbox not found");
+  await db.transaction(async (tx) => {
+    // 1. Reset the IMAP resume watermark and verify ownership.
+    const updated = await tx
+      .update(mailboxAccounts)
+      .set({ lastUid: 0, updatedAt: new Date() })
+      .where(and(eq(mailboxAccounts.id, id), eq(mailboxAccounts.userId, userId)))
+      .returning({ id: mailboxAccounts.id });
+    if (updated.length === 0) throw new HttpError(404, "Mailbox not found");
+
+    // 2. Reset all terminal-status ingestions so the ingestor re-enqueues them.
+    // Do NOT touch 'processing' rows — those are in-flight and resetting them
+    // risks double-extraction if the extractor job is still running.
+    await tx
+      .update(emailIngestions)
+      .set({ status: "pending", error: null, updatedAt: new Date() })
+      .where(
+        and(
+          eq(emailIngestions.mailboxId, id),
+          eq(emailIngestions.userId, userId),
+          inArray(emailIngestions.status, ["extracted", "ignored", "deferred", "failed"]),
+        ),
+      );
+  });
 }

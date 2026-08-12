@@ -56,6 +56,14 @@ async function accessTokenFor(
 }
 
 async function enqueue(ingestionId: string): Promise<void> {
+  // If a failed job with this ID is retained in the queue (removeOnFail: 500),
+  // queue.add() with the same jobId would be a silent no-op due to BullMQ
+  // deduplication. Remove the stale failed job first so a fresh one can be added.
+  const existing = await queue.getJob(ingestionId);
+  if (existing !== undefined) {
+    const state = await existing.getState();
+    if (state === "failed") await existing.remove();
+  }
   await queue.add(
     "extract",
     { ingestionId },
