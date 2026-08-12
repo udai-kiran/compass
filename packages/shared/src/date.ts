@@ -69,6 +69,22 @@ export function formatDisplayDate(isoDate: string): string {
 }
 
 /**
+ * Human display for a report/budget period key.
+ * - `YYYY-MM` → "Aug 2026"
+ * - `YYYY`    → "2026"
+ * Returns the input unchanged on anything else.
+ */
+export function formatPeriodKey(key: string): string {
+  if (/^\d{4}-\d{2}$/.test(key)) {
+    const month = parseInt(key.slice(5, 7), 10);
+    if (month >= 1 && month <= 12) {
+      return `${MONTH_NAMES[month - 1]} ${key.slice(0, 4)}`;
+    }
+  }
+  return key;
+}
+
+/**
  * Convert ISO `YYYY-MM-DD` to Indian date format `DD-MM-YYYY`.
  * E.g. "2026-07-24" -> "24-07-2026".
  * Returns input unchanged on malformed/invalid dates (passthrough).
