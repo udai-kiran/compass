@@ -301,15 +301,15 @@ function IdentitySection({ account }: { account: AccountWithBalance }) {
 
 function OpeningBalanceSection({ account }: { account: AccountWithBalance }) {
   const { update } = useAccountMutations();
-  const [text, setText] = useState(() => openingBalanceToInput(account.openingBalancePaise, account.type));
+  const [text, setText] = useState(() => openingBalanceToInput(account.openingTransactionPaise, account.type));
   // Follow the server after a save: updateAccount normalizes what it stores, so
   // the field must show the stored truth rather than keep the typed text.
   useEffect(() => {
-    setText(openingBalanceToInput(account.openingBalancePaise, account.type));
-  }, [account.openingBalancePaise, account.type]);
+    setText(openingBalanceToInput(account.openingTransactionPaise, account.type));
+  }, [account.openingTransactionPaise, account.type]);
   const parsed = openingBalanceFromInput(text, account.type);
   const error = parsed === null ? "must be an amount in rupees" : null;
-  const dirty = parsed !== null && parsed !== account.openingBalancePaise;
+  const dirty = parsed !== null && parsed !== account.openingTransactionPaise;
 
   function submit(e: FormEvent) {
     e.preventDefault();
@@ -344,7 +344,7 @@ function OpeningBalanceSection({ account }: { account: AccountWithBalance }) {
     <form onSubmit={submit}>
       <Section
         title="Opening balance"
-        hint="What this account held before your first recorded transaction. Set it when the ledger starts mid-life, so balances aren't short by the amount carried in."
+        hint="What this account held before your first recorded transaction. Set it once — it becomes a dated ledger entry so your running balance is right."
       >
         <Field label={isLiabilityAccount(account.type) ? "Owed at start" : "Opening balance"} error={error}>
           <div className="flex items-center gap-2">

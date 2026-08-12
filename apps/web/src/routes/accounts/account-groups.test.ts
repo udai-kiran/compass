@@ -13,6 +13,7 @@ const account = (overrides: Partial<AccountWithBalance> = {}): AccountWithBalanc
   upiIds: [],
   currency: "INR",
   openingBalancePaise: 0,
+  openingTransactionPaise: 0,
   goalId: null,
   sortOrder: 0,
   archivedAt: null,

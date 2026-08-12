@@ -199,6 +199,7 @@ export type Account = z.infer<typeof AccountSchema>;
 
 export const AccountWithBalanceSchema = AccountSchema.extend({
   balancePaise: z.number().int(),
+  openingTransactionPaise: z.number().int(),
   /** Bank subtype (savings/current/…) when the account carries bank details; else null. */
   subtype: BankAccountSubtypeSchema.nullable().default(null),
 });
