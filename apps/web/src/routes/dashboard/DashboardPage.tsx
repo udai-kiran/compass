@@ -143,7 +143,7 @@ export function DashboardPage() {
         <ul className="mt-2 divide-y divide-slate-50">
           {data.recent.map((t) => (
             <li key={t.id} className="flex items-center gap-3 px-4 py-2 text-sm">
-              <span className="w-20 text-slate-400">{formatDisplayDate(t.date)}</span>
+              <span className="w-20 shrink-0 whitespace-nowrap text-slate-400">{formatDisplayDate(t.date)}</span>
               <span className="min-w-0 flex-1 truncate font-medium text-slate-700">
                 {t.merchant || "(no merchant)"}
               </span>

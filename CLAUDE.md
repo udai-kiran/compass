@@ -80,3 +80,15 @@ Separate containers behind the compose **`email` profile** (a plain `docker comp
 - Commit messages end with a `Co-Authored-By: Claude ...` trailer; PR bodies end with the Claude Code trailer (per session/global instructions).
 - `cat` is aliased to `batcat` in this shell and `cp` is aliased — use Read/Write tools, `/bin/cp`, or `\cat`.
 - Deploy: git tag `vX.Y.Z` → CI builds/publishes images (`.github/workflows/publish.yml`) → bump `COMPASS_VERSION` on the host → `make update`. CI checks live in `.github/workflows/ci.yml` (audit, typecheck/lint/test, publish for api/web/ingestor/extractor).
+
+## Deployed infrastructure
+
+See `INFRA.md` for the full reference. Key facts:
+
+- **Host:** 192.168.2.183, infra directory: `~/infra`
+- **Public URL:** `https://compass.udaikiran.dev` (Cloudflare Tunnel → `pennypilot-web:80`)
+- **Update:** bump `COMPASS_VERSION` in `~/infra/.env` → `make update` (pulls new images from GHCR, recreates changed containers; the `pennypilot-migrate` one-shot runs migrations automatically)
+- **Rollback:** set `COMPASS_VERSION` back to the previous tag → `make update`
+- **Backup:** `make backup` (writes a timestamped `pg_dump` custom-format file into `~/infra/backups/`)
+- **Logs:** `make logs S=<service>` — e.g. `make logs S=pennypilot-api`
+- **State:** all data lives on named Docker volumes (`infra_pgdata`, `infra_valkey_data`, `infra_minio_data`, `infra_pennypilot_data`) on this host — there is no external DB server
