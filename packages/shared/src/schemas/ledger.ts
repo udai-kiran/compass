@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { SafePaiseSchema } from "../money.ts";
 
 // ---------- Accounts ----------
 
@@ -612,13 +613,32 @@ export type TransferResult = z.infer<typeof TransferResultSchema>;
 // income transaction directly on the chosen retirement account (no bank leg
 // at all): employer, date, amount, destination account.
 
-export const CreateEpfContributionSchema = z.object({
-  toAccountId: z.uuid(),
-  date: z.iso.date(),
-  employer: z.string().default(""),
-  amountPaise: z.number().int().positive(),
-  notes: z.string().default(""),
-});
+export const CreateEpfContributionSchema = z
+  .object({
+    toAccountId: z.uuid(),
+    date: z.iso.date(),
+    employer: z.string().default(""),
+    employeeSharePaise: SafePaiseSchema.refine((n) => n >= 0, "must be ≥ 0"),
+    employerSharePaise: SafePaiseSchema.refine((n) => n >= 0, "must be ≥ 0"),
+    pensionSharePaise: SafePaiseSchema.refine((n) => n >= 0, "must be ≥ 0"),
+    notes: z.string().default(""),
+  })
+  .superRefine((v, ctx) => {
+    const total = v.employeeSharePaise + v.employerSharePaise + v.pensionSharePaise;
+    if (!Number.isSafeInteger(total)) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Total exceeds safe integer range",
+        path: ["employeeSharePaise"],
+      });
+    } else if (total <= 0) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Total must be greater than zero",
+        path: ["employeeSharePaise"],
+      });
+    }
+  });
 export type CreateEpfContribution = z.infer<typeof CreateEpfContributionSchema>;
 export type CreateEpfContributionInput = z.input<typeof CreateEpfContributionSchema>;
 

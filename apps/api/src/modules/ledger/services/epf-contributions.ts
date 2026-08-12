@@ -1,6 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import type { AccountType, CreateEpfContribution, EpfContributionResult } from "@compass/shared";
-import { isRetirementAccount } from "@compass/shared";
+import { formatINR, isRetirementAccount } from "@compass/shared";
 import type { Db } from "../../../db/index.ts";
 import { accounts } from "../schema.ts";
 import { HttpError } from "../../../lib/errors.ts";
@@ -43,6 +43,12 @@ export async function recordEpfContribution(
     throw new HttpError(400, "Account is archived");
   }
 
+  const totalPaise =
+    input.employeeSharePaise + input.employerSharePaise + input.pensionSharePaise;
+
+  const breakdown = `EE: ${formatINR(input.employeeSharePaise)} | ER: ${formatINR(input.employerSharePaise)} | EPS: ${formatINR(input.pensionSharePaise)}`;
+  const notes = input.notes.trim() ? `${breakdown}\n${input.notes.trim()}` : breakdown;
+
   // Wrapped in a transaction: findOrCreateCategory can both look up and
   // insert a category row, and createTransaction performs its own multiple
   // reads-then-insert. Without a surrounding transaction, a failure after
@@ -54,10 +60,10 @@ export async function recordEpfContribution(
     return createTransaction(tx, userId, {
       accountId: input.toAccountId,
       date: input.date,
-      amountPaise: input.amountPaise,
+      amountPaise: totalPaise,
       merchant: input.employer,
       categoryId: category.id,
-      notes: input.notes,
+      notes,
       tags: [PAYSLIP_TAG],
     });
   });
