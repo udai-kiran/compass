@@ -299,69 +299,6 @@ function IdentitySection({ account }: { account: AccountWithBalance }) {
   );
 }
 
-/**
- * EPF-specific opening balance section. EPF passbooks report a single combined
- * figure (Member PF account = EE + ER share, PLUS Pension account = EPS corpus).
- * The "Total PF balance" is that combined figure — what you enter here as your
- * starting point before you begin recording monthly contributions.
- */
-function EpfOpeningSection({ account }: { account: AccountWithBalance }) {
-  const { update } = useAccountMutations();
-  // openingTransactionPaise: the amount of the is_opening transaction for this
-  // account. Always 0 when no opening balance has been set yet.
-  const [text, setText] = useState(() =>
-    openingBalanceToInput(account.openingTransactionPaise, account.type),
-  );
-  useEffect(() => {
-    setText(openingBalanceToInput(account.openingTransactionPaise, account.type));
-  }, [account.openingTransactionPaise, account.type]);
-
-  const parsed = openingBalanceFromInput(text, account.type);
-  const error = parsed === null ? "must be an amount in rupees" : null;
-  const dirty = parsed !== null && parsed !== account.openingTransactionPaise;
-
-  function submit(e: FormEvent) {
-    e.preventDefault();
-    if (error || parsed === null) return;
-    update.mutate(
-      { id: account.id, openingBalancePaise: parsed },
-      { onSuccess: () => toast("Opening balance saved", "success") },
-    );
-  }
-
-  return (
-    <form onSubmit={submit}>
-      <Section
-        title="Opening balance"
-        hint="The combined balance from your EPFO passbook — Member PF account (EE + ER share) plus Pension account (EPS corpus). Set this once as your starting point; monthly contributions are recorded separately."
-      >
-        <Field label="Total PF balance" error={error}>
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-slate-400">₹</span>
-            <input
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              inputMode="decimal"
-              aria-invalid={error !== null}
-              className={`${inputClass} tabular-nums ${error ? "border-red-400" : ""}`}
-            />
-          </div>
-        </Field>
-        <div className="space-y-2 rounded-md bg-slate-50 p-3">
-          <DerivedRow
-            label="Current balance"
-            value={formatINR(account.balancePaise)}
-            hint="opening balance plus every contribution"
-          />
-        </div>
-        <div className="pt-1">
-          <SaveButton dirty={dirty} disabled={error !== null} pending={update.isPending} />
-        </div>
-      </Section>
-    </form>
-  );
-}
-
 function OpeningBalanceSection({ account }: { account: AccountWithBalance }) {
   const { update } = useAccountMutations();
   const [text, setText] = useState(() => openingBalanceToInput(account.openingTransactionPaise, account.type));
@@ -442,15 +379,15 @@ function EpfOpeningSection({ account }: { account: AccountWithBalance }) {
   const saveRetirement = useRetirementDetailsMutation(account.id);
 
   const [totalText, setTotalText] = useState(() =>
-    openingBalanceToInput(account.openingBalancePaise, account.type),
+    openingBalanceToInput(account.openingTransactionPaise, account.type),
   );
   const [epsText, setEpsText] = useState("");
   const [sequencePending, setSequencePending] = useState(false);
 
   // Seed totalText when account data changes (mirrors OpeningBalanceSection)
   useEffect(() => {
-    setTotalText(openingBalanceToInput(account.openingBalancePaise, account.type));
-  }, [account.openingBalancePaise, account.type]);
+    setTotalText(openingBalanceToInput(account.openingTransactionPaise, account.type));
+  }, [account.openingTransactionPaise, account.type]);
 
   // Seed epsText once retirement details resolve (mirrors RetirementSection)
   useEffect(() => {
@@ -499,7 +436,7 @@ function EpfOpeningSection({ account }: { account: AccountWithBalance }) {
   const dirty =
     retResolved &&
     !hasError &&
-    ((totalPaise !== null && totalPaise !== account.openingBalancePaise) ||
+    ((totalPaise !== null && totalPaise !== account.openingTransactionPaise) ||
       (epsPaise !== null && epsPaise !== (retData?.epsBalancePaise ?? 0)));
 
   // --- Submit ---

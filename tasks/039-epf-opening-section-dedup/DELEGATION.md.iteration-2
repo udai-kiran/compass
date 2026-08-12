@@ -1,0 +1,108 @@
+# Sonnet Worker Delegation — iteration 2 (git delivery)
+
+Appended as a new iteration. Iteration 1 (implementation) is unchanged and
+remains the record of the code change.
+
+## Task
+039 — deliver the verified fix: commit → push → PR → CI green → merge → release.
+
+## Preconditions (all met before this iteration was authorised)
+- Codex plan review passed: `review-1.md`
+- Codex implementation review passed: `review-2.md` (P1-P4, AC1-AC3, AC5-AC6 PASS)
+- Independent verification by a non-implementing worker: evidence read by me
+- Root `npm run typecheck` exit 0, `npm run lint` exit 0
+- AC4 deliberately discharged via CI, not locally — no local Postgres exists
+
+## Explicit file list to stage
+Stage ONLY these, each by exact path. **Never** `git add -A`, `git add .`, or any
+glob. The working tree contains private artifacts.
+
+Source fix:
+1. `apps/web/src/routes/settings/AccountDetailPage.tsx`
+
+Task 039 records:
+2. `tasks/039-epf-opening-section-dedup/TASK.md`
+3. `tasks/039-epf-opening-section-dedup/DELEGATION.md`
+4. `tasks/039-epf-opening-section-dedup/DELEGATION.md.iteration-2`
+5. `tasks/039-epf-opening-section-dedup/review-1.md`
+6. `tasks/039-epf-opening-section-dedup/review-2.md`
+
+Corrected/related task records:
+7. `tasks/038-epf-opening-balance-save/TASK.md` (status corrected to SUPERSEDED)
+8. `tasks/038-epf-opening-balance-save/ci-failure-1.md`
+9. `tasks/038-epf-opening-balance-save/commit-diff-1.md`
+10. `tasks/038-epf-opening-balance-save/dockerfile-check-1.md`
+11. `tasks/038-epf-opening-balance-save/review-3.md`
+12. `tasks/038-epf-opening-balance-save/typecheck-local-1.md`
+13. `tasks/040-opening-transaction-test-debt/TASK.md`
+14. `tasks/041-epf-eps-double-edit/TASK.md`
+
+## MUST NOT be staged, ever
+- `screen-shots/` — private artifact
+- any `*.pdf` at the repo root, `data/`, `Pasted image.png`
+- anything not in the numbered list above
+
+After staging, run `git status --porcelain` and `git diff --cached --name-only`
+and CONFIRM the staged set is exactly those 14 paths. If anything else appears,
+STOP and report — do not unstage and continue silently.
+
+## Commands
+Run from `/home/udai/common/compass`, on branch `fix/epf-opening-section-dedup`.
+Report the literal output and exit code of every command.
+
+1. `git status --porcelain` (before)
+2. `git add` each of the 14 paths above, explicitly listed
+3. `git diff --cached --name-only` — must be exactly those 14
+4. `git status --porcelain` — confirm `screen-shots/` is still untracked (`??`)
+5. Commit with this message, via a heredoc so the trailer is preserved:
+
+```
+fix(web): remove duplicate EpfOpeningSection and read opening balance from the ledger
+
+PR #191 was squash-merged onto a main that already carried an EpfOpeningSection
+from #189, which this branch (forked at caa5f2d) never contained. The squash
+replayed our diff on top of it, leaving two top-level declarations of the same
+function and failing the build with TS2393 at AccountDetailPage.tsx:308 and :439.
+main has not compiled since, and v2.8.13 published no images.
+
+Delete the redundant single-field EpfOpeningSection added by #191 and keep #189's
+EPS-aware component, which owns the "Of which, EPS" split.
+
+Repoint that surviving component's total field from account.openingBalancePaise
+to account.openingTransactionPaise at all four read sites (state initialiser,
+effect body, effect dependency array, dirty comparison). The column is pinned at
+0 for every account type because opening balances are held as an is_opening
+ledger transaction, so seeding from it blanked the field after every save and
+left Save permanently enabled. The PATCH body still sends openingBalancePaise,
+which is the correct write field.
+
+Because the later of two same-named function declarations wins at runtime, the
+previous fix would have been a silent no-op even if it had compiled.
+
+Co-Authored-By: Claude <noreply@anthropic.com>
+```
+
+6. `git push -u origin fix/epf-opening-section-dedup`
+7. Open the PR with `gh pr create --base main --title "fix(web): remove duplicate EpfOpeningSection and read opening balance from the ledger"` and a body covering: root cause (squash merge collision with #189), the two-part fix, why the previous fix was a no-op, verification performed (root typecheck + lint clean; api tests deferred to CI as no local Postgres exists), and the follow-ups (tasks 040, 041). End the body with the Claude Code trailer.
+8. `gh pr view --json number,url,headRefOid` — report the PR number and URL.
+9. **WAIT for CI**, then report per-job results:
+   `gh pr checks --watch` followed by
+   `gh run list --branch fix/epf-opening-section-dedup --limit 10 --json databaseId,workflowName,conclusion,status,headSha`
+   The PR run compiles the real MERGE REF — this is the check that would have
+   caught the original breakage, so it is the decisive gate.
+10. **STOP HERE and report.** Do NOT merge. Do NOT tag. Do NOT release.
+
+## Hard stops
+- If ANY CI job fails, STOP immediately and report the failing job, step, and the
+  literal error. Do not retry, do not "fix" it, do not merge.
+- If the staged set is not exactly the 14 paths, STOP.
+- Merge and release are a separate authorisation I will give only after reading
+  the green CI evidence myself.
+
+## Required Evidence
+- literal output + exit code for every command
+- the exact staged file list
+- proof `screen-shots/` remains untracked
+- the commit SHA and the full commit message as recorded (`git log -1`)
+- the PR number and URL
+- per-job CI results with run IDs and conclusions
