@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { formatINR, type UtilizationLine } from "@compass/shared";
+import { formatINR, formatPeriodKey, type UtilizationLine } from "@compass/shared";
 import { toast } from "../../lib/toast.tsx";
 import { useCategories } from "../../lib/queries.ts";
 import {
@@ -31,7 +31,7 @@ export function BudgetsPage() {
         <h1 className="text-2xl font-semibold text-slate-800">Budgets</h1>
         <div className="flex items-center gap-2 text-sm">
           <button onClick={() => setKey(shiftMonth(key, -1))} className="rounded border border-slate-300 px-2 py-1">←</button>
-          <span className="w-20 text-center font-medium text-slate-700">{key}</span>
+          <span className="w-20 text-center font-medium text-slate-700">{formatPeriodKey(key)}</span>
           <button onClick={() => setKey(shiftMonth(key, 1))} disabled={key >= currentMonthKey()} className="rounded border border-slate-300 px-2 py-1 disabled:opacity-30">→</button>
         </div>
       </div>
@@ -91,7 +91,7 @@ function Wizard({ periodKey }: { periodKey: string }) {
   return (
     <div className="rounded-lg border border-slate-200 bg-white p-4">
       <div className="flex items-baseline justify-between">
-        <h2 className="text-sm font-semibold text-slate-700">Set up your {periodKey} budget</h2>
+        <h2 className="text-sm font-semibold text-slate-700">Set up your {formatPeriodKey(periodKey)} budget</h2>
         <button
           className="text-xs text-slate-500 underline"
           onClick={() =>

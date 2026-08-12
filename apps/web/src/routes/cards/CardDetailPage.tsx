@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router";
 import {
+  formatDisplayDate,
   formatINR,
   type CardActivityTxn,
   type CardStatement,
@@ -55,9 +56,9 @@ export function CardDetailPage() {
             {formatINR(data.totalDuePaise)}
           </p>
           <p className="mt-1 text-xs text-rose-700/70">
-            {data.dueDate ? `Due by ${data.dueDate}` : "No due date set"}
+            {data.dueDate ? `Due by ${formatDisplayDate(data.dueDate)}` : "No due date set"}
             {data.statementStart && data.statementEnd
-              ? ` · statement ${data.statementStart} → ${data.statementEnd}`
+              ? ` · statement ${formatDisplayDate(data.statementStart)} → ${formatDisplayDate(data.statementEnd)}`
               : ""}
           </p>
         </div>
@@ -81,7 +82,7 @@ export function CardDetailPage() {
         title="This statement"
         hint={
           data.statementEnd
-            ? `Billed${data.dueDate ? ` · due by ${data.dueDate}` : ""}`
+            ? `Billed${data.dueDate ? ` · due by ${formatDisplayDate(data.dueDate)}` : ""}`
             : "No statement cycle configured for this card."
         }
         txns={data.billed}
@@ -426,7 +427,7 @@ function TxnSection({
                   )}
                 </p>
                 <p className="text-xs text-slate-400">
-                  {t.date}
+                  {formatDisplayDate(t.date)}
                   {catName(t.categoryId) ? ` · ${catName(t.categoryId)}` : ""}
                 </p>
               </div>

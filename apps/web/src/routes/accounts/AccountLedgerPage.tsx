@@ -1,5 +1,5 @@
 import { Link, useParams } from "react-router";
-import { formatINR, type BankAccountSubtype, type Transaction } from "@compass/shared";
+import { formatDisplayDate, formatINR, type BankAccountSubtype, type Transaction } from "@compass/shared";
 import { useAccounts, useCategories, useTransactionsInfinite } from "../../lib/queries.ts";
 import { ACCOUNT_TYPE_LABELS, maskAccountNumber } from "../../lib/account-meta.ts";
 
@@ -160,7 +160,7 @@ function TxnRow({ txn, categoryName }: { txn: Transaction; categoryName: string 
           )}
         </p>
         <p className="text-xs text-slate-400">
-          {txn.date}
+          {formatDisplayDate(txn.date)}
           {categoryName ? ` · ${categoryName}` : ""}
         </p>
       </div>

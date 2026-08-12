@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { formatINR, type RecurringFrequency } from "@compass/shared";
+import { formatDisplayDate, formatINR, type RecurringFrequency } from "@compass/shared";
 import { toast } from "../../lib/toast.tsx";
 import { useAccounts, useCategories } from "../../lib/queries.ts";
 import { useRecurring, useRecurringMutations } from "../../lib/budget-queries.ts";
@@ -114,8 +114,8 @@ export function RecurringPanel() {
                 {t.paused && <span className="ml-2 rounded bg-slate-100 px-1.5 py-0.5 text-xs font-normal text-slate-500">paused</span>}
               </p>
               <p className="text-xs text-slate-400">
-                {t.frequency}{t.interval > 1 ? ` ×${t.interval}` : ""} · next {t.nextDueDate} · {accName(t.accountId)} · {catName(t.categoryId)}
-                {t.endDate && ` · ends ${t.endDate}`}
+                {t.frequency}{t.interval > 1 ? ` ×${t.interval}` : ""} · next {formatDisplayDate(t.nextDueDate)} · {accName(t.accountId)} · {catName(t.categoryId)}
+                {t.endDate && ` · ends ${formatDisplayDate(t.endDate)}`}
                 {t.resourceId && ` · ${resources?.find((r) => r.id === t.resourceId)?.name ?? "linked resource"}`}
               </p>
             </div>

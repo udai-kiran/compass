@@ -318,7 +318,7 @@ function HoldingRow({
                 const canDown = i < arr.length - 1 && arr[i + 1]!.date === e.date;
                 return (
                   <li key={e.id} className="flex items-center gap-3 px-3 py-1.5">
-                    <span className="w-24 text-slate-500">{e.date}</span>
+                    <span className="w-24 text-slate-500">{formatDisplayDate(e.date)}</span>
                     <span className="w-16 capitalize text-slate-600">{e.type}</span>
                     <span className="w-24 font-medium text-slate-800">{formatINR(e.amountPaise)}</span>
                     <span className="min-w-0 flex-1 truncate text-slate-500">{e.note}</span>

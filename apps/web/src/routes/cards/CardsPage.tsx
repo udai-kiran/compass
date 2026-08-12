@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import { Link } from "react-router";
 import {
   CardNetworkSchema,
+  formatDisplayDate,
   formatINR,
   type CardHolderSummary,
   type CardNetwork,
@@ -207,12 +208,12 @@ function CardTile({ card, billMobile }: { card: CardSummary; billMobile: string 
       {card.details && (
         <div className="grid grid-cols-2 gap-3 p-3">
           <Stat label="Total due" value={formatINR(card.amountDuePaise)} />
-          <Stat label="Due date" value={card.dueDate ?? "—"} />
+          <Stat label="Due date" value={card.dueDate ? formatDisplayDate(card.dueDate) : "—"} />
           <Stat
             label="Statement"
             value={
               card.statementStart && card.statementEnd
-                ? `${card.statementStart.slice(5)} → ${card.statementEnd.slice(5)}`
+                ? `${formatDisplayDate(card.statementStart)} → ${formatDisplayDate(card.statementEnd)}`
                 : "—"
             }
           />
@@ -638,7 +639,7 @@ function RewardsPanel({ accountId, earnRate }: { accountId: string; earnRate: nu
       <ul className="divide-y divide-slate-100 rounded-md border border-slate-200 bg-white">
         {rewards?.map((r) => (
           <li key={r.id} className="flex items-center gap-3 px-3 py-1.5 text-sm">
-            <span className="w-24 text-slate-500">{r.date}</span>
+            <span className="w-24 text-slate-500">{formatDisplayDate(r.date)}</span>
             <span className={`w-20 font-medium ${r.points < 0 ? "text-red-600" : "text-emerald-600"}`}>
               {r.points > 0 ? "+" : ""}
               {r.points.toLocaleString("en-IN")}

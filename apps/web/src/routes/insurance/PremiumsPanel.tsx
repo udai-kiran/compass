@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { formatINR, isBankAccount, type InsurancePolicy } from "@compass/shared";
+import { formatDisplayDate, formatINR, isBankAccount, type InsurancePolicy } from "@compass/shared";
 import { usePolicyPremiums, useLogPremium } from "../../lib/insurance-queries.ts";
 import { useAccounts } from "../../lib/queries.ts";
 import { toast } from "../../lib/toast.tsx";
@@ -111,7 +111,7 @@ export function PremiumsPanel({ policy }: { policy: InsurancePolicy }) {
       <ul className="divide-y divide-slate-100 rounded-md border border-slate-200 bg-white">
         {premiums?.items.map((p) => (
           <li key={p.id} className="flex items-center gap-3 px-3 py-1.5 text-sm">
-            <span className="w-24 shrink-0 text-slate-500">{p.date}</span>
+            <span className="w-24 shrink-0 text-slate-500">{formatDisplayDate(p.date)}</span>
             <span className="min-w-0 flex-1 truncate text-slate-600">
               {nameOf.get(p.accountId) ?? "—"}
               {p.note && <span className="ml-1 text-xs text-slate-400">· {p.note}</span>}
