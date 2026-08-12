@@ -56,8 +56,11 @@ export async function transactionRoutes(app: FastifyInstance) {
   r.post(
     "/api/epf-contributions",
     { schema: { body: CreateEpfContributionSchema, response: { 201: EpfContributionResultSchema } } },
-    async (req, reply) =>
-      reply.code(201).send(await recordEpfContribution(app.db, req.session!.userId, req.body)),
+    async (req, reply) => {
+      const result = await recordEpfContribution(app.db, req.session!.userId, req.body);
+      app.eventBus.emit("ledger.mutated", { userId: req.session!.userId });
+      return reply.code(201).send(result);
+    },
   );
 
   r.patch(

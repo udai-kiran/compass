@@ -114,7 +114,9 @@ test("recordEpfContribution: creates exactly one income transaction on the retir
     toAccountId: epfAccountId,
     date,
     employer,
-    amountPaise: 12_345_00,
+    employeeSharePaise: 6_000_00,
+    employerSharePaise: 2_345_00,
+    pensionSharePaise: 4_000_00,
     notes: "",
   });
 
@@ -176,7 +178,9 @@ test("recordEpfContribution: bank account balance is byte-for-byte unchanged; re
     toAccountId: epfAccountId,
     date: todayIso(),
     employer: "Acme",
-    amountPaise,
+    employeeSharePaise: 5_000_00,
+    employerSharePaise: 1_376_00,
+    pensionSharePaise: 3_500_00,
     notes: "",
   });
 
@@ -216,7 +220,9 @@ for (const type of ["bank", "cash", "credit_card", "loan", "investment"] as cons
           toAccountId: destAccountId,
           date: todayIso(),
           employer: "Acme",
-          amountPaise: 1000_00,
+          employeeSharePaise: 1000_00,
+          employerSharePaise: 0,
+          pensionSharePaise: 0,
           notes: "",
         }),
       (err: unknown) => {
@@ -246,7 +252,9 @@ test("recordEpfContribution: another user's retirement account is rejected 404, 
         toAccountId: otherUsersEpfAccount,
         date: todayIso(),
         employer: "Acme",
-        amountPaise: 1000_00,
+        employeeSharePaise: 1000_00,
+        employerSharePaise: 0,
+        pensionSharePaise: 0,
         notes: "",
       }),
     (err: unknown) => {
@@ -276,7 +284,9 @@ test("recordEpfContribution: an archived retirement account is rejected 400, zer
         toAccountId: epfAccountId,
         date: todayIso(),
         employer: "Acme",
-        amountPaise: 1000_00,
+        employeeSharePaise: 1000_00,
+        employerSharePaise: 0,
+        pensionSharePaise: 0,
         notes: "",
       }),
     (err: unknown) => {
@@ -301,14 +311,18 @@ test("recordEpfContribution: the 'EPF Contribution' category is created once and
     toAccountId: epfAccountId,
     date: todayIso(),
     employer: "Acme",
-    amountPaise: 1000_00,
+    employeeSharePaise: 1000_00,
+    employerSharePaise: 0,
+    pensionSharePaise: 0,
     notes: "",
   });
   const second = await recordEpfContribution(db, userId, {
     toAccountId: epfAccountId,
     date: todayIso(),
     employer: "Acme",
-    amountPaise: 2000_00,
+    employeeSharePaise: 2000_00,
+    employerSharePaise: 0,
+    pensionSharePaise: 0,
     notes: "",
   });
 
@@ -325,7 +339,7 @@ test("recordEpfContribution: the 'EPF Contribution' category is created once and
   assert.equal(cats.length, 1);
 });
 
-// ---------- 7: schema-level amount validation (review-2 finding) ----------
+// ---------- 7: schema-level field validation ----------
 
 const validBase = {
   toAccountId: "00000000-0000-4000-8000-000000000001",
@@ -334,40 +348,256 @@ const validBase = {
   notes: "",
 };
 
-test("CreateEpfContributionSchema: rejects a zero amount", () => {
-  const r = CreateEpfContributionSchema.safeParse({ ...validBase, amountPaise: 0 });
-  assert.equal(r.success, false);
-});
+const validThreeFields = {
+  employeeSharePaise: 6_000_00,
+  employerSharePaise: 2_345_00,
+  pensionSharePaise: 4_000_00,
+};
 
-test("CreateEpfContributionSchema: rejects a negative amount", () => {
-  const r = CreateEpfContributionSchema.safeParse({ ...validBase, amountPaise: -1000_00 });
-  assert.equal(r.success, false);
-});
-
-test("CreateEpfContributionSchema: rejects a fractional-paise amount", () => {
-  const r = CreateEpfContributionSchema.safeParse({ ...validBase, amountPaise: 1000.5 });
-  assert.equal(r.success, false);
-});
-
-test("CreateEpfContributionSchema: rejects an integer above Number.MAX_SAFE_INTEGER", () => {
+// Per-field rejection tests — employeeSharePaise
+test("CreateEpfContributionSchema: rejects negative employeeSharePaise", () => {
   const r = CreateEpfContributionSchema.safeParse({
     ...validBase,
-    amountPaise: Number.MAX_SAFE_INTEGER + 2,
+    ...validThreeFields,
+    employeeSharePaise: -1,
   });
   assert.equal(r.success, false);
 });
 
-test("CreateEpfContributionSchema: rejects Infinity", () => {
-  const r = CreateEpfContributionSchema.safeParse({ ...validBase, amountPaise: Infinity });
+test("CreateEpfContributionSchema: rejects fractional employeeSharePaise", () => {
+  const r = CreateEpfContributionSchema.safeParse({
+    ...validBase,
+    ...validThreeFields,
+    employeeSharePaise: 1000.5,
+  });
   assert.equal(r.success, false);
 });
 
-test("CreateEpfContributionSchema: rejects NaN", () => {
-  const r = CreateEpfContributionSchema.safeParse({ ...validBase, amountPaise: NaN });
+test("CreateEpfContributionSchema: rejects Infinity for employeeSharePaise", () => {
+  const r = CreateEpfContributionSchema.safeParse({
+    ...validBase,
+    ...validThreeFields,
+    employeeSharePaise: Infinity,
+  });
   assert.equal(r.success, false);
 });
 
-test("CreateEpfContributionSchema: accepts a valid positive integer amount", () => {
-  const r = CreateEpfContributionSchema.safeParse({ ...validBase, amountPaise: 1000_00 });
+test("CreateEpfContributionSchema: rejects NaN for employeeSharePaise", () => {
+  const r = CreateEpfContributionSchema.safeParse({
+    ...validBase,
+    ...validThreeFields,
+    employeeSharePaise: NaN,
+  });
+  assert.equal(r.success, false);
+});
+
+test("CreateEpfContributionSchema: rejects unsafe-integer employeeSharePaise", () => {
+  const r = CreateEpfContributionSchema.safeParse({
+    ...validBase,
+    ...validThreeFields,
+    employeeSharePaise: Number.MAX_SAFE_INTEGER + 2,
+  });
+  assert.equal(r.success, false);
+});
+
+// Per-field rejection tests — employerSharePaise
+test("CreateEpfContributionSchema: rejects negative employerSharePaise", () => {
+  const r = CreateEpfContributionSchema.safeParse({
+    ...validBase,
+    ...validThreeFields,
+    employerSharePaise: -1,
+  });
+  assert.equal(r.success, false);
+});
+
+test("CreateEpfContributionSchema: rejects fractional employerSharePaise", () => {
+  const r = CreateEpfContributionSchema.safeParse({
+    ...validBase,
+    ...validThreeFields,
+    employerSharePaise: 1000.5,
+  });
+  assert.equal(r.success, false);
+});
+
+test("CreateEpfContributionSchema: rejects Infinity for employerSharePaise", () => {
+  const r = CreateEpfContributionSchema.safeParse({
+    ...validBase,
+    ...validThreeFields,
+    employerSharePaise: Infinity,
+  });
+  assert.equal(r.success, false);
+});
+
+test("CreateEpfContributionSchema: rejects NaN for employerSharePaise", () => {
+  const r = CreateEpfContributionSchema.safeParse({
+    ...validBase,
+    ...validThreeFields,
+    employerSharePaise: NaN,
+  });
+  assert.equal(r.success, false);
+});
+
+test("CreateEpfContributionSchema: rejects unsafe-integer employerSharePaise", () => {
+  const r = CreateEpfContributionSchema.safeParse({
+    ...validBase,
+    ...validThreeFields,
+    employerSharePaise: Number.MAX_SAFE_INTEGER + 2,
+  });
+  assert.equal(r.success, false);
+});
+
+// Per-field rejection tests — pensionSharePaise
+test("CreateEpfContributionSchema: rejects negative pensionSharePaise", () => {
+  const r = CreateEpfContributionSchema.safeParse({
+    ...validBase,
+    ...validThreeFields,
+    pensionSharePaise: -1,
+  });
+  assert.equal(r.success, false);
+});
+
+test("CreateEpfContributionSchema: rejects fractional pensionSharePaise", () => {
+  const r = CreateEpfContributionSchema.safeParse({
+    ...validBase,
+    ...validThreeFields,
+    pensionSharePaise: 1000.5,
+  });
+  assert.equal(r.success, false);
+});
+
+test("CreateEpfContributionSchema: rejects Infinity for pensionSharePaise", () => {
+  const r = CreateEpfContributionSchema.safeParse({
+    ...validBase,
+    ...validThreeFields,
+    pensionSharePaise: Infinity,
+  });
+  assert.equal(r.success, false);
+});
+
+test("CreateEpfContributionSchema: rejects NaN for pensionSharePaise", () => {
+  const r = CreateEpfContributionSchema.safeParse({
+    ...validBase,
+    ...validThreeFields,
+    pensionSharePaise: NaN,
+  });
+  assert.equal(r.success, false);
+});
+
+test("CreateEpfContributionSchema: rejects unsafe-integer pensionSharePaise", () => {
+  const r = CreateEpfContributionSchema.safeParse({
+    ...validBase,
+    ...validThreeFields,
+    pensionSharePaise: Number.MAX_SAFE_INTEGER + 2,
+  });
+  assert.equal(r.success, false);
+});
+
+// Acceptance tests — individual zero while others are positive
+test("CreateEpfContributionSchema: accepts zero employeeSharePaise when others are positive", () => {
+  const r = CreateEpfContributionSchema.safeParse({
+    ...validBase,
+    employeeSharePaise: 0,
+    employerSharePaise: 2_345_00,
+    pensionSharePaise: 4_000_00,
+  });
   assert.equal(r.success, true);
+});
+
+test("CreateEpfContributionSchema: accepts zero employerSharePaise when others are positive", () => {
+  const r = CreateEpfContributionSchema.safeParse({
+    ...validBase,
+    employeeSharePaise: 6_000_00,
+    employerSharePaise: 0,
+    pensionSharePaise: 4_000_00,
+  });
+  assert.equal(r.success, true);
+});
+
+test("CreateEpfContributionSchema: accepts zero pensionSharePaise when others are positive", () => {
+  const r = CreateEpfContributionSchema.safeParse({
+    ...validBase,
+    employeeSharePaise: 6_000_00,
+    employerSharePaise: 2_345_00,
+    pensionSharePaise: 0,
+  });
+  assert.equal(r.success, true);
+});
+
+// Refine tests
+test("CreateEpfContributionSchema: rejects all-zero fields", () => {
+  const r = CreateEpfContributionSchema.safeParse({
+    ...validBase,
+    employeeSharePaise: 0,
+    employerSharePaise: 0,
+    pensionSharePaise: 0,
+  });
+  assert.equal(r.success, false);
+});
+
+test("CreateEpfContributionSchema: rejects unsafe aggregate total", () => {
+  // Each field is individually safe but their sum exceeds MAX_SAFE_INTEGER
+  const r = CreateEpfContributionSchema.safeParse({
+    ...validBase,
+    employeeSharePaise: Number.MAX_SAFE_INTEGER - 1,
+    employerSharePaise: Number.MAX_SAFE_INTEGER - 1,
+    pensionSharePaise: Number.MAX_SAFE_INTEGER - 1,
+  });
+  assert.equal(r.success, false);
+});
+
+test("CreateEpfContributionSchema: accepts valid three-field combination", () => {
+  const r = CreateEpfContributionSchema.safeParse({ ...validBase, ...validThreeFields });
+  assert.equal(r.success, true);
+});
+
+// ---------- 8: notes-behavior tests ----------
+
+test("recordEpfContribution: blank notes → transaction notes contain EE/ER/EPS breakdown", async (t) => {
+  const userId = await createUser();
+  t.after(() => cleanupUser(userId));
+  const epfAccountId = await createAccount(userId, "epf");
+
+  const result = await recordEpfContribution(db, userId, {
+    toAccountId: epfAccountId,
+    date: todayIso(),
+    employer: "Acme",
+    employeeSharePaise: 6_000_00,
+    employerSharePaise: 2_345_00,
+    pensionSharePaise: 4_000_00,
+    notes: "",
+  });
+
+  const row = await db.query.transactions.findFirst({
+    where: eq(transactions.id, result.transactionId),
+  });
+  assert.ok(row);
+  assert.ok(row!.notes?.includes("EE:"), "notes should include EE: breakdown");
+  assert.ok(row!.notes?.includes("ER:"), "notes should include ER: breakdown");
+  assert.ok(row!.notes?.includes("EPS:"), "notes should include EPS: breakdown");
+});
+
+test("recordEpfContribution: custom notes → notes starts with breakdown then custom text", async (t) => {
+  const userId = await createUser();
+  t.after(() => cleanupUser(userId));
+  const epfAccountId = await createAccount(userId, "epf");
+
+  const result = await recordEpfContribution(db, userId, {
+    toAccountId: epfAccountId,
+    date: todayIso(),
+    employer: "Acme",
+    employeeSharePaise: 6_000_00,
+    employerSharePaise: 2_345_00,
+    pensionSharePaise: 4_000_00,
+    notes: "my custom note",
+  });
+
+  const row = await db.query.transactions.findFirst({
+    where: eq(transactions.id, result.transactionId),
+  });
+  assert.ok(row);
+  assert.ok(row!.notes?.startsWith("EE:"), "notes should start with EE: breakdown");
+  assert.ok(
+    row!.notes?.includes("\nmy custom note"),
+    "notes should contain custom text after newline",
+  );
 });
