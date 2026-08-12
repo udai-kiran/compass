@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { Link } from "react-router";
 import {
+  formatDisplayDate,
   formatINR,
   type Goal,
   type GoalProgress,
@@ -214,7 +215,7 @@ function GoalCard({
             <p className="text-xs text-slate-400">
               {typeLabel(goal.type)}
               {goal.targetDate
-                ? ` · by ${goal.targetDate} · ${formatGoalDeadlineDistance(goal.targetDate)}`
+                ? ` · by ${formatDisplayDate(goal.targetDate)} · ${formatGoalDeadlineDistance(goal.targetDate)}`
                 : " · no target date"}
             </p>
           </div>
