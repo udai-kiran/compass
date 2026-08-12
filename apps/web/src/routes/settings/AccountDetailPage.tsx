@@ -10,6 +10,7 @@ import {
   isLiabilityAccount,
   isOverdraftAccount,
   isRetirementAccount,
+  rupeesToPaise,
   UpiIdSchema,
   type AccountWithBalance,
   type BankAccountSubtype,
@@ -105,7 +106,11 @@ function AccountDetail({ account }: { account: AccountWithBalance }) {
       </header>
 
       <IdentitySection account={account} />
-      <OpeningBalanceSection account={account} />
+      {account.type === "epf" ? (
+        <EpfOpeningSection account={account} />
+      ) : (
+        <OpeningBalanceSection account={account} />
+      )}
       {supportsUpi && <UpiSection account={account} />}
       {/* Keyed by type so a change within a family (e.g. PPF→EPF) remounts the
           section with fresh state rather than keeping the old scheme's values. */}
@@ -362,6 +367,175 @@ function OpeningBalanceSection({ account }: { account: AccountWithBalance }) {
         </div>
         <div className="pt-1">
           <SaveButton dirty={dirty} disabled={error !== null} pending={update.isPending} />
+        </div>
+      </Section>
+    </form>
+  );
+}
+
+function EpfOpeningSection({ account }: { account: AccountWithBalance }) {
+  const { update } = useAccountMutations();
+  const { data: retData, isPending: retIsPending } = useRetirementDetails(account.id, true);
+  const saveRetirement = useRetirementDetailsMutation(account.id);
+
+  const [totalText, setTotalText] = useState(() =>
+    openingBalanceToInput(account.openingBalancePaise, account.type),
+  );
+  const [epsText, setEpsText] = useState("");
+  const [sequencePending, setSequencePending] = useState(false);
+
+  // Seed totalText when account data changes (mirrors OpeningBalanceSection)
+  useEffect(() => {
+    setTotalText(openingBalanceToInput(account.openingBalancePaise, account.type));
+  }, [account.openingBalancePaise, account.type]);
+
+  // Seed epsText once retirement details resolve (mirrors RetirementSection)
+  useEffect(() => {
+    if (!retData) return;
+    setEpsText(
+      retData.epsBalancePaise == null
+        ? ""
+        : (retData.epsBalancePaise / 100).toFixed(2).replace(/\.00$/, ""),
+    );
+  }, [retData]);
+
+  // --- Parsing ---
+
+  const totalPaise = openingBalanceFromInput(totalText, account.type); // null = invalid
+
+  /** Strict EPS parser: blank → 0; decimal notation, ≤ 2dp, safe integer, ≥ 0. */
+  function parseEpsInput(text: string): number | null {
+    const trimmed = text.trim();
+    if (trimmed === "") return 0;
+    if (!/^\d*\.?\d{0,2}$/.test(trimmed) || trimmed === ".") return null;
+    const rupees = Number(trimmed);
+    if (!Number.isFinite(rupees) || rupees < 0) return null;
+    const paise = rupeesToPaise(rupees);
+    if (!Number.isSafeInteger(paise)) return null;
+    return paise;
+  }
+
+  const epsPaise = parseEpsInput(epsText); // null = invalid
+
+  const epfCorpusPaise =
+    totalPaise !== null && epsPaise !== null ? totalPaise - epsPaise : null;
+
+  // --- Errors ---
+
+  const totalError = totalPaise === null ? "must be an amount in rupees" : null;
+  const epsError = epsPaise === null ? "must be ≥ 0 with at most two decimal places" : null;
+  const corpusError =
+    epfCorpusPaise !== null && epfCorpusPaise < 0 ? "EPS cannot exceed total balance" : null;
+
+  const hasError = totalError !== null || epsError !== null || corpusError !== null;
+
+  // --- Dirty ---
+
+  const retResolved = retData !== undefined; // retData === null means "row doesn't exist yet" — resolved
+
+  const dirty =
+    retResolved &&
+    !hasError &&
+    ((totalPaise !== null && totalPaise !== account.openingBalancePaise) ||
+      (epsPaise !== null && epsPaise !== (retData?.epsBalancePaise ?? 0)));
+
+  // --- Submit ---
+
+  function submit(e: FormEvent) {
+    e.preventDefault();
+    if (hasError || totalPaise === null || epsPaise === null || !retResolved) return;
+    setSequencePending(true);
+    update.mutate(
+      { id: account.id, openingBalancePaise: totalPaise },
+      {
+        onSuccess: () => {
+          saveRetirement.mutate(
+            {
+              annualRateBps: retData?.annualRateBps ?? 0,
+              maturityDate: null, // EPF never has a maturity date
+              referenceNumber: retData?.referenceNumber ?? "",
+              epsBalancePaise: epsPaise,
+            },
+            {
+              onSuccess: () => {
+                setSequencePending(false);
+                toast("Opening balance saved", "success");
+              },
+              onError: () => {
+                setSequencePending(false);
+                toast("Balance saved, but EPS update failed — retry to fix");
+              },
+            },
+          );
+        },
+        onError: () => {
+          setSequencePending(false);
+        },
+      },
+    );
+  }
+
+  const isPending = update.isPending || saveRetirement.isPending || sequencePending;
+
+  if (retIsPending) {
+    return (
+      <Section title="Opening balance">
+        <p className="text-sm text-slate-400">Loading…</p>
+      </Section>
+    );
+  }
+
+  return (
+    <form onSubmit={submit}>
+      <Section
+        title="Opening balance"
+        hint="Enter figures from your EPFO passbook. Total = Member PF account (EE + ER) + Pension (EPS) account combined."
+      >
+        <Field label="Total PF balance" error={totalError}>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-slate-400">₹</span>
+            <input
+              value={totalText}
+              onChange={(e) => setTotalText(e.target.value)}
+              inputMode="decimal"
+              aria-invalid={totalError !== null}
+              className={`${inputClass} tabular-nums ${totalError ? "border-red-400" : ""}`}
+            />
+          </div>
+        </Field>
+        <Field label="Of which, EPS" error={epsError ?? corpusError}>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-slate-400">₹</span>
+            <input
+              value={epsText}
+              onChange={(e) => setEpsText(e.target.value)}
+              inputMode="decimal"
+              aria-invalid={epsError !== null || corpusError !== null}
+              className={`${inputClass} tabular-nums ${epsError ?? corpusError ? "border-red-400" : ""}`}
+            />
+          </div>
+          <p className="mt-1 text-xs text-slate-400">
+            Pension (EPS) corpus — part of the total above, not counted twice
+          </p>
+        </Field>
+        <div className="space-y-2 rounded-md bg-slate-50 p-3">
+          <DerivedRow
+            label="EPF corpus"
+            value={
+              epfCorpusPaise !== null && epfCorpusPaise >= 0
+                ? formatINR(epfCorpusPaise)
+                : "—"
+            }
+            hint="total minus EPS (EE + ER share)"
+          />
+          <DerivedRow
+            label="Current balance"
+            value={formatINR(account.balancePaise)}
+            hint="opening balance plus every contribution"
+          />
+        </div>
+        <div className="pt-1">
+          <SaveButton dirty={dirty} disabled={hasError || !retResolved} pending={isPending} />
         </div>
       </Section>
     </form>
@@ -723,7 +897,6 @@ function RetirementSection({ account }: { account: AccountWithBalance }) {
   const [rate, setRate] = useState("");
   const [maturity, setMaturity] = useState("");
   const [reference, setReference] = useState("");
-  const [eps, setEps] = useState("");
   const isEpf = account.type === "epf";
   const referenceLabel =
     account.type === "epf" ? "UAN" : account.type === "ssy" ? "SSY account number" : "PPF account number";
@@ -733,29 +906,28 @@ function RetirementSection({ account }: { account: AccountWithBalance }) {
     setRate(data.annualRateBps === 0 ? "" : (data.annualRateBps / 100).toFixed(2));
     setMaturity(data.maturityDate ?? "");
     setReference(data.referenceNumber);
-    setEps(data.epsBalancePaise == null ? "" : (data.epsBalancePaise / 100).toFixed(2));
   }, [data]);
 
   const rateBps = rate === "" ? 0 : Math.round(Number(rate) * 100);
   const rateError = rate !== "" && (Number.isNaN(rateBps) || rateBps < 0 || rateBps > 5000) ? "0–50%" : null;
-  const epsPaise = eps === "" ? null : Math.round(Number(eps) * 100);
-  const epsError = eps !== "" && (epsPaise === null || Number.isNaN(epsPaise) || epsPaise < 0) ? "≥ 0" : null;
   const dirty =
     rateBps !== (data?.annualRateBps ?? 0) ||
     maturity !== (data?.maturityDate ?? "") ||
-    reference !== (data?.referenceNumber ?? "") ||
-    (isEpf && epsPaise !== (data?.epsBalancePaise ?? null));
+    reference !== (data?.referenceNumber ?? "");
 
   function submit(e: FormEvent) {
     e.preventDefault();
-    if (rateError || epsError) return;
+    if (rateError) return;
+    // If the EPF retirement-details query errored, data is undefined; submitting
+    // would send epsBalancePaise: null and silently erase the stored EPS value.
+    if (isEpf && data === undefined) return;
     save.mutate(
       {
         annualRateBps: rateBps,
         // EPF never carries a maturity date; sending a stale one the API rejects.
         maturityDate: isEpf ? null : maturity || null,
         referenceNumber: reference.trim(),
-        epsBalancePaise: isEpf ? epsPaise : null,
+        epsBalancePaise: isEpf ? (data?.epsBalancePaise ?? null) : null,
       },
       { onSuccess: () => toast("Details saved", "success") },
     );
@@ -790,22 +962,6 @@ function RetirementSection({ account }: { account: AccountWithBalance }) {
             className={`${inputClass} font-mono`}
           />
         </Field>
-        {/* EPS is an EPF-only pension pot EPFO tracks apart from the PF corpus. */}
-        {isEpf && (
-          <Field label="EPS balance" error={epsError}>
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-slate-400">₹</span>
-              <input
-                value={eps}
-                onChange={(e) => setEps(e.target.value)}
-                inputMode="decimal"
-                placeholder="Pension balance"
-                aria-invalid={epsError !== null}
-                className={`${inputClass} ${epsError ? "border-red-400" : ""}`}
-              />
-            </div>
-          </Field>
-        )}
         {/* EPF has no maturity — the API rejects one, so don't offer the field. */}
         {!isEpf && (
           <Field label="Matures on">
@@ -818,7 +974,7 @@ function RetirementSection({ account }: { account: AccountWithBalance }) {
           </Field>
         )}
         <div className="pt-1">
-          <SaveButton dirty={dirty} disabled={rateError !== null || epsError !== null} pending={save.isPending} />
+          <SaveButton dirty={dirty} disabled={rateError !== null} pending={save.isPending} />
         </div>
       </Section>
     </form>
