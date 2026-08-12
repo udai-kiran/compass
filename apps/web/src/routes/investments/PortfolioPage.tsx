@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import { Link } from "react-router";
 import {
   assetClassHasUnits,
+  formatDisplayDate,
   formatINR,
   type AssetClass,
   type CreateHoldingEvent,
@@ -252,7 +253,7 @@ function HoldingRow({
             {` · Goal: ${goalName ?? "No goal"}`}
             {` · cost basis ${formatINR(h.investedPaise)}`}
             {h.realizedPaise !== 0 && ` · realized ${formatINR(h.realizedPaise)}`}
-            {h.lastValuationDate && ` · valued ${h.lastValuationDate}`}
+            {h.lastValuationDate && ` · valued ${formatDisplayDate(h.lastValuationDate)}`}
           </p>
         </button>
         <div className="flex shrink-0 flex-wrap items-center justify-end gap-3 text-right">
@@ -317,7 +318,7 @@ function HoldingRow({
                 const canDown = i < arr.length - 1 && arr[i + 1]!.date === e.date;
                 return (
                   <li key={e.id} className="flex items-center gap-3 px-3 py-1.5">
-                    <span className="w-24 text-slate-500">{e.date}</span>
+                    <span className="w-24 text-slate-500">{formatDisplayDate(e.date)}</span>
                     <span className="w-16 capitalize text-slate-600">{e.type}</span>
                     <span className="w-24 font-medium text-slate-800">{formatINR(e.amountPaise)}</span>
                     <span className="min-w-0 flex-1 truncate text-slate-500">{e.note}</span>

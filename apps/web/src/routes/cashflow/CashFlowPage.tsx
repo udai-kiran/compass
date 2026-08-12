@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { formatINR } from "@compass/shared";
+import { formatDisplayDate, formatINR } from "@compass/shared";
 import { useCashflow, useForecast } from "../../lib/goal-queries.ts";
 import { Columns, compactINR, LineChart, SERIES, StatTile } from "../../lib/viz.tsx";
 
@@ -200,7 +200,7 @@ function UpcomingObligations({
       <ul className="mt-1 divide-y divide-slate-100 rounded-md border border-slate-200 text-sm">
         {upcoming.map((o, i) => (
           <li key={`${o.date}-${o.merchant}-${i}`} className="flex items-center gap-3 px-3 py-1.5">
-            <span className="text-slate-500">{o.date}</span>
+            <span className="text-slate-500">{formatDisplayDate(o.date)}</span>
             <span className="flex-1 truncate text-slate-700">{o.merchant}</span>
             <span className="tabular-nums text-slate-700">{formatINR(o.amountPaise)}</span>
           </li>

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { formatINR, ReportSchema, todayInIST, type Report, type ReportPeriod } from "@compass/shared";
+import { formatDisplayDate, formatINR, formatPeriodKey, ReportSchema, todayInIST, type Report, type ReportPeriod } from "@compass/shared";
 import { apiGet } from "../../lib/api.ts";
 import { DateField } from "../../components/DateField.tsx";
 import { compareCategories, compareMerchants } from "./report-comparison.ts";
@@ -138,13 +138,15 @@ export function ReportsPage() {
           <div className="rounded-lg border border-slate-200 bg-white p-4">
             <p className="text-sm text-slate-500">
               {report.period === "custom"
-                ? `Custom range · ${report.from} to ${report.to}`
-                : `${noun} ${report.periodKey} · ${report.from} to ${report.to}`}
+                ? `Custom range · ${formatDisplayDate(report.from)} to ${formatDisplayDate(report.to)}`
+                : `${noun} ${formatPeriodKey(report.periodKey)} · ${formatDisplayDate(report.from)} to ${formatDisplayDate(report.to)}`}
               {comparing && (
                 <span className="text-slate-400">
                   {" "}
                   vs.{" "}
-                  {prior.period === "custom" ? `${prior.from} to ${prior.to}` : prior.periodKey}
+                  {prior.period === "custom"
+                    ? `${formatDisplayDate(prior.from)} to ${formatDisplayDate(prior.to)}`
+                    : formatPeriodKey(prior.periodKey)}
                 </span>
               )}
             </p>

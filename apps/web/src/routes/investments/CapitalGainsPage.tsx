@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router";
 import {
+  formatDisplayDate,
   formatINR,
   type AssetClass,
   type CapitalGainsSlice,
@@ -244,8 +245,8 @@ function SliceRow({
 }) {
   return (
     <tr className="border-b border-slate-50 last:border-0">
-      <td className="px-4 py-2 text-slate-600">{s.buyDate}</td>
-      <td className="px-4 py-2 text-slate-600">{s.sellDate}</td>
+      <td className="px-4 py-2 text-slate-600">{formatDisplayDate(s.buyDate)}</td>
+      <td className="px-4 py-2 text-slate-600">{formatDisplayDate(s.sellDate)}</td>
       <td className="px-4 py-2 text-right tabular-nums text-slate-600">{s.units}</td>
       <td className="px-4 py-2 text-right tabular-nums text-slate-600">{formatINR(s.proceedsPaise)}</td>
       <td className="px-4 py-2 text-right tabular-nums text-slate-600">

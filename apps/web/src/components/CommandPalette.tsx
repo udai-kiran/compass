@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { useQuery } from "@tanstack/react-query";
-import { formatINR, SearchResultsSchema } from "@compass/shared";
+import { formatDisplayDate, formatINR, SearchResultsSchema } from "@compass/shared";
 import { z } from "zod";
 import { apiGet } from "../lib/api.ts";
 
@@ -77,7 +77,7 @@ export function CommandPalette() {
     const out: Item[] = [...pages];
     if (results) {
       for (const t of results.transactions)
-        out.push({ key: `tx:${t.id}`, group: "Transactions", label: t.merchant || "(no merchant)", hint: `${t.date} · ${formatINR(t.amountPaise)}`, to: `/transactions?q=${encodeURIComponent(t.merchant)}` });
+        out.push({ key: `tx:${t.id}`, group: "Transactions", label: t.merchant || "(no merchant)", hint: `${formatDisplayDate(t.date)} · ${formatINR(t.amountPaise)}`, to: `/transactions?q=${encodeURIComponent(t.merchant)}` });
       for (const c of results.categories)
         out.push({ key: `cat:${c.id}`, group: "Categories", label: c.name, to: `/transactions?categoryId=${c.id}` });
       for (const a of results.accounts)
