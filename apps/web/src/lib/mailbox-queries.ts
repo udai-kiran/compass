@@ -50,5 +50,10 @@ export function useMailboxMutations() {
       ),
   });
 
-  return { add, remove, sync };
+  const resetWatermark = useMutation({
+    mutationFn: (id: string) =>
+      apiPost(`/api/mailboxes/${id}/reset-watermark`, z.object({ ok: z.literal(true) })),
+  });
+
+  return { add, remove, sync, resetWatermark };
 }
