@@ -562,8 +562,8 @@ export async function updateAccount(
         ...fields,
         ...openingColumn,
         ...(archived === undefined ? {} : { archivedAt: archived ? new Date() : null }),
-        // If this credit card's type is changing away from credit_card, clear its own link.
-        ...(typeChangingAwayFromCreditCard ? { linkedAccountId: null } : {}),
+        // If this credit card's type is changing away from credit_card, or it is being archived, clear its own link.
+        ...((typeChangingAwayFromCreditCard || (archiving && current.type === "credit_card")) ? { linkedAccountId: null } : {}),
         updatedAt: new Date(),
       })
       .where(and(eq(accounts.id, id), eq(accounts.userId, userId)))
@@ -571,8 +571,9 @@ export async function updateAccount(
     if (rows.length === 0) throw new HttpError(404, "Account not found");
 
     // Lifecycle: clear linkedAccountId on credit cards that reference this account as their
-    // payer when this account is archived or when this account's type changes.
-    if (archiving || typeChangingAwayFromCreditCard) {
+    // payer when this account is archived or when this account's type becomes credit_card
+    // (credit cards cannot be payers, so any cards pointing to this account are now invalid).
+    if (archiving || (typeChanged && nextType === "credit_card")) {
       await tx
         .update(accounts)
         .set({ linkedAccountId: null })
