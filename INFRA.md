@@ -1,13 +1,13 @@
 # INFRA.md
 
 Full reference for the production deployment of Compass (PennyPilot) on the
-self-hosted infra host at **192.168.2.183**.
+self-hosted infra host at **192.168.2.228**.
 
 ---
 
 ## Overview
 
-A single Docker Compose stack runs on the host at `192.168.2.183`. The stack is
+A single Docker Compose stack runs on the host at `192.168.2.228`. The stack is
 managed from `~/infra` using a `Makefile` that wraps `docker compose`. Compose's
 `include:` directive pulls in the PennyPilot app stack from
 `~/infra/pennypilot/docker-compose.yml`; the top-level
