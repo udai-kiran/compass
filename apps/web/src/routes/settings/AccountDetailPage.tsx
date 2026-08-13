@@ -119,6 +119,7 @@ function AccountDetail({ account }: { account: AccountWithBalance }) {
       {isRetirementAccount(account.type) && <RetirementSection key={account.type} account={account} />}
       {account.type === "nps" && <NpsSection account={account} />}
       {account.type === "credit_card" && <StatementPasswordSection account={account} />}
+      {account.type === "credit_card" && <LinkedPaymentAccountSection account={account} />}
     </div>
   );
 }
@@ -187,6 +188,64 @@ function StatementPasswordSection({ account }: { account: AccountWithBalance }) 
         </div>
       </form>
     </Section>
+  );
+}
+
+function LinkedPaymentAccountSection({ account }: { account: AccountWithBalance }) {
+  const { data: allAccounts } = useAccounts();
+  const { update } = useAccountMutations();
+  const [linkedAccountId, setLinkedAccountId] = useState(account.linkedAccountId ?? "");
+
+  // Follow the server after a save.
+  useEffect(() => {
+    setLinkedAccountId(account.linkedAccountId ?? "");
+  }, [account.linkedAccountId]);
+
+  const candidates = (allAccounts ?? []).filter(
+    (a) => a.archivedAt === null && a.type !== "credit_card" && a.id !== account.id,
+  );
+
+  const dirty = linkedAccountId !== (account.linkedAccountId ?? "");
+
+  function save(e: FormEvent) {
+    e.preventDefault();
+    update.mutate(
+      { id: account.id, linkedAccountId: linkedAccountId || null },
+      {
+        onSuccess: () =>
+          toast(
+            linkedAccountId ? "Default paying account saved" : "Default paying account cleared",
+            "success",
+          ),
+      },
+    );
+  }
+
+  return (
+    <form onSubmit={save}>
+      <Section
+        title="Default paying account"
+        hint="Pre-fills the paying account in the inbox when this card's bill payment arrives."
+      >
+        <Field label="Paying account">
+          <select
+            value={linkedAccountId}
+            onChange={(e) => setLinkedAccountId(e.target.value)}
+            className={inputClass}
+          >
+            <option value="">No default</option>
+            {candidates.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <div className="pt-1">
+          <SaveButton dirty={dirty} disabled={false} pending={update.isPending} />
+        </div>
+      </Section>
+    </form>
   );
 }
 

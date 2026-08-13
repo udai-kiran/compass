@@ -477,6 +477,13 @@
       "when": 1786009555933,
       "tag": "0067_illegal_shocker",
       "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "7",
+      "when": 1786559909078,
+      "tag": "0068_mean_sentinel",
+      "breakpoints": true
     }
   ]
 }

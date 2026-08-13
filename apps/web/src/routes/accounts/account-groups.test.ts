@@ -15,6 +15,7 @@ const account = (overrides: Partial<AccountWithBalance> = {}): AccountWithBalanc
   openingBalancePaise: 0,
   openingTransactionPaise: 0,
   goalId: null,
+  linkedAccountId: null,
   sortOrder: 0,
   archivedAt: null,
   balancePaise: 0,

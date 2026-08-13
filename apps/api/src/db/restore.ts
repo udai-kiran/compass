@@ -7,7 +7,7 @@ type Dump = Record<string, Array<Record<string, unknown>>>;
 
 /** References that cannot be populated during the first insert pass. */
 export const DEFERRED_RESTORE_COLUMNS = {
-  accounts: ["goal_id"],
+  accounts: ["goal_id", "linked_account_id"],
   categories: ["parent_id"],
   // policy_id → insurance_policies and reconciled_statement_id →
   // statement_reconciliations both restore after transactions in ALL_TABLES order.

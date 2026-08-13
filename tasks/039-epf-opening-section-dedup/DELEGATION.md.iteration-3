@@ -1,0 +1,50 @@
+# Sonnet Worker Delegation — iteration 3 (merge)
+
+## Task
+039 — merge PR #192 into `main` and prove `main` is green. **Tagging/release is
+NOT in this iteration.**
+
+## Preconditions (all verified by me from literal evidence)
+- PR #192, head `5f98814b1893e57f98059c1ccdae6d83139aaf9c`
+- CI run `31585997619` (**CI**): `audit` pass, `check` pass — `check` runs
+  typecheck/lint/`npm test` with Postgres 18 + Redis 7, in the **merge-ref**
+  context. This discharges AC4, which could not be proven locally.
+- Publish run `31585997575`: `publish (api)`, `publish (web)`,
+  `publish (ingestor)`, `publish (extractor)` all pass — so the web Docker build
+  that failed on `v2.8.13` now succeeds.
+- Staged set was exactly the authorised 14 paths; `screen-shots/` untracked.
+
+## Critical safety check before merging
+`origin/main` must still be `38ae9a24a89221187c442278f09e8d2d012b784f`. Our branch
+was cut from exactly that commit, so the merge is clean and cannot re-collide.
+**If `origin/main` has moved, STOP** — a moved `main` is how PR #191 produced the
+duplicate in the first place, and it must be re-reviewed rather than merged.
+
+## Merge strategy
+Use a **squash** merge, consistent with #189/#190/#191. This is safe here only
+because `main` has not advanced past our base. Delete the remote branch after.
+
+## Commands
+1. `git fetch origin`
+2. `git rev-parse origin/main` — MUST equal `38ae9a24a89221187c442278f09e8d2d012b784f`. If not, STOP and report.
+3. `gh pr view 192 --json number,state,mergeable,mergeStateStatus,headRefOid`
+4. `gh pr merge 192 --squash --delete-branch`
+5. `git fetch origin` then `git log --oneline origin/main -3`
+6. `git show origin/main:apps/web/src/routes/settings/AccountDetailPage.tsx | grep -c "function EpfOpeningSection"` — MUST be exactly `1`. This is the whole point of the task; prove it on `main` itself.
+7. Wait for main's CI: `gh run list --branch main --limit 6 --json databaseId,workflowName,conclusion,status,headSha,createdAt`, re-running until both workflows report `completed`. Then `gh run view <CI run id>` and `gh run view <Publish run id>` for per-job conclusions.
+8. STOP. Do NOT tag. Do NOT create a release. Do NOT touch `COMPASS_VERSION`.
+
+## Hard stops
+- `origin/main` not at `38ae9a24…` → STOP.
+- Merge conflict or `mergeable` not `MERGEABLE` → STOP, report, change nothing.
+- Any failing job on `main` → STOP and report the job, step, and literal error.
+  Do NOT retry and do NOT tag.
+- Step 6 returning anything other than `1` → STOP; the merge did not achieve the
+  objective.
+
+## Required Evidence
+- literal output + exit code for every command
+- `origin/main` SHA before and after the merge
+- the squash commit SHA on `main`
+- the literal `grep -c` result from step 6
+- per-job CI conclusions on `main` with run IDs

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { formatINR, type Account, type Category, type ExtractedTransaction } from "@compass/shared";
 import { useAccounts, useCategories } from "../../lib/queries.ts";
 import { useInbox, useInboxMutations, useOrphanedInbox } from "../../lib/inbox-queries.ts";
@@ -238,6 +238,10 @@ function DraftCard({
   const busy = accept.isPending || acceptRepayment.isPending || reject.isPending;
   const selectedAccount = accounts.find((a) => a.id === accountId);
   const repaymentEligible = isRepaymentEligible(draft, selectedAccount);
+
+  useEffect(() => {
+    setPayingAccountId(selectedAccount?.linkedAccountId ?? "");
+  }, [accountId, selectedAccount?.linkedAccountId]);
 
   function onAccept() {
     if (!accountId) {
