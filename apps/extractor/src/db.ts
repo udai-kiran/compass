@@ -86,19 +86,22 @@ export async function loadAccounts(pool: pg.Pool, userId: string): Promise<Accou
 export interface CreditCardRef {
   id: string;
   name: string;
+  institution: string;
   /** encrypted statement-PDF password; "" when the user hasn't stored one */
   statementPasswordEnc: string;
 }
 
 /**
  * Credit-card accounts + their stored statement password, to open a statement PDF.
- * The password is per-card (`card_details.statement_password_enc`) — issuers like
- * HDFC embed the card's own last-4, so each card of a bank needs its own. A card
- * with no stored password gets `""` and is skipped when trying to open the PDF.
+ * The password is stored per-card in card_details.statement_password_enc. Banks often
+ * use a shared formula (e.g. the cardholder's DOB) for all cards of the same issuer,
+ * so multiple cards can share the same password. The institution field is used by the
+ * ranking heuristic to match subject lines to the right card when passwords are shared.
  */
 export async function loadCreditCards(pool: pg.Pool, userId: string): Promise<CreditCardRef[]> {
-  const res = await pool.query<{ id: string; name: string; statement_password_enc: string }>(
-    `select a.id, a.name, coalesce(cd.statement_password_enc, '') as statement_password_enc
+  const res = await pool.query<{ id: string; name: string; institution: string; statement_password_enc: string }>(
+    `select a.id, a.name, coalesce(a.institution, '') as institution,
+            coalesce(cd.statement_password_enc, '') as statement_password_enc
        from accounts a
        left join card_details cd on cd.account_id = a.id
       where a.user_id = $1 and a.type = 'credit_card' and a.archived_at is null`,
@@ -107,6 +110,7 @@ export async function loadCreditCards(pool: pg.Pool, userId: string): Promise<Cr
   return res.rows.map((r) => ({
     id: r.id,
     name: r.name,
+    institution: r.institution,
     statementPasswordEnc: r.statement_password_enc,
   }));
 }

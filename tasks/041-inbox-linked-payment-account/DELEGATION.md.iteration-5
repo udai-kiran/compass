@@ -1,0 +1,80 @@
+# Sonnet Worker Delegation — Iteration 5
+
+## Task
+041-inbox-linked-payment-account — lifecycle clearing bug fixes
+
+## Context
+Codex review-3.md found two bugs in `updateAccount` lifecycle clearing (both introduced
+by task 041 P6). No other file needs to change.
+
+## Approved Fixes
+
+### Fix 1 (High) — line ~575: dependent-link clearing condition is too narrow
+Current code:
+```ts
+if (archiving || typeChangingAwayFromCreditCard) {
+  await tx
+    .update(accounts)
+    .set({ linkedAccountId: null })
+    .where(and(eq(accounts.linkedAccountId, id), eq(accounts.userId, userId)));
+}
+```
+When a payer account changes type FROM `bank` TO `credit_card`, `typeChangingAwayFromCreditCard`
+is false (that variable tracks the EDITED account's own old type being credit_card).
+So credit cards that had this account as their payer keep pointing to it — now illegally linked
+to another credit card.
+
+Change the condition to:
+```ts
+if (archiving || (typeChanged && nextType === "credit_card")) {
+```
+
+Explanation: the dependent accounts must have their link cleared whenever the edited account
+becomes ineligible as a payer. An account is ineligible when it is archived OR when its type
+becomes credit_card (credit cards cannot be payers).
+
+### Fix 2 (Medium) — line ~566: archiving a credit card doesn't clear its own link
+Current spread inside the main `set()`:
+```ts
+...(typeChangingAwayFromCreditCard ? { linkedAccountId: null } : {}),
+```
+When a credit card is archived, `typeChangingAwayFromCreditCard` is false, so its
+`linkedAccountId` is never cleared.
+
+Change to clear the edited account's own link when it is a credit card being archived OR
+changing away from credit_card type:
+```ts
+...((typeChangingAwayFromCreditCard || (archiving && current.type === "credit_card")) ? { linkedAccountId: null } : {}),
+```
+
+## Files and Symbols
+- `apps/api/src/modules/ledger/services/accounts.ts`
+  - function `updateAccount` (the exported wrapper that calls `withTransaction`)
+  - variable `typeChangingAwayFromCreditCard` (line ~395) — no change needed to this variable
+  - main `set()` call spread (line ~566)
+  - lifecycle `if` block after the update (line ~575)
+
+## Must Not Change
+- `typeChangingAwayFromCreditCard` variable definition — it is still used for the own-link clear
+- any other file in the repository
+
+## Acceptance Criteria
+- AC-F1: When account X (bank/non-CC) changes type to credit_card, any credit cards that
+  had `linkedAccountId = X.id` now have `linkedAccountId = null`
+- AC-F2: When a credit card is archived, its own `linkedAccountId` is cleared to null in
+  the same `UPDATE` that sets `archivedAt`
+- AC-F3: Existing behaviour — archiving a bank account clears dependent cards' links —
+  is preserved
+- AC-F4: Existing behaviour — changing a CC type away from credit_card clears its own link
+  and clears dependent cards that had it as payer — is preserved
+- AC-F5: `npm run typecheck` exits 0
+
+## Commands
+1. Apply both edits to `apps/api/src/modules/ledger/services/accounts.ts`
+2. Run `npm run typecheck` and capture full output + exit code
+
+## Required Evidence
+- exact lines changed (before/after)
+- complete diff of the file
+- `npm run typecheck` full stdout + exit code
+- confirmation no other files were touched

@@ -34,6 +34,7 @@ import type { CategoryRef } from "./extract.ts";
 import type { InboxRow } from "./extract.ts";
 import type { EmailIngestStatus } from "@compass/shared";
 import { annotateStatementDuplicates } from "./statement-duplicates.ts";
+import { rankCardsBySubject } from "./statement-rank.ts";
 
 const config = loadConfig();
 const pool = createPool(config.DATABASE_URL);
@@ -98,15 +99,16 @@ function baseUrlAllowed(value: string): boolean {
 
 /**
  * Process a credit-card statement email: find the PDF attachment, open it with
- * the matching card's stored password (the password that decrypts it identifies
- * the card), and AI-extract every transaction against that account. Falls back
- * to an unencrypted statement (no card matched). Leaves it deferred when no
- * stored password opens the PDF — the user can add the password and replay.
+ * the matching card's stored password (subject-line ranking selects the likely
+ * card first; the password confirms the PDF can be opened), and AI-extract every
+ * transaction against that account. Falls back to an unencrypted statement (no
+ * card matched). Leaves it deferred when no stored password opens the PDF — the
+ * user can add the password and replay.
  */
 interface StatementOutcome {
   status: EmailIngestStatus;
   rows: InboxRow[];
-  /** the card whose password opened the PDF; null for an unencrypted statement */
+  /** the card whose name best matched the subject and whose password opened the PDF; null for an unencrypted statement */
   accountId: string | null;
   /** totals + reward summary; null when nothing opened or the summary didn't parse */
   summary: StatementSummary | null;
@@ -159,7 +161,7 @@ async function processStatement(
   };
 
   const cards = await loadCreditCards(pool, userId);
-  for (const card of cards) {
+  for (const card of rankCardsBySubject(cards, email.subject)) {
     if (!card.statementPasswordEnc) continue;
     let password: string;
     try {

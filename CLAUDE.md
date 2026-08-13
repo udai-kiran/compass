@@ -85,7 +85,7 @@ Separate containers behind the compose **`email` profile** (a plain `docker comp
 
 See `INFRA.md` for the full reference. Key facts:
 
-- **Host:** 192.168.2.183, infra directory: `~/infra`
+- **Host:** 192.168.2.228, infra directory: `~/infra`
 - **Public URL:** `https://compass.udaikiran.dev` (Cloudflare Tunnel → `pennypilot-web:80`)
 - **Update:** bump `COMPASS_VERSION` in `~/infra/.env` → `make update` (pulls new images from GHCR, recreates changed containers; the `pennypilot-migrate` one-shot runs migrations automatically)
 - **Rollback:** set `COMPASS_VERSION` back to the previous tag → `make update`
