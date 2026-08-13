@@ -107,6 +107,9 @@ export const accounts = pgTable(
     // AnyPgColumn keeps inference stable across the accounts → goals reference
     // (goals is declared after accounts in this file).
     goalId: uuid("goal_id").references((): AnyPgColumn => goals.id, { onDelete: "set null" }),
+    /** For credit_card accounts: the bank account normally used to pay this card's bill. */
+    linkedAccountId: uuid("linked_account_id")
+      .references((): AnyPgColumn => accounts.id, { onDelete: "set null" }),
     sortOrder: integer("sort_order").notNull().default(0),
     archivedAt: timestamp("archived_at", { withTimezone: true }),
     /**

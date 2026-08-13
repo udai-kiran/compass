@@ -148,6 +148,7 @@ function toAccount(row: AccountRow): Account {
     currency: row.currency,
     openingBalancePaise: row.openingBalancePaise,
     goalId: row.goalId,
+    linkedAccountId: row.linkedAccountId ?? null,
     sortOrder: row.sortOrder,
     archivedAt: row.archivedAt?.toISOString() ?? null,
   };
@@ -391,6 +392,7 @@ export async function updateAccount(
     const typeChanged = fields.type !== undefined && fields.type !== current.type;
     const goalChanged = fields.goalId !== undefined && fields.goalId !== current.goalId;
     const archiving = archived === true && current.archivedAt === null;
+    const typeChangingAwayFromCreditCard = typeChanged && current.type === "credit_card" && nextType !== "credit_card";
 
     // A SIP bound to this account (as its source or its target, active or
     // paused) keeps assuming the account's original type/goal/archived state —
@@ -429,6 +431,21 @@ export async function updateAccount(
       if (bank && bank.accountNumber !== "") {
         throw new HttpError(400, "Last 4 is derived from the account number — edit that instead");
       }
+    }
+
+    // Validate and enforce linkedAccountId business rules.
+    if (input.linkedAccountId !== undefined && input.linkedAccountId !== null) {
+      if (nextType !== "credit_card") {
+        throw new HttpError(400, "Only credit card accounts can have a linked payment account");
+      }
+      const [linkedAcct] = await tx
+        .select()
+        .from(accounts)
+        .where(and(eq(accounts.id, input.linkedAccountId), eq(accounts.userId, userId)));
+      if (!linkedAcct) throw new HttpError(404, "Linked account not found");
+      if (linkedAcct.systemKind !== null) throw new HttpError(400, "Cannot link to a system account");
+      if (linkedAcct.type === "credit_card") throw new HttpError(400, "Linked account cannot be a credit card");
+      if (linkedAcct.archivedAt !== null) throw new HttpError(400, "Linked account is archived");
     }
 
     // Correcting the opening balance must keep the column and the "Opening
@@ -545,11 +562,22 @@ export async function updateAccount(
         ...fields,
         ...openingColumn,
         ...(archived === undefined ? {} : { archivedAt: archived ? new Date() : null }),
+        // If this credit card's type is changing away from credit_card, clear its own link.
+        ...(typeChangingAwayFromCreditCard ? { linkedAccountId: null } : {}),
         updatedAt: new Date(),
       })
       .where(and(eq(accounts.id, id), eq(accounts.userId, userId)))
       .returning();
     if (rows.length === 0) throw new HttpError(404, "Account not found");
+
+    // Lifecycle: clear linkedAccountId on credit cards that reference this account as their
+    // payer when this account is archived or when this account's type changes.
+    if (archiving || typeChangingAwayFromCreditCard) {
+      await tx
+        .update(accounts)
+        .set({ linkedAccountId: null })
+        .where(and(eq(accounts.linkedAccountId, id), eq(accounts.userId, userId)));
+    }
 
     // Keep scheme details consistent with the new type: EPS is EPF-only, and EPF
     // has no maturity date. Clear whichever the transition invalidates so a stale

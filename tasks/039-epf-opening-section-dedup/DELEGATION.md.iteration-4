@@ -1,0 +1,73 @@
+# Sonnet Worker Delegation — iteration 4 (release)
+
+## Task
+039 — cut a release tag so versioned images publish, replacing the failed
+`v2.8.13`.
+
+## Preconditions (verified by me from literal evidence)
+- `main` = `3ed5c5ec43ded0798049f052cabeff0c1dfac1c2`
+  ("… (#192)"), squash-merged from PR #192.
+- `git show origin/main:…AccountDetailPage.tsx | grep -c "function EpfOpeningSection"`
+  → **1**. The objective is proven on `main`, not merely on a branch.
+- CI run `31586487382` on `main`: `audit` success, `check` success.
+- Publish run `31586487356` on `main`: api, web, ingestor, extractor all success.
+
+## Why a new tag rather than reusing v2.8.13
+`v2.8.13` exists, its GitHub release is published and not a draft, but **all four
+of its publish jobs failed**, so no images were ever pushed for it. Re-pointing a
+tag that already has a failed run and a published release would leave two
+different trees claiming the same version. Cut `v2.8.14` instead.
+
+## Commands
+1. `git fetch origin --tags`
+2. `git tag --list "v2.8.*" --sort=-v:refname | head -5` — confirm `v2.8.13` is the
+   highest and **`v2.8.14` does not exist**. If `v2.8.14` already exists, STOP.
+3. `git rev-parse origin/main` — confirm `3ed5c5ec43ded0798049f052cabeff0c1dfac1c2`. If it has moved, STOP.
+4. Create the tag **on that exact SHA**, annotated:
+   `git tag -a v2.8.14 3ed5c5ec43ded0798049f052cabeff0c1dfac1c2 -m "<message below>"`
+5. `git push origin v2.8.14`
+6. Poll `gh run list --limit 6 --json databaseId,workflowName,conclusion,status,headBranch,headSha,displayTitle` until the `Publish images` run for tag `v2.8.14` reports `completed`. Then `gh run view <run id>` for per-job conclusions.
+7. Verify images actually exist for the tag — this is the acceptance criterion
+   `v2.8.13` failed. Try, in order, and report whichever works:
+   `gh api /user/packages/container/pennypilot-web/versions --jq '.[].metadata.container.tags'`
+   or `gh api /users/udai-kiran/packages/container/pennypilot-web/versions --jq '.[].metadata.container.tags'`
+   Confirm a `2.8.14` or `v2.8.14` tag is present for pennypilot-web AND
+   pennypilot-api. If the packages API is not accessible, say so plainly rather
+   than inferring success from the job status.
+8. `gh release view v2.8.13 --json tagName,isDraft,createdAt` and
+   `gh release list --limit 5` — determine whether releases are created manually
+   or by the workflow. If prior tags each have a GitHub release and `v2.8.14` does
+   NOT, create one: `gh release create v2.8.14 --title v2.8.14 --notes "<notes>"`.
+   If the workflow creates them automatically, do nothing.
+9. STOP. Do NOT touch `COMPASS_VERSION`, do NOT ssh to 192.168.2.183, do NOT run
+   `make update`. Deploying to the host is the user's step.
+
+## Tag message
+```
+v2.8.14
+
+Fixes a main branch that could not compile. PR #191 was squash-merged onto a main
+that already carried an EpfOpeningSection from #189, leaving two declarations of
+the same function and failing typecheck with TS2393. v2.8.13 was cut from that
+tree, so all four of its publish jobs failed and no images were ever pushed.
+
+Removes the redundant single-field EpfOpeningSection and keeps the EPS-aware one,
+and reads the EPF opening balance from openingTransactionPaise instead of the
+opening_balance_paise column, which is pinned at 0 because opening balances are
+held as an is_opening ledger transaction. The EPF opening balance now persists
+after saving.
+```
+
+## Hard stops
+- `v2.8.14` already exists → STOP.
+- `origin/main` no longer at `3ed5c5ec…` → STOP.
+- Any publish job fails → STOP and report the job, step, and literal error. Do
+  NOT retry, do NOT delete/move the tag.
+
+## Required Evidence
+- literal output + exit code for every command
+- the tag's target SHA (`git rev-parse v2.8.14^{commit}`)
+- per-job conclusions for the tag's Publish run, with the run ID
+- literal proof that images exist for `2.8.14`, or a plain statement that the
+  packages API was not accessible
+- whether a GitHub release was created, and by what

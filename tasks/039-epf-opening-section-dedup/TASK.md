@@ -1,10 +1,38 @@
 # Task: De-duplicate EpfOpeningSection on main and land the real opening-balance fix
 
 ## Status
-CODE_REVIEW — implemented; Codex plan review (review-1.md) and implementation
-review (review-2.md) both passed with all findings adjudicated below. Awaiting
-independent verification evidence, then git delivery (commit → PR → CI green →
-merge → release).
+COMPLETE
+
+All plan items implemented, all acceptance criteria proven, both Codex gates
+passed, independent verification read in full, and delivery finished:
+
+- commit `5f98814b1893e57f98059c1ccdae6d83139aaf9c` → PR **#192**
+- PR CI run `31585997619`: `audit` + `check` **success** (the merge-ref gate)
+- PR publish run `31585997575`: api / web / ingestor / extractor **success**
+- squash-merged to `main` as **`3ed5c5e`**
+- `main` CI run `31586487382`: `audit` + `check` **success**
+- `main` publish run `31586487356`: all four **success**
+- tag **`v2.8.14`** on `3ed5c5ec…`, publish run `31587005548`: all four
+  **success** — versus all four FAILING on `v2.8.13`
+- GitHub release `v2.8.14` created (the workflow does not auto-create releases;
+  every tag v2.8.9-v2.8.13 had one)
+
+**Objective proven on `main` itself**, not merely on a branch:
+`git show origin/main:apps/web/src/routes/settings/AccountDetailPage.tsx | grep -c
+"function EpfOpeningSection"` → **1**
+
+### Remaining honest caveats
+- **AC8 partially observable.** All four publish jobs succeeded, but the GHCR
+  packages API returned **403 "You need at least read:packages scope"**, so image
+  presence for `2.8.14` could NOT be independently confirmed. Job success is the
+  only evidence obtained. Confirm on the host at deploy time.
+- **Deployment not done, by design.** `COMPASS_VERSION` on 192.168.2.183 is
+  untouched and `make update` was not run — that is the user's step.
+- **`main` CI carried an `audit` annotation** mentioning exit code 1 while the job
+  itself concluded `success`. A worker offered a speculative explanation for this;
+  I am NOT recording that guess as fact. It is unexplained, non-blocking, and
+  unrelated to this diff.
+- Test debt remains open in task **040**; the EPS double-edit in task **041**.
 
 ## Objective
 `main` compiles again, and the EPF account detail page's opening balance actually

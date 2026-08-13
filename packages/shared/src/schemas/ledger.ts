@@ -192,6 +192,8 @@ export const AccountSchema = z.object({
   openingBalancePaise: z.number().int(),
   /** Goal this account is earmarked for; null = Unassigned. */
   goalId: z.uuid().nullable(),
+  /** For credit_card accounts: the bank account normally used to pay this card's bill. */
+  linkedAccountId: z.uuid().nullable(),
   sortOrder: z.number().int(),
   archivedAt: z.string().nullable(),
 });
@@ -256,6 +258,7 @@ export const UpdateAccountSchema = z.object({
   holderName: z.string().min(1).max(120).nullable().optional(),
   upiIds: UpiIdsSchema.optional(),
   goalId: z.uuid().nullable().optional(),
+  linkedAccountId: z.uuid().nullable().optional(),
   openingBalancePaise: z.number().int().optional(),
   sortOrder: z.number().int().optional(),
   archived: z.boolean().optional(),
