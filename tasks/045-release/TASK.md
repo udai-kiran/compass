@@ -1,7 +1,7 @@
 # Task: Board Reconciliation + Release
 
 ## Status
-PLANNING
+COMPLETE
 
 ## Objective
 Update the task board to reflect reality, reconcile the version numbering, and tag a clean release.
