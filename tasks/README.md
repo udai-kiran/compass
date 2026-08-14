@@ -109,10 +109,10 @@ Phase 4 and 5 are **extensions of real working code**, not greenfield. Verified 
 | 2.3 | [Fold transaction_splits into postings](./02.03-splits-into-postings.md) | 2 — Double-entry ledger | done |
 | 2.4 | [Convert consuming services to postings](./02.04-service-conversion.md) | 2 — Double-entry ledger | done |
 | 2.5 | [Keep the simple transaction API; add multi-leg](./02.05-api-compatibility.md) | 2 — Double-entry ledger | done |
-| 2.6 | [Ledger invariants & reconciliation guard](./02.06-double-entry-invariants.md) | 2 — Double-entry ledger | todo |
+| 2.6 | [Ledger invariants & reconciliation guard](./02.06-double-entry-invariants.md) | 2 — Double-entry ledger | done |
 | 2.7 | [Transaction UI for postings](./02.07-transaction-postings-ui.md) 🎨 | 2 — Double-entry ledger | done |
 | 3.1 | [Architecture & docs update](./03.01-docs-and-prd.md) | 3 — Ship 2.0.0 | done |
-| 3.2 | [2.0.0 release](./03.02-release-2-0-0.md) | 3 — Ship 2.0.0 | todo |
+| 3.2 | [2.0.0 release](./03.02-release-2-0-0.md) | 3 — Ship 2.0.0 | done |
 | — | **↓ 2.1.0** | | |
 | 4.1 | [Household person & roles model](./04.01-household-person-model.md) | 4 — Household & Split | todo |
 | 4.2 | [Households schema + membership](./04.02-households-schema.md) | 4 — Household & Split | todo |
