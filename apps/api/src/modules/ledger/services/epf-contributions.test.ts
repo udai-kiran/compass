@@ -1,10 +1,10 @@
-import { test, after } from "node:test";
+import { test, after, describe } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { and, eq, isNull, isNotNull } from "drizzle-orm";
 import type { AccountType } from "@compass/shared";
 import { CreateEpfContributionSchema } from "@compass/shared";
-import { createDb } from "../../../db/index.ts";
+import { createDb, type Db } from "../../../db/index.ts";
 import { createPool } from "../../../infra/db.ts";
 import { accounts, categories, postings, transactions } from "../schema.ts";
 import { users } from "../../../db/schema.ts";
@@ -13,6 +13,8 @@ import { bankCashBalances } from "./balances.ts";
 import { listAccounts } from "./accounts.ts";
 import { recordEpfContribution } from "./epf-contributions.ts";
 import { getTransaction } from "./transactions.ts";
+import { resolveSystemAccounts, postTransaction } from "./post-entry.ts";
+import { buildOpeningPostings } from "./postings.ts";
 
 // ---------- DB-backed integration coverage for recordEpfContribution — this is a
 // money-path endpoint (creates real ledger entries in a retirement account), so
@@ -607,4 +609,171 @@ test("recordEpfContribution: custom notes → notes starts with breakdown then c
     row!.notes?.includes("\nmy custom note"),
     "notes should contain custom text after newline",
   );
+});
+
+// ---------- openingTransactionPaise coverage (P2–P5) ----------
+//
+// These tests exercise the postings-based EXISTS subquery in listAccounts that
+// detects opening transactions via `system_kind = 'opening'` accounts. The old
+// `is_opening` column on transactions was dropped in PR-G2; detection is now
+// purely through the posting graph.
+
+/**
+ * Creates an opening transaction for the given account via the canonical
+ * path used by createAccount / updateAccount: insert the transaction header,
+ * then call postTransaction with buildOpeningPostings. The helper is
+ * intentionally NOT idempotent — it inserts a new transaction each time,
+ * which is what P5 (duplicate sum) relies on.
+ */
+async function createOpeningTransaction(
+  db: Db,
+  userId: string,
+  accountId: string,
+  amountPaise: number,
+  date = new Date().toISOString().slice(0, 10),
+): Promise<string> {
+  const sys = await resolveSystemAccounts(db, userId);
+  const [txn] = await db
+    .insert(transactions)
+    .values({ userId, date, merchant: "Opening balance" })
+    .returning({ id: transactions.id });
+  await postTransaction(
+    db,
+    txn!.id,
+    userId,
+    buildOpeningPostings({
+      accountId,
+      amountPaise,
+      systemOpeningAccountId: sys.opening,
+    }),
+  );
+  return txn!.id;
+}
+
+describe("listAccounts openingTransactionPaise", () => {
+  // P2 -----------------------------------------------------------------------
+
+  test("returns the opening amount", async (t) => {
+    const userId = await createUser();
+    t.after(() => cleanupUser(userId));
+    const accountId = await createAccount(userId, "epf");
+
+    await createOpeningTransaction(db, userId, accountId, 500_000);
+
+    const list = await listAccounts(db, userId);
+    const row = list.find((a) => a.id === accountId)!;
+    assert.equal(row.openingTransactionPaise, 500_000);
+    // The accounts.opening_balance_paise column stays 0 — the amount lives
+    // in the ledger (postings), not on the account row.
+    assert.equal(row.openingBalancePaise, 0);
+  });
+
+  // P3a ----------------------------------------------------------------------
+
+  test("soft-deleted opening transaction is excluded", async (t) => {
+    const userId = await createUser();
+    t.after(() => cleanupUser(userId));
+    const accountId = await createAccount(userId, "epf");
+
+    const txnId = await createOpeningTransaction(db, userId, accountId, 500_000);
+    // Soft-delete: same mechanism used by softDeleteTransaction; every balance
+    // surface filters `deleted_at is null`, so the amount stops counting.
+    await db
+      .update(transactions)
+      .set({ deletedAt: new Date() })
+      .where(eq(transactions.id, txnId));
+
+    const list = await listAccounts(db, userId);
+    const row = list.find((a) => a.id === accountId)!;
+    assert.equal(row.openingTransactionPaise, 0);
+  });
+
+  // P3b ----------------------------------------------------------------------
+
+  test("non-opening transaction is excluded", async (t) => {
+    const userId = await createUser();
+    t.after(() => cleanupUser(userId));
+    const accountId = await createAccount(userId, "epf");
+
+    await createOpeningTransaction(db, userId, accountId, 500_000);
+
+    // An EPF contribution posts to the Income system account (system_kind =
+    // 'income'), not the Opening system account.  The EXISTS subquery in
+    // openingTxnPaise requires system_kind = 'opening', so this transaction
+    // must not be counted in openingTransactionPaise.
+    await recordEpfContribution(db, userId, {
+      toAccountId: accountId,
+      date: todayIso(),
+      employer: "Acme",
+      employeeSharePaise: 200_000,
+      employerSharePaise: 0,
+      pensionSharePaise: 0,
+      notes: "",
+    });
+
+    const list = await listAccounts(db, userId);
+    const row = list.find((a) => a.id === accountId)!;
+    // Only the opening transaction is counted; the income transaction is excluded.
+    assert.equal(row.openingTransactionPaise, 500_000);
+  });
+
+  // P3c ----------------------------------------------------------------------
+
+  test("cross-user isolation", async (t) => {
+    const userAId = await createUser();
+    t.after(() => cleanupUser(userAId));
+    const userBId = await createUser();
+    t.after(() => cleanupUser(userBId));
+
+    const accountA = await createAccount(userAId, "epf");
+    const accountB = await createAccount(userBId, "epf");
+
+    await createOpeningTransaction(db, userAId, accountA, 300_000);
+    await createOpeningTransaction(db, userBId, accountB, 700_000);
+
+    const listA = await listAccounts(db, userAId);
+    const rowA = listA.find((a) => a.id === accountA)!;
+    assert.equal(rowA.openingTransactionPaise, 300_000);
+
+    const listB = await listAccounts(db, userBId);
+    const rowB = listB.find((a) => a.id === accountB)!;
+    assert.equal(rowB.openingTransactionPaise, 700_000);
+  });
+
+  // P4 -----------------------------------------------------------------------
+
+  test("future-dated opening is included (no date cut on openingTransactionPaise)", async (t) => {
+    const userId = await createUser();
+    t.after(() => cleanupUser(userId));
+    const accountId = await createAccount(userId, "epf");
+
+    await createOpeningTransaction(db, userId, accountId, 500_000, "2099-01-01");
+
+    const list = await listAccounts(db, userId);
+    const row = list.find((a) => a.id === accountId)!;
+    // openingTransactionPaise has no date filter, so future-dated opening
+    // rows are always included regardless of current_date.
+    assert.equal(row.openingTransactionPaise, 500_000);
+    // postingSum DOES apply date <= current_date, so the future transaction
+    // does not yet contribute to the running balance.
+    assert.equal(row.balancePaise, 0);
+  });
+
+  // P5 -----------------------------------------------------------------------
+
+  test("duplicate opening rows sum", async (t) => {
+    const userId = await createUser();
+    t.after(() => cleanupUser(userId));
+    const accountId = await createAccount(userId, "epf");
+
+    await createOpeningTransaction(db, userId, accountId, 500_000);
+    await createOpeningTransaction(db, userId, accountId, 500_000);
+
+    const list = await listAccounts(db, userId);
+    const row = list.find((a) => a.id === accountId)!;
+    // Documents non-idempotent behavior when duplicates exist;
+    // planOpeningBalanceChange prevents this by construction (it finds and
+    // updates the existing opening row rather than inserting a second one).
+    assert.equal(row.openingTransactionPaise, 1_000_000);
+  });
 });

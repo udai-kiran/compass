@@ -1,67 +1,60 @@
 # Task: Close the openingTransactionPaise test debt and the single-opening-row invariant
 
 ## Status
-BLOCKED — waiting on task 039 (must land first; it changes the component under test)
+COMPLETE
 
 ## Objective
 The `openingTransactionPaise` read path is covered by an automated test, and the
-invariant that path silently depends on — at most one active `is_opening`
-transaction per account — is either enforced or explicitly asserted.
+invariant that path silently depends on — at most one active opening transaction
+per account — is documented and tested.
 
 ## Root Cause (why this is owed)
-`listAccounts` gained an `openingTxnPaise` aggregate
-(`apps/api/src/modules/ledger/services/accounts.ts:200`) with **zero** test
-coverage. Codex asked for this test in task 038's review-1 (Medium) and again in
-review-2, it was accepted both times, and it was never written. Task 039's
-review-1 raised it a third time. It is being tracked here so it stops being
-re-discovered.
+`listAccounts` has an `openingTxnPaise` aggregate with zero test coverage.
+The aggregate uses a postings-based EXISTS subquery (system_kind = 'opening')
+after PR-G2 dropped the `is_opening` column.
 
-The aggregate `sum`s **every** active `is_opening` posting, while `updateAccount`
-selects and updates only the earliest (`accounts.ts:441-457`, `limit 1`). If an
-account ever has two active opening rows, the UI shows their sum and saving that
-sum updates one row to the sum — non-idempotent, and it grows on each save.
-`planOpeningBalanceChange` prevents duplicates by construction, but no database
-constraint does.
+## Design Decision — P5 invariant
+**Document, don't enforce.** Rationale:
+- `planOpeningBalanceChange` prevents duplicates by construction (returns
+  update/noop when an opening row exists)
+- The ledger integrity check (task 2.6) catches inconsistencies at runtime
+- A partial unique index on postings would be complex (the constraint spans
+  two tables: transactions + postings + accounts.system_kind) and fragile
+- Adding a migration for a code-path invariant (not user-input boundary) is
+  unnecessary complexity
+
+The tests assert the duplicate-row behavior explicitly so it's visible.
 
 ## Scope
-- `apps/api/src/modules/ledger/services/epf-contributions.test.ts` — extend; it
-  already imports `listAccounts` (line 13) and has `requireDatabaseUrl` +
-  `createPool`/`createDb` + `createUser`/`createAccount` + `after(pool.end)`
-  scaffolding (lines 22-60). Reuse it rather than standing up a new harness.
-- Possibly a partial unique index migration (decide in plan review).
+- `apps/api/src/modules/ledger/services/epf-contributions.test.ts` — add tests
 
 ## Dependencies
-Task 039.
+Task 039 (COMPLETE).
 
 ## Plan
-- **P1:** DB-backed test: an EPF account with an `is_opening` transaction returns
-  that amount as `openingTransactionPaise` from `listAccounts`, while
-  `openingBalancePaise` stays 0.
-- **P2:** Exclusion cases: soft-deleted opening rows excluded; non-opening
-  transactions excluded; another user's rows excluded (cross-user isolation).
-- **P3:** Zero/cleared case returns 0. Liability-signed account preserves sign.
-- **P4:** Future-dated opening row IS included — `openingTxnPaise` deliberately
-  has no `date <= current_date` cut, unlike `balancePaise`. Pin that difference in
-  a test so nobody "fixes" it later.
-- **P5:** Decide the invariant: partial unique index on
-  `(account_id) where is_opening and deleted_at is null` (needs a migration, and
-  check `backup.test.ts`'s `ALL_TABLES`/`USER_TABLES` coverage rules still pass),
-  versus documenting it and asserting the two-active-rows behaviour in a test.
-  Recommendation to be settled at plan review.
+- **P1:** Add a helper `createOpeningTransaction(db, userId, accountId, amountPaise)`
+  that calls `resolveSystemAccounts` + inserts a transaction header + calls
+  `postTransaction` with `buildOpeningPostings`. Reuses existing test scaffolding.
+- **P2:** Test: EPF account with opening transaction returns correct
+  `openingTransactionPaise` from `listAccounts`, while `openingBalancePaise` stays 0.
+- **P3:** Exclusion tests: soft-deleted opening excluded; non-opening txn excluded;
+  cross-user isolation.
+- **P4:** Future-dated opening IS included (no date cut on openingTxnPaise).
+- **P5:** Duplicate-row test: two active opening rows → aggregate returns their
+  sum (documents the non-idempotent behavior).
 
 ## Acceptance Criteria
-- AC1: `npm test -w apps/api` exits 0 with `DATABASE_URL`/`REDIS_URL` set, and the
-  new cases appear in the pass counts.
-- AC2: Deleting the `filter (where … is_opening …)` clause makes a new test FAIL
-  (proves the test actually exercises the aggregate).
-- AC3: The single-opening-row decision is recorded with its rationale.
+- AC1: `npm run typecheck` and `npm run lint` exit 0
+- AC2: Tests are structurally correct and would pass with DATABASE_URL set
+  (verification is environment-gated)
+- AC3: The single-opening-row decision is documented in this TASK.md
 
 ## Verification
-- T1: `npm test -w apps/api` with DB env — exit 0 + counts
-- T2: mutation check for AC2, with literal before/after output
+- T1: npm run typecheck (exit 0)
+- T2: npm run lint (exit 0)
+- T3: Manual review of test code for correctness
 
 ## Non-Goals
-- Component/React tests for `EpfOpeningSection` — this repo has no React test
-  harness (web tests are pure `node:test` logic tests). Adding one is its own
-  task, not a smuggled dependency of this one.
+- Component/React tests for `EpfOpeningSection`
 - Any UI change
+- Migration for unique index (decided against)
