@@ -3,7 +3,7 @@
 > Companion to [`PRD.md`](./PRD.md) (the product spec) and [`tasks/README.md`](./tasks/README.md) (the executable task board).
 > This document answers two questions: **what does Compass do today**, and **what is it going to do next**.
 
-**Current release:** `v1.94.0` · 107 releases since 2026-07-15 · ~5 releases/day cadence.
+**Current release:** `v3.0.0` · 139 releases since 2026-07-15 · ~5 releases/day cadence.
 
 ---
 
@@ -26,14 +26,14 @@ It is not accounting software. The framing is a private financial coach: awarene
 
 Postgres and Redis are **external services**, not part of the compose stack. Object storage goes to self-hosted MinIO with a disk fallback.
 
-**Scale today:** 50,384 LOC of source · 19,909 LOC of tests across 88 test files · 51 tables · 155 API routes across 39 route modules · 31 web pages · 3 BullMQ queues with 9 schedulers.
+**Scale today:** 50,384 LOC of source · 19,909 LOC of tests across 88 test files · 49 tables · 155 API routes across 39 route modules · 31 web pages · 3 BullMQ queues with 9 schedulers.
 
 ---
 
 ## 2. What is available today
 
 ### Ledger & transactions
-Accounts (11 active types incl. PPF/EPF/SSY/NPS/overdraft/home-loan-OD; a deprecated `insurance` value is retained only because a Postgres enum cannot drop a value) · categories with a hierarchical tree and merge · cursor-paginated transactions · split transactions · bulk edit · transfer detection and linking · transaction↔transaction links (refunds, repayments) · receipt attachments · recurring templates · merchant rules and global rename · resources (the vehicle or connection an expense belongs to) · personal tasks · global ⌘K search.
+Accounts (11 active types incl. PPF/EPF/SSY/NPS/overdraft/home-loan-OD; a deprecated `insurance` value is retained only because a Postgres enum cannot drop a value) · categories with a hierarchical tree and merge · cursor-paginated transactions · category-split transactions (via postings) · bulk edit · transfer detection and posting-pair linking · transaction↔transaction links (refunds, repayments) · receipt attachments · recurring templates · merchant rules and global rename · resources (the vehicle or connection an expense belongs to) · personal tasks · global ⌘K search.
 
 ### Import & reconciliation
 CSV import as a staged pipeline — upload → column mapping with saved bank presets → editable row preview → commit → **rollback**. Duplicate detection with an explicit keep-anyway override. Credit-card statement import including password-protected PDFs. Mutual-fund CAS import with AMFI scheme mapping. Statement↔ledger reconciliation with carry-over absorption.
@@ -92,7 +92,7 @@ Full detail lives in [`tasks/README.md`](./tasks/README.md); 53 tasks across fou
 
 ### 2.0.0 — Architecture, planning & shopping *(in progress, 44 tasks)*
 
-**Architecture.** The app grew from an expense tracker into a full personal-finance OS without domain boundaries: 51 tables in one 1,767-line schema file, 102 files in a flat services folder, 39 route modules registered flat, and cache invalidation driven by a URL regex. 2.0.0 restructures this into eight modules with schema slices, prefixed Fastify plugins, and a domain event bus — guarded by a route-table snapshot proving all 155 URLs stay byte-identical.
+**Architecture.** The app grew from an expense tracker into a full personal-finance OS without domain boundaries: one 1,767-line schema file, 102 files in a flat services folder, 39 route modules registered flat, and cache invalidation driven by a URL regex. 3.0.0 completed the restructure: the schema is now 49 tables split into layered schema slices under `db/shared/` and `modules/*/schema.ts`, the flat services folder is replaced by eight domain modules with prefixed Fastify plugins, and a domain event bus is in place — all verified by a route-table snapshot that proved all 155 URLs stayed byte-identical.
 
 **Household & Split.** Compass becomes multi-player: households, explicit per-record sharing grants, and built-in expense splitting with a running who-owes-whom balance. The authorization model gains one central sharing guard; private stays the default.
 

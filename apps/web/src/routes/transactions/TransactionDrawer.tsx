@@ -275,12 +275,12 @@ export function TransactionDrawer({
             </div>
           ))}
           {rows.length > 0 && (
-            <p className={`mt-2 text-sm ${balanced ? "text-emerald-600" : "text-red-600"}`}>
-              {balanced ? "Balanced" : `Remainder: ${formatINR(remainder)}`}
+            <p className={`mt-2 text-sm ${balanced ? "text-emerald-600" : "text-amber-600"}`}>
+              {balanced ? "Balanced" : `Splits don't sum to transaction amount (remainder: ${formatINR(remainder)})`}
             </p>
           )}
           <button
-            disabled={!balanced || setSplits.isPending}
+            disabled={setSplits.isPending}
             onClick={() =>
               setSplits.mutate(
                 {
@@ -291,7 +291,12 @@ export function TransactionDrawer({
                     note: r.note,
                   })),
                 },
-                { onSuccess: () => toast("Splits saved", "success") },
+                {
+                  onSuccess: () => toast("Splits saved", "success"),
+                  onError: (error) => {
+                    toast(error instanceof Error ? error.message : "Failed to save splits", "error");
+                  },
+                },
               )
             }
             className="mt-2 rounded-md bg-brand-600 px-3 py-1.5 text-sm text-white disabled:opacity-40"
