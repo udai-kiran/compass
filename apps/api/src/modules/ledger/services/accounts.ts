@@ -40,11 +40,8 @@ export function openingBalanceRow(
   if (!seedsOpeningTransaction(input.type, input.openingBalancePaise)) return null;
   return {
     userId: input.userId,
-    accountId: input.accountId,
     date: input.date,
-    amountPaise: input.openingBalancePaise,
     merchant: "Opening balance",
-    isOpening: true,
   };
 }
 
@@ -198,7 +195,7 @@ export async function listAccounts(db: Db, userId: string): Promise<AccountWithB
       // The date/deleted/userId predicates live inside the aggregate FILTER (not
       // the outer WHERE) so the left join doesn't collapse zero-activity accounts.
       postingSum: sql<number>`coalesce(sum(${postings.amountPaise}) filter (where ${transactions.deletedAt} is null and ${transactions.date} <= current_date and ${transactions.userId} = ${userId}), 0)::bigint`,
-      openingTxnPaise: sql<number>`coalesce(sum(${postings.amountPaise}) filter (where ${transactions.isOpening} = true and ${transactions.deletedAt} is null and ${transactions.userId} = ${userId}), 0)::bigint`,
+      openingTxnPaise: sql<number>`coalesce(sum(${postings.amountPaise}) filter (where exists (select 1 from postings p2 join accounts a2 on a2.id = p2.account_id where p2.transaction_id = ${transactions.id} and a2.system_kind = 'opening') and ${transactions.deletedAt} is null and ${transactions.userId} = ${userId}), 0)::bigint`,
       subtype: bankDetails.subtype,
     })
     .from(accounts)
@@ -506,11 +503,8 @@ export async function updateAccount(
           .insert(transactions)
           .values({
             userId,
-            accountId: id,
             date: plan.txn.date,
-            amountPaise: plan.txn.amountPaise,
             merchant: "Opening balance",
-            isOpening: true,
           })
           .returning({ id: transactions.id });
         const sys = await resolveSystemAccounts(tx, userId);

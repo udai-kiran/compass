@@ -283,8 +283,6 @@ export async function unlinkTransfer(
       .insert(transactions)
       .values({
         userId,
-        accountId: inLeg.accountId,
-        amountPaise: inLeg.amountPaise,
         date: row.date,
         occurredAt: row.occurredAt,
         merchant: row.merchant,
@@ -364,8 +362,6 @@ export async function createTransfer(
       .insert(transactions)
       .values({
         userId,
-        accountId: legs.out.accountId,
-        amountPaise: legs.out.amountPaise,
         date: legs.out.date,
         merchant: legs.out.merchant,
         notes: legs.out.notes,

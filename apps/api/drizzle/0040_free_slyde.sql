@@ -1,3 +1,0 @@
-ALTER TABLE "reward_entries" ADD COLUMN "ingestion_id" uuid;--> statement-breakpoint
-ALTER TABLE "reward_entries" ADD CONSTRAINT "reward_entries_ingestion_id_email_ingestions_id_fk" FOREIGN KEY ("ingestion_id") REFERENCES "public"."email_ingestions"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
-CREATE INDEX "reward_entries_ingestion_idx" ON "reward_entries" USING btree ("ingestion_id");

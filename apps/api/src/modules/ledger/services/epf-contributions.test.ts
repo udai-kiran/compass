@@ -1,12 +1,12 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { and, eq, isNull, or } from "drizzle-orm";
+import { and, eq, isNull, isNotNull } from "drizzle-orm";
 import type { AccountType } from "@compass/shared";
 import { CreateEpfContributionSchema } from "@compass/shared";
 import { createDb } from "../../../db/index.ts";
 import { createPool } from "../../../infra/db.ts";
-import { accounts, categories, transactions, transferLinks } from "../schema.ts";
+import { accounts, categories, postings, transactions } from "../schema.ts";
 import { users } from "../../../db/schema.ts";
 import { HttpError } from "../../../lib/errors.ts";
 import { bankCashBalances } from "./balances.ts";
@@ -74,12 +74,20 @@ async function cleanupUser(userId: string): Promise<void> {
 
 async function transactionsFor(userId: string, accountId: string) {
   return db
-    .select()
+    .select({
+      id: transactions.id,
+      date: transactions.date,
+      source: transactions.source,
+      tags: transactions.tags,
+      merchant: transactions.merchant,
+      amountPaise: postings.amountPaise,
+      categoryId: postings.categoryId,
+    })
     .from(transactions)
+    .innerJoin(postings, and(eq(postings.transactionId, transactions.id), eq(postings.accountId, accountId)))
     .where(
       and(
         eq(transactions.userId, userId),
-        eq(transactions.accountId, accountId),
         isNull(transactions.deletedAt),
       ),
     );
@@ -139,15 +147,9 @@ test("recordEpfContribution: creates exactly one income transaction on the retir
   assert.equal(category!.userId, userId);
   assert.equal(category!.name, "EPF Contribution");
 
-  // Not a transfer: no transferLinkId, and no transfer_links row references it.
-  const links = await db
-    .select()
-    .from(transferLinks)
-    .where(or(eq(transferLinks.outTransactionId, row.id), eq(transferLinks.inTransactionId, row.id)));
-  assert.equal(links.length, 0);
-
-  // Also prove it via the real API-facing read path: the hydrated transaction
-  // (not just the raw table row) reports transferLinkId === null.
+  // Not a transfer: prove via the real API-facing read path.
+  // (transfer_links table was dropped in PR-G2; transfer shape is now a single
+  // header with two postings — isTransfer is derived from postings alone.)
   const hydrated = await getTransaction(db, userId, result.transactionId);
   assert.equal(hydrated.isTransfer, false);
 
@@ -326,11 +328,16 @@ test("recordEpfContribution: the 'EPF Contribution' category is created once and
     notes: "",
   });
 
-  const firstRow = await db.query.transactions.findFirst({ where: eq(transactions.id, first.transactionId) });
-  const secondRow = await db.query.transactions.findFirst({ where: eq(transactions.id, second.transactionId) });
-  assert.ok(firstRow?.categoryId);
-  assert.ok(secondRow?.categoryId);
-  assert.equal(firstRow!.categoryId, secondRow!.categoryId);
+  // categoryId now lives on the counter posting, not on the transaction header
+  const firstPosting = await db.query.postings.findFirst({
+    where: and(eq(postings.transactionId, first.transactionId), isNotNull(postings.categoryId)),
+  });
+  const secondPosting = await db.query.postings.findFirst({
+    where: and(eq(postings.transactionId, second.transactionId), isNotNull(postings.categoryId)),
+  });
+  assert.ok(firstPosting?.categoryId);
+  assert.ok(secondPosting?.categoryId);
+  assert.equal(firstPosting!.categoryId, secondPosting!.categoryId);
 
   const cats = await db
     .select()

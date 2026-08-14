@@ -1,1 +1,0 @@
-ALTER TABLE "insurance_policies" ADD COLUMN "policy_wording_url" text DEFAULT '' NOT NULL;

@@ -1,7 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
   bigint,
-  boolean,
   date,
   index,
   pgEnum,
@@ -27,9 +26,6 @@ export const transactions = pgTable(
     userId: uuid("user_id")
       .notNull()
       .references(() => users.id),
-    accountId: uuid("account_id")
-      .notNull()
-      .references(() => accounts.id),
     date: date("date").notNull(),
     /**
      * Precise transaction instant when known (a card alert / statement line
@@ -38,18 +34,7 @@ export const transactions = pgTable(
      * matching, where amount + timestamp uniquely ties a line to its ledger row.
      */
     occurredAt: timestamp("occurred_at", { withTimezone: true }),
-    amountPaise: bigint("amount_paise", { mode: "number" }).notNull(),
     merchant: text("merchant").notNull().default(""),
-    categoryId: uuid("category_id").references(() => categories.id),
-    /**
-     * Need-vs-want for this specific spend, overriding the category's default.
-     * Null = inherit (see `effectiveNecessity` in packages/shared).
-     *
-     * No check constraint like `categories` has: a transaction carries no `kind`
-     * to contradict, and sign alone does not disqualify a row — a refund against
-     * an essential purchase is still essential spend being reversed.
-     */
-    necessity: expenseNecessity("necessity"),
     notes: text("notes").notNull().default(""),
     tags: text("tags")
       .array()
@@ -57,18 +42,10 @@ export const transactions = pgTable(
       .default(sql`'{}'::text[]`),
     source: transactionSource("source").notNull().default("manual"),
     /**
-     * True for the single seed row carrying a bank/cash account's starting
-     * balance, so the account ledger reconciles instead of a balance appearing
-     * from a hidden column. Excluded from income/expense/spend aggregations the
-     * same way transfers are. A boolean (not a new `source` enum value) so the
-     * marker is usable in the same migration transaction that adds it.
-     */
-    isOpening: boolean("is_opening").notNull().default(false),
-    /**
      * Insurance policy this expense pays a premium for — a link to an
-     * insurance_policies row, kept apart from `accountId` (the account the money
-     * left). Null for ordinary transactions. Lets a policy show its premium
-     * history without being an account itself. See services/insurance.ts.
+     * insurance_policies row. Null for ordinary transactions. Lets a policy
+     * show its premium history without being an account itself.
+     * See services/insurance.ts.
      */
     policyId: uuid("policy_id").references((): AnyPgColumn => insurancePolicies.id, {
       onDelete: "set null",
@@ -106,8 +83,6 @@ export const transactions = pgTable(
       t.createdAt.desc(),
       t.id.desc(),
     ),
-    index("transactions_account_idx").on(t.accountId),
-    index("transactions_category_idx").on(t.categoryId),
     index("transactions_policy_idx").on(t.policyId),
     index("transactions_resource_idx").on(t.resourceId),
     index("transactions_recurring_template_idx").on(t.recurringTemplateId),

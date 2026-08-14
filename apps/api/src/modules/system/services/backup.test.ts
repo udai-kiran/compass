@@ -396,7 +396,7 @@ test("AC11: a task linked to an owned transaction, and an unlinked task, round-t
     await cleanupUser(destUserId);
   });
 
-  const [account] = await db
+  const [_account] = await db
     .insert(accounts)
     .values({ userId: sourceUserId, name: "Test bank", type: "bank" })
     .returning({ id: accounts.id });
@@ -404,9 +404,7 @@ test("AC11: a task linked to an owned transaction, and an unlinked task, round-t
     .insert(transactions)
     .values({
       userId: sourceUserId,
-      accountId: account!.id,
       date: "2026-01-05",
-      amountPaise: -50000,
       merchant: "Coffee shop",
     })
     .returning({ id: transactions.id });
@@ -575,15 +573,13 @@ test("A6 AC2: a dest user with seeded categories + system accounts restores; a r
   // Give the blocked dest a real non-system account.
   await db.insert(accounts).values({ userId: destBlocked, name: "Existing bank", type: "bank" });
 
-  const [account] = await db
+  const [_account] = await db
     .insert(accounts)
     .values({ userId: sourceUserId, name: "Source bank", type: "bank" })
     .returning({ id: accounts.id });
   await db.insert(transactions).values({
     userId: sourceUserId,
-    accountId: account!.id,
     date: "2026-01-05",
-    amountPaise: -5000,
     merchant: "Cafe",
   });
 
@@ -676,7 +672,13 @@ test("A6 AC3+AC4: restore re-synthesizes postings (never trusts archived rows)",
   const [openingRow] = await db
     .select({ id: transactions.id })
     .from(transactions)
-    .where(and(eq(transactions.userId, sourceUserId), eq(transactions.accountId, bank!.id), eq(transactions.isOpening, true)));
+    .where(
+      and(
+        eq(transactions.userId, sourceUserId),
+        sql`exists (select 1 from postings p1 where p1.transaction_id = ${transactions.id} and p1.account_id = ${bank!.id})`,
+        sql`exists (select 1 from postings p2 join accounts a on a.id = p2.account_id where p2.transaction_id = ${transactions.id} and a.system_kind = 'opening')`,
+      ),
+    );
 
   // 5. Soft-deleted transaction
   const deletedTxn = await createTransaction(db, sourceUserId, {
@@ -898,13 +900,6 @@ test("A6 AC3 OLD-style: archive with no postings restores other rows without syn
       deleted_at: now,
     },
   ];
-  header.tables.transaction_splits = [
-    { id: randomUUID(), transaction_id: splitId, category_id: foodId, amount_paise: -6000, note: "groceries", created_at: now },
-    { id: randomUUID(), transaction_id: splitId, category_id: transportId, amount_paise: -4000, note: "bus", created_at: now },
-  ];
-  header.tables.transfer_links = [
-    { id: randomUUID(), user_id: "source", out_transaction_id: outLegId, in_transaction_id: inLegId, auto: false, created_at: now },
-  ];
   // Archive has NO postings (old-style) — deliberately empty array.
   header.tables.postings = [];
 
@@ -1101,7 +1096,7 @@ test("A6 AC5 post-commit throw: reconcile failure does not roll back committed r
     ensureReady: async () => {},
   };
 
-  const [account] = await db
+  const [_account] = await db
     .insert(accounts)
     .values({ userId: sourceUserId, name: "Source bank", type: "bank" })
     .returning({ id: accounts.id });
@@ -1109,9 +1104,7 @@ test("A6 AC5 post-commit throw: reconcile failure does not roll back committed r
     .insert(transactions)
     .values({
       userId: sourceUserId,
-      accountId: account!.id,
       date: "2026-01-05",
-      amountPaise: -5000,
       merchant: "Cafe",
     })
     .returning({ id: transactions.id });
@@ -1266,7 +1259,7 @@ test("transactionsCsv AC3: ordinary expense — postings parity (amount, account
   t.after(() => cleanupUser(fx.userId));
   const [txn] = await db
     .insert(transactions)
-    .values({ userId: fx.userId, accountId: fx.bankId, date: "2026-01-15", amountPaise: -5000, merchant: "Cafe", categoryId: fx.foodId })
+    .values({ userId: fx.userId, date: "2026-01-15", merchant: "Cafe" })
     .returning({ id: transactions.id });
   await db.insert(postings).values([
     { transactionId: txn!.id, accountId: fx.bankId, amountPaise: -5000 },
@@ -1289,7 +1282,7 @@ test("transactionsCsv AC4: postings values override stale legacy fields (drift)"
   // Legacy transaction points to bank/food/-5000; postings say wallet/transport/-8000
   const [txn] = await db
     .insert(transactions)
-    .values({ userId: fx.userId, accountId: fx.bankId, date: "2026-01-10", amountPaise: -5000, merchant: "Drift test", categoryId: fx.foodId })
+    .values({ userId: fx.userId, date: "2026-01-10", merchant: "Drift test" })
     .returning({ id: transactions.id });
   await db.insert(postings).values([
     { transactionId: txn!.id, accountId: fx.walletId, amountPaise: -8000 }, // real: wallet, not bank
@@ -1308,7 +1301,7 @@ test("transactionsCsv AC5: split transaction yields one row with joined sorted d
   t.after(() => cleanupUser(fx.userId));
   const [txn] = await db
     .insert(transactions)
-    .values({ userId: fx.userId, accountId: fx.bankId, date: "2026-01-20", amountPaise: -10000, merchant: "Split purchase" })
+    .values({ userId: fx.userId, date: "2026-01-20", merchant: "Split purchase" })
     .returning({ id: transactions.id });
   await db.insert(postings).values([
     { transactionId: txn!.id, accountId: fx.bankId, amountPaise: -10000 }, // real posting
@@ -1325,7 +1318,7 @@ test("transactionsCsv AC6: transfer pair — one row per leg, correct sign and a
   t.after(() => cleanupUser(fx.userId));
   const [outTxn] = await db
     .insert(transactions)
-    .values({ userId: fx.userId, accountId: fx.bankId, date: "2026-01-05", amountPaise: -20000, merchant: "Transfer out" })
+    .values({ userId: fx.userId, date: "2026-01-05", merchant: "Transfer out" })
     .returning({ id: transactions.id });
   await db.insert(postings).values([
     { transactionId: outTxn!.id, accountId: fx.bankId, amountPaise: -20000 },
@@ -1333,7 +1326,7 @@ test("transactionsCsv AC6: transfer pair — one row per leg, correct sign and a
   ]);
   const [inTxn] = await db
     .insert(transactions)
-    .values({ userId: fx.userId, accountId: fx.walletId, date: "2026-01-05", amountPaise: 20000, merchant: "Transfer in" })
+    .values({ userId: fx.userId, date: "2026-01-05", merchant: "Transfer in" })
     .returning({ id: transactions.id });
   await db.insert(postings).values([
     { transactionId: inTxn!.id, accountId: fx.walletId, amountPaise: 20000 },
@@ -1357,8 +1350,8 @@ test("transactionsCsv AC7+AC13: no postings → blank Amount, Account AND Catego
   t.after(() => cleanupUser(fx.userId));
   // Transaction with a stale legacy category_id but no postings
   await db.insert(transactions).values({
-    userId: fx.userId, accountId: fx.bankId, date: "2026-01-25",
-    amountPaise: -999, merchant: "No posting txn", categoryId: fx.foodId,
+    userId: fx.userId, date: "2026-01-25",
+    merchant: "No posting txn",
   });
   const rows = parseCsvRows(await transactionsCsv(db, fx.userId));
   assert.equal(rows.length, 2, "postings-less transaction still yields a row");
@@ -1377,20 +1370,16 @@ test("transactionsCsv AC8: soft-deleted excluded; another user's transaction exc
   });
   // One live transaction for fx.userId
   await db.insert(transactions).values({
-    userId: fx.userId, accountId: fx.bankId, date: "2026-01-30", amountPaise: -1000, merchant: "Live txn",
+    userId: fx.userId, date: "2026-01-30", merchant: "Live txn",
   });
   // Soft-deleted transaction for fx.userId — must be excluded
   await db.insert(transactions).values({
-    userId: fx.userId, accountId: fx.bankId, date: "2026-01-29",
-    amountPaise: -2000, merchant: "Deleted txn", deletedAt: new Date(),
+    userId: fx.userId, date: "2026-01-29",
+    merchant: "Deleted txn", deletedAt: new Date(),
   });
   // Another user's transaction — must be excluded
-  const [otherAcc] = await db
-    .insert(accounts)
-    .values({ userId: otherId, name: "Other bank", type: "bank" })
-    .returning({ id: accounts.id });
   await db.insert(transactions).values({
-    userId: otherId, accountId: otherAcc!.id, date: "2026-01-28", amountPaise: -3000, merchant: "Other user txn",
+    userId: otherId, date: "2026-01-28", merchant: "Other user txn",
   });
   const rows = parseCsvRows(await transactionsCsv(db, fx.userId));
   assert.equal(rows.length, 2, "only the one live transaction for this user");
@@ -1407,7 +1396,7 @@ test("transactionsCsv AC9: rows ordered by date desc", async (t) => {
     ["2026-01-10", "Newest"],
   ] as [string, string][]) {
     await db.insert(transactions).values({
-      userId: fx.userId, accountId: fx.bankId, date, amountPaise: -100, merchant,
+      userId: fx.userId, date, merchant,
     });
   }
   const rows = parseCsvRows(await transactionsCsv(db, fx.userId));
@@ -1423,7 +1412,7 @@ test("transactionsCsv AC11 D9.2: transfer leg exports blank Category even when t
   // Transaction with stale legacy category (as if categorised before being linked as transfer)
   const [txn] = await db
     .insert(transactions)
-    .values({ userId: fx.userId, accountId: fx.bankId, date: "2026-02-01", amountPaise: -15000, merchant: "Transfer with stale category", categoryId: fx.foodId })
+    .values({ userId: fx.userId, date: "2026-02-01", merchant: "Transfer with stale category" })
     .returning({ id: transactions.id });
   // Postings are transfer shape: real (bank) + counter (clearing, no category)
   await db.insert(postings).values([
@@ -1440,7 +1429,7 @@ test("transactionsCsv AC12 D9.3: opening row exports real amount/account and bla
   t.after(() => cleanupUser(fx.userId));
   const [txn] = await db
     .insert(transactions)
-    .values({ userId: fx.userId, accountId: fx.bankId, date: "2026-01-01", amountPaise: 100000, merchant: "Opening balance", isOpening: true, categoryId: fx.foodId })
+    .values({ userId: fx.userId, date: "2026-01-01", merchant: "Opening balance" })
     .returning({ id: transactions.id });
   await db.insert(postings).values([
     { transactionId: txn!.id, accountId: fx.bankId, amountPaise: 100000 },
@@ -1466,7 +1455,7 @@ test("transactionsCsv AC14: categories sorted deterministically (collate C), dup
     .returning({ id: categories.id });
   const [txn] = await db
     .insert(transactions)
-    .values({ userId: fx.userId, accountId: fx.bankId, date: "2026-01-15", amountPaise: -30000, merchant: "Multi-category" })
+    .values({ userId: fx.userId, date: "2026-01-15", merchant: "Multi-category" })
     .returning({ id: transactions.id });
   // Insert counter postings: Zulu first, then Transport, then Food twice (duplicate)
   await db.insert(postings).values([
@@ -1491,7 +1480,7 @@ test("transactionsCsv AC15: CSV escaping — comma in category, double-quote in 
   const [txn] = await db
     .insert(transactions)
     .values({
-      userId: fx.userId, accountId: fx.bankId, date: "2026-02-10", amountPaise: -1500,
+      userId: fx.userId, date: "2026-02-10",
       merchant: 'Cafe "Gourmet"',
       notes: "Bill includes\nnewline",
     })
@@ -1516,13 +1505,13 @@ test("transactionsCsv AC16 D7: posting referencing another user's account/catego
     await cleanupUser(userId);
     await cleanupUser(otherUserId);
   });
-  const [myBank] = await db.insert(accounts).values({ userId, name: "My Bank", type: "bank" }).returning({ id: accounts.id });
+  const [_myBank] = await db.insert(accounts).values({ userId, name: "My Bank", type: "bank" }).returning({ id: accounts.id });
   const [myExpenses] = await db.insert(accounts).values({ userId, name: "Expenses", type: "system", systemKind: "expenses" }).returning({ id: accounts.id });
   const [otherBank] = await db.insert(accounts).values({ userId: otherUserId, name: "Other Bank", type: "bank" }).returning({ id: accounts.id });
   const [otherCat] = await db.insert(categories).values({ userId: otherUserId, name: "Other Category", kind: "expense" }).returning({ id: categories.id });
   const [txn] = await db
     .insert(transactions)
-    .values({ userId, accountId: myBank!.id, date: "2026-02-20", amountPaise: -5000, merchant: "Leakage test" })
+    .values({ userId, date: "2026-02-20", merchant: "Leakage test" })
     .returning({ id: transactions.id });
   // Real posting references other user's bank account (a.user_id ≠ t.user_id → filtered)
   // Counter posting references other user's category (c.user_id ≠ t.user_id → filtered)
@@ -1557,7 +1546,7 @@ test("transactionsCsv AC17 D8: archived account and archived category still appe
     .returning({ id: categories.id });
   const [txn] = await db
     .insert(transactions)
-    .values({ userId, accountId: archivedBank!.id, date: "2026-01-15", amountPaise: -2000, merchant: "Archived acct txn" })
+    .values({ userId, date: "2026-01-15", merchant: "Archived acct txn" })
     .returning({ id: transactions.id });
   await db.insert(postings).values([
     { transactionId: txn!.id, accountId: archivedBank!.id, amountPaise: -2000 },
@@ -1590,7 +1579,7 @@ test("transactionsCsv AC17 D8: renamed account shows the NEW name in the export"
     .returning({ id: categories.id });
   const [txn] = await db
     .insert(transactions)
-    .values({ userId, accountId: bank!.id, date: "2026-03-01", amountPaise: -3000, merchant: "Rename test" })
+    .values({ userId, date: "2026-03-01", merchant: "Rename test" })
     .returning({ id: transactions.id });
   await db.insert(postings).values([
     { transactionId: txn!.id, accountId: bank!.id, amountPaise: -3000 },
@@ -1611,7 +1600,7 @@ test("transactionsCsv D9.6: transaction with two real postings exports exactly o
   t.after(() => cleanupUser(fx.userId));
   const [txn] = await db
     .insert(transactions)
-    .values({ userId: fx.userId, accountId: fx.bankId, date: "2026-03-10", amountPaise: -7000, merchant: "Two real postings" })
+    .values({ userId: fx.userId, date: "2026-03-10", merchant: "Two real postings" })
     .returning({ id: transactions.id });
   // Insert two real (system_kind IS NULL) postings with different amounts.
   // Hard-coded UUID literals are used so the lexical ordering (and therefore which

@@ -32,7 +32,7 @@ test("last 4 needs four digits to exist", () => {
   assert.equal(last4Of(""), null);
 });
 
-test("a bank/cash opening balance becomes an 'Opening balance' ledger row", () => {
+test("a bank/cash opening balance becomes an 'Opening balance' ledger row (PR-G2: header only, amount in postings)", () => {
   const row = openingBalanceRow({
     userId: "u1",
     accountId: "a1",
@@ -40,18 +40,16 @@ test("a bank/cash opening balance becomes an 'Opening balance' ledger row", () =
     openingBalancePaise: 50_000_00,
     date: "2025-04-01",
   });
+  // After PR-G2 the header row only carries userId/date/merchant; accountId/amountPaise/isOpening
+  // are dropped from transactions and live in postings.
   assert.deepEqual(row, {
     userId: "u1",
-    accountId: "a1",
     date: "2025-04-01",
-    amountPaise: 50_000_00,
     merchant: "Opening balance",
-    isOpening: true,
   });
-  // cash too
-  assert.equal(
-    openingBalanceRow({ userId: "u1", accountId: "a2", type: "cash", openingBalancePaise: 6000_00, date: "2025-04-01" })?.isOpening,
-    true,
+  // cash too: non-null row produced
+  assert.ok(
+    openingBalanceRow({ userId: "u1", accountId: "a2", type: "cash", openingBalancePaise: 6000_00, date: "2025-04-01" }) !== null,
   );
 });
 
@@ -59,19 +57,16 @@ test("no opening row for a zero balance; all non-zero types produce a row (PR-G1
   const base = { userId: "u1", accountId: "a1", date: "2025-04-01" as const };
   // zero balance → nothing to seed
   assert.equal(openingBalanceRow({ ...base, type: "bank", openingBalancePaise: 0 }), null);
-  // All account types now create an Opening balance ledger row (PR-G1 D10: all types unified)
+  // All account types now create an Opening balance ledger row (PR-G1 D10: all types unified).
+  // After PR-G2 the row only carries the header; amount/account live in postings.
   const cardRow = openingBalanceRow({ ...base, type: "credit_card", openingBalancePaise: -1000_00 });
   assert.ok(cardRow !== null, "credit_card with non-zero balance must produce an opening row");
-  assert.equal(cardRow!.amountPaise, -1000_00);
-  assert.equal(cardRow!.isOpening, true);
 
   const ppfRow = openingBalanceRow({ ...base, type: "ppf", openingBalancePaise: 92_000_00 });
   assert.ok(ppfRow !== null, "ppf with non-zero balance must produce an opening row");
-  assert.equal(ppfRow!.amountPaise, 92_000_00);
 
   const invRow = openingBalanceRow({ ...base, type: "investment", openingBalancePaise: 10_000_00 });
   assert.ok(invRow !== null, "investment with non-zero balance must produce an opening row");
-  assert.equal(invRow!.amountPaise, 10_000_00);
 });
 
 test("sipSourceBlockedMessage: names the SIP count so the delete guard reads like the transaction-count check", () => {

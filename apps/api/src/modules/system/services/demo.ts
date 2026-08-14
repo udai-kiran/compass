@@ -179,8 +179,21 @@ async function seedInto(db: Db, userId: string): Promise<void> {
     await tx.update(accounts).set({ goalId: car!.id }).where(eq(accounts.id, ppf!.id));
 
     // ---- Transactions: MONTHS of income + everyday spending ----
-    type Txn = typeof transactions.$inferInsert;
-    const txns: Txn[] = [];
+    // DemoSeed holds the fields needed to build postings (accountId, amountPaise,
+    // categoryId) alongside the header fields written to the transactions table.
+    // These are NOT transaction columns — `account_id`, `amount_paise`, and
+    // `category_id` were dropped from transactions in PR-G2; they live only in
+    // postings now.
+    interface DemoSeed {
+      userId: string;
+      accountId: string;
+      date: string;
+      amountPaise: number;
+      categoryId?: string;
+      merchant: string;
+      source?: "manual" | "import" | "recurring";
+    }
+    const txns: DemoSeed[] = [];
     const spend = (accountId: string, monthsAgo: number, day: number, rupees: number, category: string, merchant: string) =>
       txns.push({ userId, accountId, date: monthDay(monthsAgo, day), amountPaise: r(-rupees), categoryId: catId(category), merchant, source: "manual" });
     const earn = (accountId: string, monthsAgo: number, day: number, rupees: number, category: string, merchant: string) =>
@@ -188,8 +201,8 @@ async function seedInto(db: Db, userId: string): Promise<void> {
 
     // Opening balances as real ledger rows (dated before the activity below) so the
     // bank/cash ledgers reconcile — the same model createAccount uses for new accounts.
-    txns.push({ userId, accountId: hdfc!.id, date: monthDay(12, 1), amountPaise: r(180000), merchant: "Opening balance", isOpening: true });
-    txns.push({ userId, accountId: cash!.id, date: monthDay(12, 1), amountPaise: r(6000), merchant: "Opening balance", isOpening: true });
+    txns.push({ userId, accountId: hdfc!.id, date: monthDay(12, 1), amountPaise: r(180000), merchant: "Opening balance" });
+    txns.push({ userId, accountId: cash!.id, date: monthDay(12, 1), amountPaise: r(6000), merchant: "Opening balance" });
 
     for (let m = MONTHS - 1; m >= 0; m--) {
       earn(hdfc!.id, m, 1, 150000, "Salary", "Acme Corp Payroll");
@@ -214,7 +227,12 @@ async function seedInto(db: Db, userId: string): Promise<void> {
       spend(hdfc!.id, m, 6, 9000, "Other Expense", "HDFC Card Payment");
       earn(hdfcCard!.id, m, 6, 9000, "Refunds", "Card Payment Received");
     }
-    const insertedTxns = await tx.insert(transactions).values(txns).returning({ id: transactions.id });
+    // Insert only the header columns (date, merchant, source, userId); postings
+    // carry account, amount, and category.
+    const insertedTxns = await tx
+      .insert(transactions)
+      .values(txns.map(({ userId: u, date, merchant, source }) => ({ userId: u, date, merchant, source: source ?? "manual" })))
+      .returning({ id: transactions.id });
     // Build each demo row's postings from the seed values that produced it.
     // Demo card-payment pairs are deliberately NOT linked as transfers, so they
     // stay two ordinary transactions — the seed exercises the ordinary and
@@ -226,7 +244,7 @@ async function seedInto(db: Db, userId: string): Promise<void> {
         tx,
         row.id,
         userId,
-        seed.isOpening
+        seed.merchant === "Opening balance"
           ? buildOpeningPostings({
               accountId: seed.accountId,
               amountPaise: seed.amountPaise,

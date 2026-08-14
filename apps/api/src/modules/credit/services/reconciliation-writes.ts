@@ -94,7 +94,7 @@ export async function recomputeReconciliation(
               and(
                 inArray(transactions.id, candidateIds),
                 eq(transactions.userId, userId),
-                eq(transactions.accountId, accountId),
+                sql`exists (select 1 from postings p where p.transaction_id = ${transactions.id} and p.account_id = ${accountId})`,
                 isNull(transactions.deletedAt),
               ),
             );
@@ -136,7 +136,7 @@ export async function recomputeReconciliation(
         and(
           eq(transactions.reconciledStatementId, id),
           eq(transactions.userId, userId),
-          eq(transactions.accountId, accountId),
+          sql`exists (select 1 from postings p where p.transaction_id = ${transactions.id} and p.account_id = ${accountId})`,
         ),
       );
     if (stats.matchedTxnIds.length > 0) {
@@ -147,7 +147,7 @@ export async function recomputeReconciliation(
           and(
             inArray(transactions.id, stats.matchedTxnIds),
             eq(transactions.userId, userId),
-            eq(transactions.accountId, accountId),
+            sql`exists (select 1 from postings p where p.transaction_id = ${transactions.id} and p.account_id = ${accountId})`,
             isNull(transactions.deletedAt),
           ),
         );
@@ -365,11 +365,8 @@ export async function absorbCarryover(
             .insert(transactions)
             .values({
               userId,
-              accountId,
               date: plan.txn.date,
-              amountPaise: plan.txn.amountPaise,
               merchant: "Opening balance",
-              isOpening: true,
             })
             .returning({ id: transactions.id });
           const sys = await resolveSystemAccounts(tx, userId);

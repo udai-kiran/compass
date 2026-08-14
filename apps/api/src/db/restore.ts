@@ -16,9 +16,11 @@ export const DEFERRED_RESTORE_COLUMNS = {
   transactions: ["policy_id", "recurring_template_id", "reconciled_statement_id", "sip_id"],
 } as const satisfies Record<string, readonly string[]>;
 
-/** Database-generated columns present in `select *` dumps but never insertable. */
+/** Database-generated columns present in `select *` dumps but never insertable.
+ * `is_opening` was a legacy column on `transactions` that was dropped; old
+ * per-user archives may still carry it, so we silently drop it on restore. */
 export const OMITTED_RESTORE_COLUMNS = {
-  transactions: ["search"],
+  transactions: ["search", "is_opening"],
 } as const satisfies Record<string, readonly string[]>;
 
 function ident(value: string): string {

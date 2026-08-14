@@ -353,7 +353,7 @@ export async function getCardActivity(
     where p.account_id = ${accountId}
       and t.user_id = ${userId} and t.deleted_at is null
       and t.date >= ${fromInclusive} and t.date <= ${ref}
-      and not t.is_opening
+      and not exists (select 1 from postings p2 join accounts a2 on a2.id = p2.account_id where p2.transaction_id = t.id and a2.system_kind = 'opening')
     order by t.date desc, t.id desc
   `);
   const rows = rawRows.rows as Array<{

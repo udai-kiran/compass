@@ -1,7 +1,6 @@
 import { eq, sql } from "drizzle-orm";
 import type { Db } from "../../../db/index.ts";
 import { transactions, users } from "../../../db/schema.ts";
-import { reprojectLegacyColumns } from "./transactions.ts";
 import { currentPostings, systemKindLookup } from "./post-entry.ts";
 import { classifyShape } from "./postings.ts";
 
@@ -71,43 +70,17 @@ export async function findInconsistentPostings(
 }
 
 /**
- * Re-projects every transaction's legacy columns from its postings, one row per
- * db transaction so a single bad row cannot abort the rest.
+ * PR-G2: the legacy columns (`account_id`, `amount_paise`, `category_id`,
+ * `necessity`, `is_opening`) and `transaction_splits` table have been dropped.
+ * There is nothing to re-project. This function is a no-op retained only so
+ * callers that have not yet been updated do not fail to compile.
  *
- * This is the ONLY repair left, and it only ever writes the doomed columns —
- * it cannot change a posting. It exists because those columns are still NOT
- * NULL until PR-G2 drops them; after that this function goes with them.
+ * @deprecated Remove all call sites; function will be deleted in a follow-up.
  */
 export async function reprojectAllLegacyColumns(
-  db: Db,
+  _db: Db,
 ): Promise<{ users: number; checked: number; repaired: number; failures: PostingProblem[] }> {
-  const userRows = await db.select({ id: users.id }).from(users);
-  let checked = 0;
-  let repaired = 0;
-  const failures: PostingProblem[] = [];
-
-  for (const u of userRows) {
-    const ids = await db
-      .select({ id: transactions.id })
-      .from(transactions)
-      .where(eq(transactions.userId, u.id));
-    for (const { id } of ids) {
-      checked++;
-      try {
-        await db.transaction(async (t) => {
-          await reprojectLegacyColumns(t, u.id, id);
-        });
-        repaired++;
-      } catch (error) {
-        failures.push({
-          userId: u.id,
-          transactionId: id,
-          reason: error instanceof Error ? error.message : String(error),
-        });
-      }
-    }
-  }
-  return { users: userRows.length, checked, repaired, failures };
+  return { users: 0, checked: 0, repaired: 0, failures: [] };
 }
 
 /**
@@ -133,15 +106,12 @@ export async function assertNoLegacyShapes(db: Db): Promise<void> {
       where a.system_kind = 'clearing'
     `)
   ).rows as Array<{ n: number }>;
-  const [links] = (await db.execute(sql`select count(*)::int as n from transfer_links`))
-    .rows as Array<{ n: number }>;
   const [openings] = (
     await db.execute(sql`select count(*)::int as n from accounts where opening_balance_paise <> 0`)
   ).rows as Array<{ n: number }>;
 
   const problems: string[] = [];
   if ((clearing?.n ?? 0) > 0) problems.push(`${clearing!.n} Clearing postings`);
-  if ((links?.n ?? 0) > 0) problems.push(`${links!.n} transfer_links rows`);
   if ((openings?.n ?? 0) > 0) {
     problems.push(`${openings!.n} accounts with a non-zero opening_balance_paise`);
   }

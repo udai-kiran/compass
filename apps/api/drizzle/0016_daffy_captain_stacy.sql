@@ -1,1 +1,0 @@
-ALTER TABLE "card_details" ADD COLUMN "bill_mobile" text DEFAULT '' NOT NULL;

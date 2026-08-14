@@ -1,2 +1,0 @@
-CREATE TYPE "public"."health_type" AS ENUM('indemnity', 'top_up', 'critical_illness', 'hospital_cash', 'personal_accident', 'disease_specific');--> statement-breakpoint
-ALTER TABLE "insurance_policies" ADD COLUMN "health_type" "health_type";

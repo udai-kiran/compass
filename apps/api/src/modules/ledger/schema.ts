@@ -13,8 +13,6 @@
 
 import { sql } from "drizzle-orm";
 import {
-  bigint,
-  boolean,
   check,
   date,
   index,
@@ -29,51 +27,12 @@ import { users } from "../../db/core-schema.ts";
 
 // Symbols imported for FK references in resident table definitions.
 import { transactions } from "../../db/shared/ledger.ts";
-import { categories } from "../../db/shared/foundation.ts";
 
 // Re-export shared symbols (including those imported above for FKs).
 export { accounts, accountType } from "../../db/shared/hubs.ts";
 export { categories, categoryKind, expenseNecessity, resourceKind, resources } from "../../db/shared/foundation.ts";
 export { recurringFrequency, recurringKind, recurringTemplates } from "../../db/shared/recurring.ts";
 export { transactions, transactionSource, postings } from "../../db/shared/ledger.ts";
-
-export const transactionSplits = pgTable(
-  "transaction_splits",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    transactionId: uuid("transaction_id")
-      .notNull()
-      .references(() => transactions.id, { onDelete: "cascade" }),
-    categoryId: uuid("category_id")
-      .notNull()
-      .references(() => categories.id),
-    amountPaise: bigint("amount_paise", { mode: "number" }).notNull(),
-    note: text("note").notNull().default(""),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  },
-  (t) => [index("transaction_splits_tx_idx").on(t.transactionId)],
-);
-
-export const transferLinks = pgTable(
-  "transfer_links",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    userId: uuid("user_id")
-      .notNull()
-      .references(() => users.id),
-    outTransactionId: uuid("out_transaction_id")
-      .notNull()
-      .unique()
-      .references(() => transactions.id, { onDelete: "cascade" }),
-    inTransactionId: uuid("in_transaction_id")
-      .notNull()
-      .unique()
-      .references(() => transactions.id, { onDelete: "cascade" }),
-    auto: boolean("auto").notNull().default(false),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  },
-  (t) => [index("transfer_links_user_idx").on(t.userId)],
-);
 
 export const transactionLinks = pgTable(
   "transaction_links",

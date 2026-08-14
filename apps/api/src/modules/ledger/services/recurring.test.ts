@@ -5,7 +5,7 @@ import { and, eq, isNull, sql } from "drizzle-orm";
 import type { AccountType, RecurringKind } from "@compass/shared";
 import { createDb } from "../../../db/index.ts";
 import { createPool } from "../../../infra/db.ts";
-import { accounts, recurringTemplates, transactions } from "../schema.ts";
+import { accounts, postings, recurringTemplates, transactions } from "../schema.ts";
 import { emiDetails, users } from "../../../db/schema.ts";
 import { HttpError } from "../../../lib/errors.ts";
 import { createEmi, listEmiInstallments, upsertEmiDetails } from "../../credit/services/emis.ts";
@@ -130,12 +130,22 @@ async function cleanupUser(userId: string): Promise<void> {
 
 async function transactionsFor(userId: string, accountId: string, templateId: string) {
   return db
-    .select()
+    .select({
+      id: transactions.id,
+      date: transactions.date,
+      merchant: transactions.merchant,
+      notes: transactions.notes,
+      source: transactions.source,
+      recurringTemplateId: transactions.recurringTemplateId,
+      resourceId: transactions.resourceId,
+      amountPaise: postings.amountPaise,
+      categoryId: postings.categoryId,
+    })
     .from(transactions)
+    .innerJoin(postings, and(eq(postings.transactionId, transactions.id), eq(postings.accountId, accountId)))
     .where(
       and(
         eq(transactions.userId, userId),
-        eq(transactions.accountId, accountId),
         eq(transactions.recurringTemplateId, templateId),
         isNull(transactions.deletedAt),
       ),
@@ -317,17 +327,16 @@ test("materializeDue: an EMI's destination-account balance walks from -principal
 
   await materializeDue(db);
 
-  const destRows = await db
-    .select()
-    .from(transactions)
-    .where(and(eq(transactions.accountId, destId), isNull(transactions.deletedAt)));
-  const destAcc = await db.select().from(accounts).where(eq(accounts.id, destId));
-  const openingBalancePaise = destAcc[0]!.openingBalancePaise;
-  const balance =
-    openingBalancePaise + destRows.reduce((sum, r) => sum + r.amountPaise, 0);
-  // -100000 + (33000 + 33330 + 33663) = -7
+  // Balance = sum of all postings on destId (opening -100000 + installments).
+  const balanceResult = await db
+    .select({ balance: sql<string>`coalesce(sum(${postings.amountPaise}), 0)::bigint` })
+    .from(postings)
+    .innerJoin(transactions, and(eq(transactions.id, postings.transactionId), isNull(transactions.deletedAt)))
+    .where(eq(postings.accountId, destId));
+  const balance = Number(balanceResult[0]!.balance);
+  // -100000 (opening) + 33000 + 33330 + 33663 = -7
   assert.equal(balance, -7);
-  assert.ok(balance > openingBalancePaise); // moved toward 0
+  assert.ok(balance > -100000); // moved toward 0 from initial -100000
   void emi;
 });
 
@@ -465,11 +474,11 @@ test("materializeDue: a destination account belonging to a different user (corru
   assert.equal(sourceRows.length, 3);
   const crossRows = await transactionsFor(userB, otherUsersAccount, emi.templateId);
   assert.equal(crossRows.length, 0);
-  const otherUsersAccountAnyRows = await db
-    .select()
-    .from(transactions)
-    .where(eq(transactions.accountId, otherUsersAccount));
-  assert.equal(otherUsersAccountAnyRows.length, 0);
+  const otherUsersAccountPostings = await db
+    .select({ id: postings.transactionId })
+    .from(postings)
+    .where(eq(postings.accountId, otherUsersAccount));
+  assert.equal(otherUsersAccountPostings.length, 0);
 });
 
 // ---------- AC14: rollback/atomicity ----------

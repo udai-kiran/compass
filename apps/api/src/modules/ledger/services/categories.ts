@@ -9,7 +9,6 @@ import type {
 import type { Db, DbOrTx } from "../../../db/index.ts";
 import { categories, postings } from "../schema.ts";
 import { HttpError } from "../../../lib/errors.ts";
-import { reprojectLegacyColumns } from "./transactions.ts";
 
 type CategoryRow = typeof categories.$inferSelect;
 
@@ -157,7 +156,7 @@ export async function mergeCategory(
     // where the legacy version needed two (transactions + transaction_splits)
     // and a per-row rebuild afterwards. Transfers and openings carry no
     // category, so they cannot match and are untouched.
-    const affected = await tx
+    const _affected = await tx
       .selectDistinct({ id: postings.transactionId })
       .from(postings)
       .where(eq(postings.categoryId, id));
@@ -169,10 +168,6 @@ export async function mergeCategory(
       .where(eq(categories.parentId, id));
     await tx.delete(categories).where(eq(categories.id, id));
 
-    // Re-project the doomed legacy columns from the postings we just changed.
-    for (const { id: txnId } of affected) {
-      await reprojectLegacyColumns(tx, userId, txnId);
-    }
   });
 }
 

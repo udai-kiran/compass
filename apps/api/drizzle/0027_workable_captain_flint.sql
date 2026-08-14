@@ -1,1 +1,0 @@
-ALTER TABLE "insurance_policies" ADD COLUMN "vehicle_reg_no" text DEFAULT '' NOT NULL;

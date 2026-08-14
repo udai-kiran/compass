@@ -428,8 +428,8 @@ test("postings-pr-e-parity: PE5 — suggestCategoriesFor passes correct transact
     .where(
       and(
         eq(transactions.userId, userId),
-        eq(transactions.accountId, openingAcct.id),
-        eq(transactions.isOpening, true),
+        sql`exists (select 1 from postings p1 where p1.transaction_id = ${transactions.id} and p1.account_id = ${openingAcct.id})`,
+        sql`exists (select 1 from postings p2 join accounts a on a.id = p2.account_id where p2.transaction_id = ${transactions.id} and a.system_kind = 'opening')`,
       ),
     );
   const openingTxnId = openingTxnRow!.id;

@@ -325,7 +325,11 @@ test("absorbCarryover: Diners numbers — opening_balance_paise becomes −45591
   const openingPostings = await db.execute(sql`
     select p.amount_paise from postings p
     join transactions t on t.id = p.transaction_id
-    where p.account_id = ${accountId} and t.is_opening = true and t.deleted_at is null
+    where p.account_id = ${accountId} and exists (
+      select 1 from postings p2
+      join accounts a2 on a2.id = p2.account_id
+      where p2.transaction_id = t.id and a2.system_kind = 'opening'
+    ) and t.deleted_at is null
   `);
   assert.equal((openingPostings.rows as Array<{ amount_paise: string }>).length, 1, "absorbCarryover created exactly one opening posting");
   assert.equal(Number((openingPostings.rows as Array<{ amount_paise: string }>)[0]!.amount_paise), -4559125);
@@ -442,7 +446,11 @@ test("absorbCarryover: a nonzero preexisting opening balance", async (t) => {
   const openingPostings = await db.execute(sql`
     select p.amount_paise from postings p
     join transactions t on t.id = p.transaction_id
-    where p.account_id = ${accountId} and t.is_opening = true and t.deleted_at is null
+    where p.account_id = ${accountId} and exists (
+      select 1 from postings p2
+      join accounts a2 on a2.id = p2.account_id
+      where p2.transaction_id = t.id and a2.system_kind = 'opening'
+    ) and t.deleted_at is null
   `);
   assert.equal((openingPostings.rows as Array<{ amount_paise: string }>).length, 1, "exactly one opening posting after absorb");
   assert.equal(Number((openingPostings.rows as Array<{ amount_paise: string }>)[0]!.amount_paise), -800000); // -500000 − 300000
@@ -586,7 +594,11 @@ test("absorbCarryover: only transactions strictly before statement_date count to
   const openingPostings = await db.execute(sql`
     select p.amount_paise from postings p
     join transactions t on t.id = p.transaction_id
-    where p.account_id = ${accountId} and t.is_opening = true and t.deleted_at is null
+    where p.account_id = ${accountId} and exists (
+      select 1 from postings p2
+      join accounts a2 on a2.id = p2.account_id
+      where p2.transaction_id = t.id and a2.system_kind = 'opening'
+    ) and t.deleted_at is null
   `);
   assert.equal((openingPostings.rows as Array<{ amount_paise: string }>).length, 1, "exactly one opening posting inserted by absorbCarryover");
   assert.equal(Number((openingPostings.rows as Array<{ amount_paise: string }>)[0]!.amount_paise), -200000);
@@ -681,11 +693,8 @@ test("absorbCarryover: a concurrent advisory lock (an opening-balance edit in pr
           .insert(transactions)
           .values({
             userId,
-            accountId,
             date: new Date().toISOString().slice(0, 10),
-            amountPaise: -50000,
             merchant: "Opening balance",
-            isOpening: true,
           })
           .returning({ id: transactions.id });
         const sys = await resolveSystemAccounts(tx, userId);
@@ -746,7 +755,11 @@ test("absorbCarryover: a concurrent advisory lock (an opening-balance edit in pr
   const openingPostings = await db.execute(sql`
     select p.amount_paise from postings p
     join transactions t on t.id = p.transaction_id
-    where p.account_id = ${accountId} and t.is_opening = true and t.deleted_at is null
+    where p.account_id = ${accountId} and exists (
+      select 1 from postings p2
+      join accounts a2 on a2.id = p2.account_id
+      where p2.transaction_id = t.id and a2.system_kind = 'opening'
+    ) and t.deleted_at is null
   `);
   assert.equal((openingPostings.rows as Array<{ amount_paise: string }>).length, 1, "exactly one opening posting after serial A → absorb");
   assert.equal(Number((openingPostings.rows as Array<{ amount_paise: string }>)[0]!.amount_paise), -150000);
@@ -821,7 +834,11 @@ test("absorbCarryover advisory lock blocks concurrent updateAccount — integrat
   const openingPostings = await db.execute(sql`
     select p.amount_paise from postings p
     join transactions t on t.id = p.transaction_id
-    where p.account_id = ${accountId} and t.is_opening = true and t.deleted_at is null
+    where p.account_id = ${accountId} and exists (
+      select 1 from postings p2
+      join accounts a2 on a2.id = p2.account_id
+      where p2.transaction_id = t.id and a2.system_kind = 'opening'
+    ) and t.deleted_at is null
   `);
   const rows = openingPostings.rows as Array<{ amount_paise: string }>;
   assert.equal(rows.length, 1, "exactly one opening posting must exist after both operations");
@@ -900,10 +917,6 @@ test("absorbCarryover: a genuine SSI dependency cycle forces 40001, and withSeri
             .select()
             .from(accounts)
             .where(and(eq(accounts.id, accountId), eq(accounts.userId, userId)));
-          await txB
-            .update(transactions)
-            .set({ amountPaise: -150000 })
-            .where(eq(transactions.id, seed.id));
           const updatedPostings = await txB
             .update(postings)
             .set({ amountPaise: sql`(CASE WHEN ${postings.accountId} = ${accountId} THEN ${-150000} ELSE ${150000} END)::bigint` })
@@ -930,7 +943,11 @@ test("absorbCarryover: a genuine SSI dependency cycle forces 40001, and withSeri
   const openingPostings = await db.execute(sql`
     select p.amount_paise from postings p
     join transactions t on t.id = p.transaction_id
-    where p.account_id = ${accountId} and t.is_opening = true and t.deleted_at is null
+    where p.account_id = ${accountId} and exists (
+      select 1 from postings p2
+      join accounts a2 on a2.id = p2.account_id
+      where p2.transaction_id = t.id and a2.system_kind = 'opening'
+    ) and t.deleted_at is null
   `);
   assert.equal((openingPostings.rows as Array<{ amount_paise: string }>).length, 1, "exactly one opening posting after SSI retry on fresh ledger");
   assert.equal(Number((openingPostings.rows as Array<{ amount_paise: string }>)[0]!.amount_paise), -350000);
@@ -961,10 +978,6 @@ test("absorbCarryover: an SSI cycle reproduced on BOTH attempts surfaces 40001 w
             .from(accounts)
             .where(and(eq(accounts.id, accountId), eq(accounts.userId, userId)));
           const newAmount = -100000 - hookCalls * 1000;
-          await txB
-            .update(transactions)
-            .set({ amountPaise: newAmount })
-            .where(eq(transactions.id, seed.id));
           const updatedPostings = await txB
             .update(postings)
             .set({ amountPaise: sql`(CASE WHEN ${postings.accountId} = ${accountId} THEN ${newAmount} ELSE ${-newAmount} END)::bigint` })

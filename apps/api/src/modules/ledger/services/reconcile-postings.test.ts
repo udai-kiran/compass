@@ -65,10 +65,10 @@ test("findInconsistentPostings: reports 'no postings' for a raw-inserted transac
   const userId = await createUser();
   t.after(() => cleanupUser(userId));
   await seedSystemAccounts(db, userId);
-  const acct = await createAccount(db, userId, { name: "Bank", type: "bank", institution: null, accountLast4: null, holderName: null, currency: "INR", openingBalancePaise: 0 });
+  const _acct = await createAccount(db, userId, { name: "Bank", type: "bank", institution: null, accountLast4: null, holderName: null, currency: "INR", openingBalancePaise: 0 });
   const [txn] = await db
     .insert(transactions)
-    .values({ userId, accountId: acct.id, date: "2026-01-02", amountPaise: -1000, merchant: "Raw" })
+    .values({ userId, date: "2026-01-02", merchant: "Raw" })
     .returning({ id: transactions.id });
   const problems = await findInconsistentPostings(db, userId);
   assert.equal(problems.length, 1, "raw-inserted transaction must appear as a posting problem");
@@ -84,7 +84,7 @@ test("findInconsistentPostings: reports non-zero-sum for postings that don't bal
   // Raw-insert a transaction and a single posting with no counterpart — sum is non-zero
   const [txn] = await db
     .insert(transactions)
-    .values({ userId, accountId: acct.id, date: "2026-01-02", amountPaise: -2000, merchant: "Unbalanced" })
+    .values({ userId, date: "2026-01-02", merchant: "Unbalanced" })
     .returning({ id: transactions.id });
   await db.insert(postings).values({
     transactionId: txn!.id,
@@ -106,11 +106,11 @@ test("findInconsistentPostings: tenant-scope — reports only the target user's 
   t.after(async () => { await cleanupUser(userA); await cleanupUser(userB); });
   await seedSystemAccounts(db, userA);
   await seedSystemAccounts(db, userB);
-  const acctA = await createAccount(db, userA, { name: "Bank A", type: "bank", institution: null, accountLast4: null, holderName: null, currency: "INR", openingBalancePaise: 0 });
-  const acctB = await createAccount(db, userB, { name: "Bank B", type: "bank", institution: null, accountLast4: null, holderName: null, currency: "INR", openingBalancePaise: 0 });
+  const _acctA = await createAccount(db, userA, { name: "Bank A", type: "bank", institution: null, accountLast4: null, holderName: null, currency: "INR", openingBalancePaise: 0 });
+  const _acctB = await createAccount(db, userB, { name: "Bank B", type: "bank", institution: null, accountLast4: null, holderName: null, currency: "INR", openingBalancePaise: 0 });
   // Raw-insert for BOTH users
-  await db.insert(transactions).values({ userId: userA, accountId: acctA.id, date: "2026-01-01", amountPaise: -100, merchant: "A" });
-  await db.insert(transactions).values({ userId: userB, accountId: acctB.id, date: "2026-01-01", amountPaise: -200, merchant: "B" });
+  await db.insert(transactions).values({ userId: userA, date: "2026-01-01", merchant: "A" });
+  await db.insert(transactions).values({ userId: userB, date: "2026-01-01", merchant: "B" });
   // Check only user A — must not report user B's problem
   const problemsA = await findInconsistentPostings(db, userA);
   assert.equal(problemsA.length, 1, "findInconsistentPostings scoped to userA must return exactly 1 problem");

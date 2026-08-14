@@ -107,14 +107,12 @@ async function createAccount(userId: string): Promise<string> {
   return a!.id;
 }
 
-async function createTxn(userId: string, accountId: string): Promise<string> {
+async function createTxn(userId: string, _accountId: string): Promise<string> {
   const [t] = await app.db
     .insert(transactions)
     .values({
       userId,
-      accountId,
       date: "2026-01-05",
-      amountPaise: -1000,
       merchant: "Test merchant",
     })
     .returning({ id: transactions.id });

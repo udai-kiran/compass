@@ -1,1 +1,0 @@
-ALTER TABLE "bank_details" ADD COLUMN "debit_card_last4" text DEFAULT '' NOT NULL;

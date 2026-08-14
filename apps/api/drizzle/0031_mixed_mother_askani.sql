@@ -1,1 +1,0 @@
-ALTER TABLE "holding_valuations" ADD COLUMN "nav" double precision;

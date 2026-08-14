@@ -1,1 +1,0 @@
-ALTER TYPE "public"."asset_class" ADD VALUE 'silver' BEFORE 'fd';

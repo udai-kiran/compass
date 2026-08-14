@@ -1,10 +1,9 @@
 import { and, eq, isNotNull } from "drizzle-orm";
 import type { DbOrTx } from "../../../db/index.ts";
-import { accounts, postings, transactions, transactionSplits } from "../schema.ts";
+import { accounts, postings, transactions } from "../schema.ts";
 import { HttpError } from "../../../lib/errors.ts";
 import { assertOwnedAccount, assertOwnedCategory } from "../../../lib/ownership.ts";
 import { isUniqueViolation } from "../../investments/services/sip-lifecycle.ts";
-import { projectLegacyColumns, projectLegacySplits } from "./legacy-projection.ts";
 import { assertZeroSum, type PostingDraft, type SystemKind } from "./postings.ts";
 
 // ---------------------------------------------------------------------------
@@ -83,19 +82,12 @@ export async function replacePostings(
 }
 
 /**
- * THE write primitive of the postings-authoritative model (PR-G1): replace a
- * transaction's postings and re-derive its legacy column projection from them,
- * in that order, on one handle.
+ * THE write primitive of the postings-authoritative model (PR-G2): replace a
+ * transaction's postings and touch `updated_at`, in that order, on one handle.
  *
- * Every writer goes through here. The ordering is the whole point — postings
- * are written first because they are the truth, and the legacy columns are
- * computed FROM them rather than the other way round. Before PR-G1 this ran
- * backwards: writers set the legacy columns and `rebuildPostingsForTransaction`
- * re-derived postings from those columns, which is why a shape the columns
- * could not express (a transfer with two real legs) was silently destroyed.
- *
- * `transaction_splits` is refreshed too, so a transaction that stops being a
- * split clears its rows. Both projections disappear with PR-G2.
+ * Every writer goes through here. Postings are the truth; the legacy columns
+ * `account_id`, `amount_paise`, `category_id`, `necessity`, `is_opening` and
+ * the `transaction_splits` table were dropped in PR-G2.
  */
 export async function postTransaction(
   db: DbOrTx,
@@ -104,26 +96,10 @@ export async function postTransaction(
   drafts: PostingDraft[],
 ): Promise<void> {
   await replacePostings(db, transactionId, userId, drafts);
-
-  const systemKindOf = await systemKindLookup(db, userId);
-  const legacy = projectLegacyColumns(drafts, systemKindOf);
   await db
     .update(transactions)
-    .set({
-      accountId: legacy.accountId,
-      amountPaise: legacy.amountPaise,
-      categoryId: legacy.categoryId,
-      necessity: legacy.necessity,
-      isOpening: legacy.isOpening,
-      updatedAt: new Date(),
-    })
+    .set({ updatedAt: new Date() })
     .where(and(eq(transactions.id, transactionId), eq(transactions.userId, userId)));
-
-  const splitRows = projectLegacySplits(drafts, systemKindOf);
-  await db.delete(transactionSplits).where(eq(transactionSplits.transactionId, transactionId));
-  if (splitRows.length > 0) {
-    await db.insert(transactionSplits).values(splitRows.map((s) => ({ ...s, transactionId })));
-  }
 }
 
 /**

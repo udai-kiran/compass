@@ -6,12 +6,13 @@ import type { AccountType, ExtractedTransaction } from "@compass/shared";
 import { ExtractedTransactionSchema } from "@compass/shared";
 import { createDb } from "../../../db/index.ts";
 import { createPool } from "../../../infra/db.ts";
-import { accounts, categories, postings, transactions, transferLinks, users } from "../../../db/schema.ts";
+import { accounts, categories, postings, transactions, users } from "../../../db/schema.ts";
 import { emailIngestions, extractedTransactions } from "../schema.ts";
 import { HttpError } from "../../../lib/errors.ts";
 import { incomeExpense } from "../../../lib/periods.ts";
 import { createTransaction } from "../../ledger/services/transactions.ts";
 import { linkTransfer, TRANSFER_WINDOW_DAYS } from "../../ledger/services/transfers.ts";
+import { resolveSystemAccounts } from "../../ledger/services/post-entry.ts";
 import { acceptExtracted, restoreOrphan, rejectExtracted } from "./review-actions.ts";
 import {
   historyKey,
@@ -1081,8 +1082,10 @@ async function ledgerRowsFor(userId: string) {
   return db.select().from(transactions).where(eq(transactions.userId, userId));
 }
 
-async function linksFor(userId: string) {
-  return db.select().from(transferLinks).where(eq(transferLinks.userId, userId));
+async function linksFor(_userId: string) {
+  // transfer_links table was dropped in PR-G2; transfer shape is now a single
+  // header with two real postings — there are no link rows to check.
+  return [] as Array<Record<string, unknown>>;
 }
 
 async function postingsFor(transactionId: string) {
@@ -1214,7 +1217,6 @@ test("acceptRepayment AC2/AC4: exactly one eligible candidate is reused — only
   // Header fields are unchanged (linkTransfer only modifies notes/tags, not header).
   const after = rows.find((r) => r.id === existingDebit.id)!;
   assert.ok(after);
-  assert.equal(after.amountPaise, before.amountPaise);
   assert.equal(after.date, before.date);
   assert.equal(after.occurredAt?.getTime() ?? null, before.occurredAt?.getTime() ?? null);
   assert.equal(after.merchant, before.merchant);
@@ -1312,7 +1314,8 @@ test("acceptRepayment AC4: the synthetic out leg (survivor) has occurredAt = nul
   const row = await draftRow(draftId);
   assert.equal(row?.transactionId, survivorId);
 
-  const outRow = rows.find((r) => r.accountId === fromAccountId)!;
+  // Only one row exists (asserted above); account is now in postings, not on the header.
+  const outRow = rows[0]!;
   assert.ok(outRow, "out-leg survivor must exist");
   assert.equal(outRow.occurredAt, null);
   assert.equal(outRow.date, reviewerDate);
@@ -1679,7 +1682,7 @@ test("SQL eligibility predicate: a debit with the wrong amount is excluded — t
   // Excluded candidate keeps its original shape.
   const untouched = rows.find((r) => r.id === wrongAmount.id)!;
   assert.ok(untouched);
-  assert.equal(untouched.amountPaise, -400000);
+  // amount now lives in postings, not on the transaction header
 
   // 2. A DISTINCT new survivor was created for the actual repayment.
   const survivorId = dto.transactionId!;
@@ -1736,7 +1739,7 @@ test("SQL eligibility predicate: a debit exactly TRANSFER_WINDOW_DAYS away is in
   // Header fields of boundary are unchanged (linkTransfer only modifies notes/tags).
   const afterBoundary = rows.find((r) => r.id === boundary.id)!;
   assert.ok(afterBoundary);
-  assert.equal(afterBoundary.amountPaise, -500000);
+  // amount now lives in postings, not on the transaction header
   assert.equal(afterBoundary.date, debitDate);
 
   // 3–7. linkTransfer rewrites boundary's postings into transfer shape (2 real, no system).
@@ -1787,7 +1790,7 @@ test("SQL eligibility predicate: a debit one day beyond TRANSFER_WINDOW_DAYS is 
   // Excluded candidate keeps its original shape.
   const untouched = rows.find((r) => r.id === tooFar.id)!;
   assert.ok(untouched);
-  assert.equal(untouched.amountPaise, -500000);
+  // amount now lives in postings, not on the transaction header
 
   // 2. A DISTINCT new survivor was created for the actual repayment.
   const survivorId = dto.transactionId!;
@@ -1871,21 +1874,23 @@ test("SQL eligibility predicate: an isOpening debit is excluded — the create b
   const cardAccountId = await createAccount(userId, "credit_card");
   const ingestionId = await createIngestion(userId);
 
+  // In the postings model "isOpening" means the transaction has a posting to an
+  // account with system_kind='opening'. Seed system accounts and build that shape.
+  const sys = await resolveSystemAccounts(db, userId);
   const [opening] = await db
     .insert(transactions)
     .values({
       userId,
-      accountId: fromAccountId,
       date: BASE_DATE,
-      amountPaise: -500000,
       merchant: "Opening balance",
-      categoryId: null,
-      notes: "",
-      tags: [],
-      source: "manual",
-      isOpening: true,
     })
     .returning({ id: transactions.id });
+  // Give the opening transaction a posting to fromAccountId AND to the opening system
+  // account — the NOT EXISTS(…system_kind='opening'…) predicate will exclude it.
+  await db.insert(postings).values([
+    { transactionId: opening!.id, accountId: fromAccountId, amountPaise: -500000 },
+    { transactionId: opening!.id, accountId: sys.opening, amountPaise: 500000 },
+  ]);
 
   const draftId = await repaymentDraft(userId, ingestionId);
   const dto = await acceptRepayment(db, userId, draftId, { cardAccountId, fromAccountId, occurredAt: BASE_DATE });
@@ -1897,7 +1902,7 @@ test("SQL eligibility predicate: an isOpening debit is excluded — the create b
   // Excluded candidate is still the opening balance row.
   const openingRow = rows.find((r) => r.id === opening!.id)!;
   assert.ok(openingRow);
-  assert.ok(openingRow.isOpening);
+  // Opening is now determined by postings (system_kind='opening'), not a header flag.
 
   // 2. A DISTINCT new survivor was created for the actual repayment.
   const survivorId = dto.transactionId!;
@@ -2054,14 +2059,8 @@ test("SQL eligibility predicate: a row-level userId mismatch is excluded — the
     .insert(transactions)
     .values({
       userId: userB,
-      accountId: fromAccountId,
       date: BASE_DATE,
-      amountPaise: -500000,
       merchant: "Mismatched user",
-      categoryId: null,
-      notes: "",
-      tags: [],
-      source: "manual",
     })
     .returning({ id: transactions.id });
 
@@ -2101,7 +2100,7 @@ test("SQL eligibility predicate: a row-level userId mismatch is excluded — the
 
   // Mismatched row is untouched (excluded by userId filter).
   const [mismatchedAfter] = await db.select().from(transactions).where(eq(transactions.id, mismatched!.id));
-  assert.equal(mismatchedAfter!.amountPaise, -500000);
+  assert.ok(mismatchedAfter, "mismatched row still exists (was not consumed by acceptRepayment)");
 
   // 8. Zero transfer_links for userA.
   const links = await linksFor(userA);

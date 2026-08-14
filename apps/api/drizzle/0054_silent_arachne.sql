@@ -1,3 +1,0 @@
-ALTER TABLE "holding_events" ADD COLUMN "sip_id" uuid;--> statement-breakpoint
-ALTER TABLE "holding_events" ADD CONSTRAINT "holding_events_sip_id_sips_id_fk" FOREIGN KEY ("sip_id") REFERENCES "public"."sips"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
-CREATE UNIQUE INDEX "holding_events_sip_date_idx" ON "holding_events" USING btree ("sip_id","date") WHERE sip_id is not null;

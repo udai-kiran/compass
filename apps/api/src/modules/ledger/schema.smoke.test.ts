@@ -16,8 +16,6 @@ const TABLE_NAMES = [
   "categories",
   "resources",
   "transactions",
-  "transactionSplits",
-  "transferLinks",
   "transactionLinks",
   "merchantRules",
   "recurringTemplates",
@@ -35,7 +33,7 @@ const ENUM_NAMES = [
   "recurringKind",
 ] as const;
 
-test("modules/ledger/schema.ts re-exports the same 11 table objects as db/schema.ts", () => {
+test("modules/ledger/schema.ts re-exports the same 9 table objects as db/schema.ts", () => {
   for (const name of TABLE_NAMES) {
     assert.strictEqual(
       (ledgerSchema as Record<string, unknown>)[name],

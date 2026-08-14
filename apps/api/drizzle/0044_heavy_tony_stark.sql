@@ -1,1 +1,0 @@
-ALTER TABLE "transactions" ADD COLUMN "is_opening" boolean DEFAULT false NOT NULL;

@@ -658,7 +658,6 @@ export async function commitImport(
           .update(transactions)
           .set({
             date: item.row.date,
-            amountPaise: item.row.amountPaise,
             merchant: item.row.merchant,
             ...(mapping.notesColumn ? { notes: item.row.notes } : {}),
             source: "import",
@@ -668,7 +667,7 @@ export async function commitImport(
             and(
               eq(transactions.id, item.transactionId),
               eq(transactions.userId, userId),
-              eq(transactions.accountId, batch.accountId),
+              sql`exists (select 1 from postings p where p.transaction_id = ${transactions.id} and p.account_id = ${batch.accountId})`,
             ),
           );
         // Snapshot the pre-update values on the import row so rollback can restore them.

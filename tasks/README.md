@@ -8,7 +8,7 @@ Tasks marked 🎨 carry `ui: true` in their frontmatter and are written to be ex
 
 **How these get built: [TDD.md](./TDD.md).** Every acceptance-criterion checkbox is a test written *before* the code that satisfies it — tick the box only once its test exists and passes. Money invariants get property tests, not example tests; refactors get characterization tests written before the move.
 
-**Currently at `v1.94.0`.** See [REVAMP.md](./REVAMP.md) for the architectural critique and the Shopping Intelligence pillar.
+**Currently at `v3.0.0`.** v2.x tags (v2.0.0-v2.8.17) were incremental releases during the module migration and postings work. Themed releases resume at v3.x. See [REVAMP.md](./REVAMP.md) for the architectural critique and the Shopping Intelligence pillar.
 
 ## Release roadmap
 
@@ -104,11 +104,11 @@ Phase 4 and 5 are **extensions of real working code**, not greenfield. Verified 
 | 1.8 | [Migrate system module](./01.08-migrate-system.md) | 1 — Module migration | done |
 | 1.9 | [Cross-module ports + flat-services cleanup](./01.09-cross-module-ports.md) | 1 — Module migration | done |
 | 1.10 | [Storage backend contract tests](./01.10-storage-backend-contract-tests.md) | 1 — Module migration | done |
-| 2.1 | [Postings model & balance invariant](./02.01-postings-model.md) | 2 — Double-entry ledger | todo |
-| 2.2 | [Retire transfer_links & transfer-exclusion logic](./02.02-retire-transfer-links.md) | 2 — Double-entry ledger | todo |
-| 2.3 | [Fold transaction_splits into postings](./02.03-splits-into-postings.md) | 2 — Double-entry ledger | todo |
-| 2.4 | [Convert consuming services to postings](./02.04-service-conversion.md) | 2 — Double-entry ledger | todo |
-| 2.5 | [Keep the simple transaction API; add multi-leg](./02.05-api-compatibility.md) | 2 — Double-entry ledger | todo |
+| 2.1 | [Postings model & balance invariant](./02.01-postings-model.md) | 2 — Double-entry ledger | done |
+| 2.2 | [Retire transfer_links & transfer-exclusion logic](./02.02-retire-transfer-links.md) | 2 — Double-entry ledger | done |
+| 2.3 | [Fold transaction_splits into postings](./02.03-splits-into-postings.md) | 2 — Double-entry ledger | done |
+| 2.4 | [Convert consuming services to postings](./02.04-service-conversion.md) | 2 — Double-entry ledger | done |
+| 2.5 | [Keep the simple transaction API; add multi-leg](./02.05-api-compatibility.md) | 2 — Double-entry ledger | done |
 | 2.6 | [Ledger invariants & reconciliation guard](./02.06-double-entry-invariants.md) | 2 — Double-entry ledger | todo |
 | 2.7 | [Transaction UI for postings](./02.07-transaction-postings-ui.md) 🎨 | 2 — Double-entry ledger | todo |
 | 3.1 | [Architecture & docs update](./03.01-docs-and-prd.md) | 3 — Ship 2.0.0 | todo |

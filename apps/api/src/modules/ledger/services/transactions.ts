@@ -276,21 +276,6 @@ export async function applyShapePatch(
   await postTransaction(t, id, userId, drafts);
 }
 
-/**
- * Re-projects a transaction's legacy columns from its existing postings,
- * changing no posting. The postings-authoritative successor to
- * `rebuildPostingsForTransaction`, whose name described the old direction:
- * it rebuilt POSTINGS from the columns.
- *
- * Callers that only touched header fields (merchant, notes, tags, date) do not
- * need this at all. It exists for the writers that must guarantee the doomed
- * columns still satisfy NOT NULL after they have inserted a header — and it
- * disappears with those columns in PR-G2.
- */
-export async function reprojectLegacyColumns(t: DbOrTx, userId: string, id: string): Promise<void> {
-  await applyShapePatch(t, userId, id, {});
-}
-
 export async function listTransactions(
   db: Db,
   userId: string,
@@ -451,14 +436,25 @@ export async function createTransaction(
   // (manual entry now, AI-assisted categorization later)
   const merchantRulesList = await getMerchantRules(db, userId);
   const merchant = input.merchant ? normalizeMerchant(input.merchant, merchantRulesList) : "";
-  // Legacy insert + posting mirror share ONE db transaction (ATOMICITY LAW).
-  // `db.transaction(...)` opens a real transaction when `db` is a bare `Db`,
+  // The header INSERT and the postings INSERT share ONE db transaction (ATOMICITY
+  // LAW). `db.transaction(...)` opens a real transaction when `db` is a bare `Db`,
   // or a nested savepoint when `db` is already a `Tx` (this fn is `DbOrTx`) —
-  // either way the legacy row and its postings commit/rollback together.
+  // either way the header and its postings commit/rollback together.
   const rows = await db.transaction(async (t) => {
     const inserted = await t
       .insert(transactions)
-      .values({ ...input, merchant, userId })
+      .values({
+        userId,
+        date: input.date,
+        merchant,
+        notes: input.notes ?? "",
+        tags: input.tags ?? [],
+        source: input.source ?? "manual",
+        occurredAt: input.occurredAt,
+        policyId: input.policyId,
+        resourceId: input.resourceId,
+        recurringTemplateId: input.recurringTemplateId,
+      })
       .returning();
     const newRow = inserted[0]!;
     const systemAccounts = await resolveSystemAccounts(t, userId);
@@ -668,7 +664,7 @@ export async function bulkAction(db: Db, userId: string, action: BulkAction): Pr
     const before = await t
       .select({
         id: transactions.id,
-        categoryId: transactions.categoryId,
+        categoryId: sql<string | null>`(select p.category_id from postings p join accounts a on a.id = p.account_id where p.transaction_id = ${transactions.id} and a.system_kind is not null limit 1)`,
         tags: transactions.tags,
       })
       .from(transactions)
