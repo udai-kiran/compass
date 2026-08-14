@@ -75,13 +75,13 @@ export type RetirementDetails = z.infer<typeof RetirementDetailsSchema>;
 
 export const UpsertRetirementDetailsSchema = z.object({
   /** basis points, so 7.10% = 710; capped at 100% */
-  annualRateBps: z.number().int().min(0).max(10000).default(0),
+  annualRateBps: z.number().int().min(0).max(10000).optional(),
   /** PPF matures 15 years from opening; EPF has none */
-  maturityDate: z.iso.date().nullable().default(null),
+  maturityDate: z.iso.date().nullable().optional(),
   /** UAN (EPF) or account number (PPF) */
-  referenceNumber: z.string().default(""),
+  referenceNumber: z.string().optional(),
   /** EPF only: EPS pension balance, paise; ignored (stored null) for PPF/SSY */
-  epsBalancePaise: z.number().int().min(0).nullable().default(null),
+  epsBalancePaise: z.number().int().min(0).nullable().optional(),
 });
 export type UpsertRetirementDetails = z.input<typeof UpsertRetirementDetailsSchema>;
 

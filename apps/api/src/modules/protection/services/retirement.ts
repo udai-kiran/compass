@@ -60,17 +60,26 @@ export async function upsertRetirementDetails(
   const acc = await ownedRetirementAccount(db, userId, accountId);
   const parsed = UpsertRetirementDetailsSchema.parse(input);
   // EPF has no maturity — accepting one would render a date the scheme doesn't have.
-  if (acc.type === "epf" && parsed.maturityDate !== null) {
+  if (acc.type === "epf" && parsed.maturityDate !== null && parsed.maturityDate !== undefined) {
     throw new HttpError(400, "EPF accounts do not mature");
   }
-  // EPS is an EPF-only figure; never store one against PPF/SSY.
-  const values = { ...parsed, epsBalancePaise: acc.type === "epf" ? parsed.epsBalancePaise : null };
+  // Merge with existing DB row so omitted fields preserve their current values.
+  const [existing] = await db.select().from(retirementDetails).where(eq(retirementDetails.accountId, accountId));
+  const isEpf = acc.type === "epf";
+  const merged = {
+    annualRateBps: parsed.annualRateBps !== undefined ? parsed.annualRateBps : (existing?.annualRateBps ?? 0),
+    maturityDate: parsed.maturityDate !== undefined ? parsed.maturityDate : (existing?.maturityDate ?? null),
+    referenceNumber: parsed.referenceNumber !== undefined ? parsed.referenceNumber : (existing?.referenceNumber ?? ""),
+    epsBalancePaise: isEpf
+      ? (parsed.epsBalancePaise !== undefined ? parsed.epsBalancePaise : (existing?.epsBalancePaise ?? null))
+      : null,
+  };
   const rows = await db
     .insert(retirementDetails)
-    .values({ ...values, accountId, userId })
+    .values({ ...merged, accountId, userId })
     .onConflictDoUpdate({
       target: retirementDetails.accountId,
-      set: { ...values, updatedAt: new Date() },
+      set: { ...merged, updatedAt: new Date() },
     })
     .returning();
   return toDetails(rows[0]!);

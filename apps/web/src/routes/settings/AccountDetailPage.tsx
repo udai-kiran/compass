@@ -510,9 +510,6 @@ function EpfOpeningSection({ account }: { account: AccountWithBalance }) {
         onSuccess: () => {
           saveRetirement.mutate(
             {
-              annualRateBps: retData?.annualRateBps ?? 0,
-              maturityDate: null, // EPF never has a maturity date
-              referenceNumber: retData?.referenceNumber ?? "",
               epsBalancePaise: epsPaise,
             },
             {
@@ -977,16 +974,13 @@ function RetirementSection({ account }: { account: AccountWithBalance }) {
   function submit(e: FormEvent) {
     e.preventDefault();
     if (rateError) return;
-    // If the EPF retirement-details query errored, data is undefined; submitting
-    // would send epsBalancePaise: null and silently erase the stored EPS value.
-    if (isEpf && data === undefined) return;
     save.mutate(
       {
         annualRateBps: rateBps,
         // EPF never carries a maturity date; sending a stale one the API rejects.
         maturityDate: isEpf ? null : maturity || null,
         referenceNumber: reference.trim(),
-        epsBalancePaise: isEpf ? (data?.epsBalancePaise ?? null) : null,
+        ...(isEpf ? {} : { epsBalancePaise: null }),
       },
       { onSuccess: () => toast("Details saved", "success") },
     );
