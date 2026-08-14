@@ -1,7 +1,7 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { accounts, categories, postings, transactions, users } from "../../../db/schema.ts";
 import { createDb } from "../../../db/index.ts";
 import { createPool } from "../../../infra/db.ts";
@@ -115,6 +115,61 @@ test("findInconsistentPostings: tenant-scope — reports only the target user's 
   const problemsA = await findInconsistentPostings(db, userA);
   assert.equal(problemsA.length, 1, "findInconsistentPostings scoped to userA must return exactly 1 problem");
   assert.equal(problemsA[0]!.userId, userA);
+});
+
+test("findInconsistentPostings: detects orphan posting (missing transaction)", async (t) => {
+  const userId = await createUser();
+  t.after(() => cleanupUser(userId));
+  await seedSystemAccounts(db, userId);
+  const acct = await createAccount(db, userId, { name: "Bank", type: "bank", institution: null, accountLast4: null, holderName: null, currency: "INR", openingBalancePaise: 0 });
+  // Insert a transaction and an attached posting (valid FK)
+  const [txn] = await db
+    .insert(transactions)
+    .values({ userId, date: "2026-01-15", merchant: "Orphan test" })
+    .returning({ id: transactions.id });
+  const txnId = txn!.id;
+  await db.insert(postings).values({ transactionId: txnId, accountId: acct.id, amountPaise: 500 });
+  // Delete the transaction while bypassing cascade (disable triggers so FK cascade doesn't run)
+  // This simulates data corruption where a transaction was removed but its postings remain.
+  // Requires ALTER TABLE privilege on the postings table.
+  await db.execute(sql`ALTER TABLE postings DISABLE TRIGGER ALL`);
+  try {
+    await db.execute(sql`DELETE FROM transactions WHERE id = ${txnId}`);
+  } finally {
+    await db.execute(sql`ALTER TABLE postings ENABLE TRIGGER ALL`);
+  }
+  // Run the global scan (no userId filter) so the orphan check executes
+  const problems = await findInconsistentPostings(db);
+  const orphan = problems.find(
+    (p) => p.transactionId === txnId && p.reason === "orphan posting (transaction missing)",
+  );
+  assert.ok(orphan, `expected orphan posting problem for txn ${txnId}, got: ${JSON.stringify(problems)}`);
+  // Cleanup the orphaned posting (the transaction no longer exists so cleanupUser won't cascade-delete it)
+  t.after(async () => {
+    await db.execute(sql`DELETE FROM postings WHERE transaction_id = ${txnId}`);
+  });
+});
+
+test("findInconsistentPostings: detects global ledger imbalance", async (t) => {
+  const userId = await createUser();
+  t.after(() => cleanupUser(userId));
+  await seedSystemAccounts(db, userId);
+  const acct = await createAccount(db, userId, { name: "Bank", type: "bank", institution: null, accountLast4: null, holderName: null, currency: "INR", openingBalancePaise: 0 });
+  // Insert a transaction with deliberately unbalanced postings via raw SQL (bypasses assertZeroSum)
+  const [txn] = await db
+    .insert(transactions)
+    .values({ userId, date: "2026-01-10", merchant: "Imbalanced global" })
+    .returning({ id: transactions.id });
+  await db.insert(postings).values({ transactionId: txn!.id, accountId: acct.id, amountPaise: 7777 });
+  // Run the global scan
+  const problems = await findInconsistentPostings(db);
+  // There should be a global imbalance problem (the single unbalanced posting makes ledger non-zero)
+  const globalProblem = problems.find((p) => p.transactionId === "ledger-global");
+  assert.ok(globalProblem, `expected global ledger imbalance problem, got: ${JSON.stringify(problems)}`);
+  assert.ok(
+    globalProblem!.reason.includes("global ledger imbalance"),
+    `expected 'global ledger imbalance' in reason, got: ${globalProblem!.reason}`,
+  );
 });
 
 test("reprojectAllLegacyColumns: idempotent — second call succeeds without error", async (t) => {

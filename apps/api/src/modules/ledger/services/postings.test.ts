@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import fc from "fast-check";
 import type { SystemKind } from "./postings.ts";
 import {
   assertSafePaise,
@@ -16,25 +17,6 @@ import {
   sumPaise,
 } from "./postings.ts";
 import { HttpError } from "../../../lib/errors.ts";
-
-// ---------------------------------------------------------------------------
-// Seeded PRNG (mulberry32) — fast-check is not installed.
-// ---------------------------------------------------------------------------
-
-function mulberry32(seed: number): () => number {
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = a;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-function randInt(rand: () => number, min: number, max: number): number {
-  return min + Math.floor(rand() * (max - min + 1));
-}
 
 /** Builds a systemKindOf projection from a map of known system accounts. */
 function systemKindOf(accountKinds: Record<string, SystemKind>): (accountId: string) => SystemKind | null {
@@ -70,29 +52,33 @@ test("sumPaise sums exactly via BigInt and rejects unsafe results", () => {
   assert.throws(() => sumPaise([Number.MAX_SAFE_INTEGER, 1]), (err: unknown) => err instanceof HttpError && err.statusCode === 400);
 });
 
-test("assertZeroSum: random balanced sets pass, perturbed sets throw (seeded PRNG)", () => {
-  const rand = mulberry32(0x5eed);
-  for (let iter = 0; iter < 500; iter += 1) {
-    const k = randInt(rand, 2, 8);
-    const amounts: number[] = [];
-    let sum = 0n;
-    for (let i = 0; i < k - 1; i += 1) {
-      const a = randInt(rand, -1_000_000_000_000, 1_000_000_000_000);
-      amounts.push(a);
-      sum += BigInt(a);
-    }
-    amounts.push(Number(-sum));
-    const legs = amounts.map((amountPaise) => ({ amountPaise }));
+test("assertZeroSum: random balanced sets pass, perturbed sets throw (fast-check)", () => {
+  fc.assert(
+    fc.property(
+      fc.array(fc.integer({ min: -1_000_000_000_000, max: 1_000_000_000_000 }), { minLength: 1, maxLength: 7 }),
+      fc.integer({ min: 0, max: 6 }),
+      fc.boolean(),
+      (rest, idxSeed, perturbPositive) => {
+        let sum = 0n;
+        for (const a of rest) sum += BigInt(a);
+        const last = Number(-sum);
+        // Skip when the balancing leg falls outside the safe-integer range.
+        if (!Number.isSafeInteger(last)) return;
+        const amounts = [...rest, last];
+        const legs = amounts.map((amountPaise) => ({ amountPaise }));
 
-    // k-1 random safe amounts + the negation of their sum always balances.
-    assert.doesNotThrow(() => assertZeroSum(legs));
+        // k-1 random safe amounts + the negation of their sum always balances.
+        assert.doesNotThrow(() => assertZeroSum(legs));
 
-    // Perturbing one leg by ±1 must unbalance the set.
-    const perturbed = [...legs];
-    const idx = randInt(rand, 0, k - 1);
-    perturbed[idx] = { amountPaise: perturbed[idx]!.amountPaise + (iter % 2 === 0 ? 1 : -1) };
-    assert.throws(() => assertZeroSum(perturbed), balanceError);
-  }
+        // Perturbing one leg by ±1 must unbalance the set.
+        const idx = idxSeed % amounts.length;
+        const perturbed = [...legs];
+        perturbed[idx] = { amountPaise: perturbed[idx]!.amountPaise + (perturbPositive ? 1 : -1) };
+        assert.throws(() => assertZeroSum(perturbed), balanceError);
+      },
+    ),
+    { numRuns: 500 },
+  );
 });
 
 test("assertZeroSum: boundary legs near ±MAX_SAFE_INTEGER", () => {
@@ -370,5 +356,118 @@ test("classifyShape: degenerate shapes throw", () => {
         kinds,
       ),
     (err: unknown) => err instanceof HttpError && err.statusCode === 400,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// (d) builder property tests — every builder always produces zero-sum output
+// ---------------------------------------------------------------------------
+
+test("buildOrdinaryPostings: zero-sum for any safe integer input (fast-check)", () => {
+  fc.assert(
+    fc.property(
+      fc.string(),
+      fc.integer({ min: -1_000_000_000_000, max: 1_000_000_000_000 }),
+      fc.string(),
+      fc.string(),
+      (accountId, amountPaise, systemExpensesAccountId, systemIncomeAccountId) => {
+        const postings = buildOrdinaryPostings({
+          accountId,
+          amountPaise,
+          categoryId: null,
+          necessity: null,
+          systemExpensesAccountId,
+          systemIncomeAccountId,
+        });
+        assert.equal(
+          postings.reduce((s, p) => s + p.amountPaise, 0),
+          0,
+        );
+      },
+    ),
+    { numRuns: 200 },
+  );
+});
+
+test("buildTransferPostings: zero-sum for any positive amount (fast-check)", () => {
+  fc.assert(
+    fc.property(
+      fc.string(),
+      fc.string(),
+      fc.integer({ min: 1, max: 1_000_000_000_000 }),
+      fc.string(),
+      (fromAccountId, toAccountId, amountPaise, note) => {
+        const postings = buildTransferPostings({
+          fromAccountId,
+          toAccountId,
+          amountPaise,
+          note,
+        });
+        assert.equal(
+          postings.reduce((s, p) => s + p.amountPaise, 0),
+          0,
+        );
+      },
+    ),
+    { numRuns: 200 },
+  );
+});
+
+test("buildSplitPostings: zero-sum for any valid split set (fast-check)", () => {
+  const necessity = fc.constantFrom("essential" as const, "non_essential" as const, null);
+  fc.assert(
+    fc.property(
+      fc.string(),
+      fc.array(
+        fc.record({
+          categoryId: fc.string(),
+          amountPaise: fc.integer({ min: -1_000_000_000_000, max: 1_000_000_000_000 }),
+          necessity,
+          note: fc.string(),
+        }),
+        { minLength: 1, maxLength: 5 },
+      ),
+      fc.string(),
+      fc.string(),
+      (accountId, splits, systemExpensesAccountId, systemIncomeAccountId) => {
+        // Skip if the split sum would overflow the safe-integer range.
+        let sum = 0n;
+        for (const s of splits) sum += BigInt(s.amountPaise);
+        if (!Number.isSafeInteger(Number(sum))) return;
+        const postings = buildSplitPostings({
+          accountId,
+          splits,
+          systemExpensesAccountId,
+          systemIncomeAccountId,
+        });
+        assert.equal(
+          postings.reduce((s, p) => s + p.amountPaise, 0),
+          0,
+        );
+      },
+    ),
+    { numRuns: 200 },
+  );
+});
+
+test("buildOpeningPostings: zero-sum for any safe integer amount (fast-check)", () => {
+  fc.assert(
+    fc.property(
+      fc.string(),
+      fc.integer({ min: -1_000_000_000_000, max: 1_000_000_000_000 }),
+      fc.string(),
+      (accountId, amountPaise, systemOpeningAccountId) => {
+        const postings = buildOpeningPostings({
+          accountId,
+          amountPaise,
+          systemOpeningAccountId,
+        });
+        assert.equal(
+          postings.reduce((s, p) => s + p.amountPaise, 0),
+          0,
+        );
+      },
+    ),
+    { numRuns: 200 },
   );
 });

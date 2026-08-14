@@ -10,6 +10,7 @@ import { recurringRoutes } from "./routes/recurring.ts";
 import { searchRoutes } from "./routes/search.ts";
 import { resourceRoutes } from "./routes/resources.ts";
 import { userTaskRoutes } from "./routes/user-tasks.ts";
+import { integrityRoutes } from "./routes/integrity.ts";
 
 /**
  * `modules/ledger/` — the largest domain, first of 8 Phase-1 module
@@ -40,4 +41,5 @@ export async function ledgerRoutes(app: FastifyInstance): Promise<void> {
   await app.register(searchRoutes);
   await app.register(resourceRoutes);
   await app.register(userTaskRoutes);
+  await app.register(integrityRoutes);
 }

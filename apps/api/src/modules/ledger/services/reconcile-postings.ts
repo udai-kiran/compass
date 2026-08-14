@@ -1,6 +1,6 @@
 import { eq, sql } from "drizzle-orm";
 import type { Db } from "../../../db/index.ts";
-import { transactions, users } from "../../../db/schema.ts";
+import { postings, transactions, users } from "../../../db/schema.ts";
 import { currentPostings, systemKindLookup } from "./post-entry.ts";
 import { classifyShape } from "./postings.ts";
 
@@ -66,6 +66,32 @@ export async function findInconsistentPostings(
       }
     }
   }
+  // Global checks — run only when no userId filter is specified
+  if (!userId) {
+    // Orphan postings: postings whose transaction_id doesn't exist in transactions
+    const orphans = (
+      await db.execute(sql`
+        SELECT p.id, p.transaction_id FROM ${postings} p
+        LEFT JOIN ${transactions} t ON t.id = p.transaction_id
+        WHERE t.id IS NULL
+      `)
+    ).rows as Array<{ id: string; transaction_id: string }>;
+    for (const row of orphans) {
+      out.push({ userId: "system", transactionId: row.transaction_id, reason: "orphan posting (transaction missing)" });
+    }
+
+    // Whole-ledger zero-sum
+    const [sumRow] = (
+      await db.execute(sql`
+        SELECT sum(amount_paise)::bigint as total FROM ${postings}
+      `)
+    ).rows as Array<{ total: string | null }>;
+    const total = BigInt(sumRow?.total ?? 0);
+    if (total !== 0n) {
+      out.push({ userId: "system", transactionId: "ledger-global", reason: `global ledger imbalance: ${total} paise` });
+    }
+  }
+
   return out;
 }
 
