@@ -5,7 +5,7 @@ import { eq, sql } from "drizzle-orm";
 import { accounts, categories, postings, transactions, users } from "../../../db/schema.ts";
 import { createDb } from "../../../db/index.ts";
 import { createPool } from "../../../infra/db.ts";
-import { findInconsistentPostings, reprojectAllLegacyColumns } from "./reconcile-postings.ts";
+import { findInconsistentPostings } from "./reconcile-postings.ts";
 import { seedSystemAccounts } from "./post-entry.ts";
 import { createTransaction } from "./transactions.ts";
 import { createAccount } from "./accounts.ts";
@@ -170,26 +170,4 @@ test("findInconsistentPostings: detects global ledger imbalance", async (t) => {
     globalProblem!.reason.includes("global ledger imbalance"),
     `expected 'global ledger imbalance' in reason, got: ${globalProblem!.reason}`,
   );
-});
-
-test("reprojectAllLegacyColumns: idempotent — second call succeeds without error", async (t) => {
-  const userId = await createUser();
-  t.after(() => cleanupUser(userId));
-  await seedSystemAccounts(db, userId);
-  const acct = await createAccount(db, userId, { name: "Bank", type: "bank", institution: null, accountLast4: null, holderName: null, currency: "INR", openingBalancePaise: 0 });
-  await createTransaction(db, userId, {
-    accountId: acct.id,
-    amountPaise: -3000,
-    date: "2026-01-03",
-    merchant: "Reproject test",
-  });
-  const first = await reprojectAllLegacyColumns(db);
-  assert.equal(first.failures.length, 0, "first reprojectAllLegacyColumns must have no failures");
-  const second = await reprojectAllLegacyColumns(db);
-  assert.equal(second.failures.length, 0, "second reprojectAllLegacyColumns must have no failures (idempotent)");
-  assert.ok(first.checked >= 1, "must have checked at least one transaction");
-  // second.checked === first.checked would be flaky in concurrent test runs since
-  // reprojectAllLegacyColumns scans ALL users; idempotence is already proven by
-  // second.failures.length === 0 above.
-  assert.ok(second.checked >= 1, "second call must also check at least one transaction");
 });

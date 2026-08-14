@@ -76,6 +76,7 @@ GET /api/insurance/health-cards/:cardId
 GET /api/insurance/policies
 GET /api/insurance/policies/:id/document
 GET /api/insurance/policies/:id/premiums
+GET /api/ledger/integrity
 GET /api/mailboxes
 GET /api/mailboxes/credentials
 GET /api/merchant-rules
@@ -158,6 +159,7 @@ HEAD /api/insurance/health-cards/:cardId
 HEAD /api/insurance/policies
 HEAD /api/insurance/policies/:id/document
 HEAD /api/insurance/policies/:id/premiums
+HEAD /api/ledger/integrity
 HEAD /api/mailboxes
 HEAD /api/mailboxes/credentials
 HEAD /api/merchant-rules

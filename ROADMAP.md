@@ -26,7 +26,7 @@ It is not accounting software. The framing is a private financial coach: awarene
 
 Postgres and Redis are **external services**, not part of the compose stack. Object storage goes to self-hosted MinIO with a disk fallback.
 
-**Scale today:** 50,384 LOC of source · 19,909 LOC of tests across 88 test files · 49 tables · 155 API routes across 39 route modules · 31 web pages · 3 BullMQ queues with 9 schedulers.
+**Scale today:** 50,384 LOC of source · 19,909 LOC of tests across 133 test files · 49 tables · 158 API routes across 40 route modules · 32 web pages · 3 BullMQ queues with 9 schedulers.
 
 ---
 
@@ -88,15 +88,19 @@ These are not aspirations; they are enforced in code and tests.
 
 ## 4. Where Compass is going
 
-Full detail lives in [`tasks/README.md`](./tasks/README.md); 53 tasks across four releases.
+Full detail lives in [`tasks/README.md`](./tasks/README.md); 94 tasks across nine releases.
 
-### 2.0.0 — Architecture, planning & shopping *(in progress, 44 tasks)*
+### 2.0.0 — Foundation *(shipped as v3.0.0, 21 tasks)*
 
 **Architecture.** The app grew from an expense tracker into a full personal-finance OS without domain boundaries: one 1,767-line schema file, 102 files in a flat services folder, 39 route modules registered flat, and cache invalidation driven by a URL regex. 3.0.0 completed the restructure: the schema is now 49 tables split into layered schema slices under `db/shared/` and `modules/*/schema.ts`, the flat services folder is replaced by eight domain modules with prefixed Fastify plugins, and a domain event bus is in place — all verified by a route-table snapshot that proved all 155 URLs stayed byte-identical.
 
-**Household & Split.** Compass becomes multi-player: households, explicit per-record sharing grants, and built-in expense splitting with a running who-owes-whom balance. The authorization model gains one central sharing guard; private stays the default.
+### 2.1.0 — Household & Split *(8 tasks)*
 
-**Goal-based planning — the headline.** Compass already tracks well; this makes it advise:
+Compass becomes multi-player: households, explicit per-record sharing grants, and built-in expense splitting with a running who-owes-whom balance. The authorization model gains one central sharing guard; private stays the default.
+
+### 2.2.0 — Goal-based planning *(15 tasks)*
+
+Compass already tracks well; this makes it advise:
 - a **forward glide-path roadmap** with dated allocation switch points, not just today's spot mix
 - **instrument-category guidance** for the Indian context (ELSS, PPF, EPF/VPF, NPS, short-duration debt, FD, SGB, index funds) with lock-in, tax and liquidity attributes
 - an **income-based multi-goal allocation engine** — the real gap, since every goal is currently planned in isolation against an income that cannot fund them all
@@ -104,20 +108,33 @@ Full detail lives in [`tasks/README.md`](./tasks/README.md); 53 tasks across fou
 - **actionable rebalancing** with amounts and routes, preferring contribution redirection over taxable switching
 - **tax-aware rebalancing** using existing FIFO tax lots, willing to conclude that a rebalance is not worth its tax cost
 
+### 2.3.0 — Vision & Shopping Intelligence *(20 tasks)*
+
 **Vision in `packages/ai`** — multimodal support, the prerequisite for any photo or receipt capture.
 
 **Shopping Intelligence** *(explicitly the garnish, not the cake)* — list capture by paste or photo, unit-normalized price comparison, basket arbitrage across platforms including delivery fees and minimum-cart thresholds, **card-offer ingestion from forwarded deal emails**, deal- and reward-aware portal/card recommendation, habit-learned pantry and predictive carts, and a receipt→ledger loop. Budget caps, goal-impact receipts and an EMI temptation guard connect it back to the financial core.
 
-### 2.1.0 — Tax intelligence *(4 tasks)*
+### 2.4.0 — Tax intelligence *(14 tasks)*
+
 Payslip parsing (CTC, TDS, EPF) · **80C/80CCD/80D deduction basket** with deadline-aware headroom · **advance tax with 234B/234C interest** · **old vs new regime comparison**.
 
 Compass records *several* deduction sources — insurance premiums, EPF contributions, PPF/SSY/NPS accounts, and home-loan principal derivable from EMI splits — but **most are not tax-classified and some are absent entirely**: nothing distinguishes ELSS from an ordinary equity fund, or a five-year tax-saver FD from a normal one, and NSC is not modelled at all. Instrument tax-classification is therefore a prerequisite, not a detail. Realised capital gains *are* computed, but the advance tax they trigger is not.
 
-### 2.2.0 — Protection & continuity *(3 tasks)*
+### 2.5.0 — Protection & continuity *(5 tasks)*
+
 **Insurance adequacy** (Human Life Value against income, dependents and liabilities) · a **maturity and renewal calendar** — only partly a consolidation exercise, since `maturityDate` exists solely on retirement, insurance and gold details: **FD, RD and NSC are not modelled at all** and must be built before the calendar can cover them · a **nominee and continuity dossier** — because `nominee` currently exists on exactly one table, and Compass holds the most complete picture of a household's finances that will ever exist in one place.
 
-### 2.3.0 — Debt & windfall *(2 tasks)*
+### 2.6.0 — Debt & windfall *(3 tasks)*
+
 **Prepay vs invest and floating-rate reset impact** · **windfall allocator** routing a bonus through the multi-goal engine.
+
+### 2.7.0 — Everyday savings *(5 tasks)*
+
+Comparify-inspired price comparison for everyday purchases · food delivery and cab fare comparison across platforms · realized savings tracking against the best available alternative.
+
+### 2.8.0 — Portfolio & integrity *(3 tasks)*
+
+Performance attribution across the holdings ledger · fraud and duplicate review tooling.
 
 ---
 
@@ -128,10 +145,10 @@ From [`docs/PRD-wow-features.md`](./docs/PRD-wow-features.md):
 | # | Feature | Status |
 |---|---|---|
 | 1 | **Account Aggregator live sync** — consented real-time bank/MF/EPF data over RBI's AA rails | Not started; the largest single leap in data quality available |
-| 2 | **AI Tax Co-pilot** — AIS/26AS reconciliation, ITR-ready pack | Partly absorbed into 2.1.0; reconciliation and ITR export remain |
+| 2 | **AI Tax Co-pilot** — AIS/26AS reconciliation, ITR-ready pack | Partly absorbed into 2.4.0; reconciliation and ITR export remain |
 | 3 | **Financial Autopilot** — proactive agent | **Partly shipped** — daily cash-runway and weekly goal reviews already run |
-| 4 | **Household & Split** | **Scheduled into 2.0.0** |
-| 5 | **Scenario Planner** — prepay vs invest, career break, home purchase | Partly absorbed into 2.3.0; broader simulation remains |
+| 4 | **Household & Split** | **Scheduled into 2.1.0** |
+| 5 | **Scenario Planner** — prepay vs invest, career break, home purchase | Partly absorbed into 2.6.0; broader simulation remains |
 | ⭐ | **Local-Brain Mode** — 100% on-device LLM | Foundation exists (Ollama provider); needs a first-class private mode |
 
 ---
@@ -139,7 +156,7 @@ From [`docs/PRD-wow-features.md`](./docs/PRD-wow-features.md):
 ## 6. Known gaps and open questions
 
 - **Microsoft mailboxes are unsupported** — the schema accepts the provider but the token provider throws. A visible gap if multi-provider mail is ever claimed.
-- **No OCR anywhere** until vision lands in 2.0.0; the only PDF capability is statement text extraction.
+- **No OCR anywhere** until vision lands in 2.3.0 (task 8.1); the only PDF capability is statement text extraction.
 - **Ollama supports neither forced tool-calling nor vision**, so structured and multimodal paths degrade for fully-local users — directly in tension with Local-Brain Mode.
 - **Shopping price data has no durable source.** Quick-commerce platforms expose no public price APIs; crowdsourced entry, receipt OCR and affiliate APIs are the only legitimate inputs, and live scraping is deliberately excluded from core.
 - **NRI support is classification-only.** NRE/NRO *are* modelled as bank-account subtypes (`BankAccountSubtypeSchema`), but nothing follows from it: no NRI taxation, no repatriability tracking, no FCNR/RFC accounts, no foreign currency, no Schedule FA foreign-asset reporting.

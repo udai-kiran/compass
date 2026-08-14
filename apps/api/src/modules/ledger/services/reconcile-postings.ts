@@ -96,20 +96,6 @@ export async function findInconsistentPostings(
 }
 
 /**
- * PR-G2: the legacy columns (`account_id`, `amount_paise`, `category_id`,
- * `necessity`, `is_opening`) and `transaction_splits` table have been dropped.
- * There is nothing to re-project. This function is a no-op retained only so
- * callers that have not yet been updated do not fail to compile.
- *
- * @deprecated Remove all call sites; function will be deleted in a follow-up.
- */
-export async function reprojectAllLegacyColumns(
-  _db: Db,
-): Promise<{ users: number; checked: number; repaired: number; failures: PostingProblem[] }> {
-  return { users: 0, checked: 0, repaired: 0, failures: [] };
-}
-
-/**
  * Boot gate: refuses to start against a database that predates the postings
  * recreate.
  *

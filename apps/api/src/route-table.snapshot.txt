@@ -112,6 +112,7 @@
 │       └── /installment-candidates (GET, HEAD)
 ├── /api/user-tasks (GET, HEAD, POST)
 │   └── /:id (GET, HEAD, PATCH, DELETE)
+├── /api/ledger/integrity (GET, HEAD)
 ├── /api/imports (POST, GET, HEAD)
 │   ├── /presets (GET, HEAD)
 │   └── /:id (GET, HEAD, DELETE)

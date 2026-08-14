@@ -1,7 +1,7 @@
 # Task: 035 — investments StatTile font size
 
 ## Status
-IMPLEMENTING
+COMPLETE
 
 ## Objective
 Large INR numbers (e.g. ₹92,46,409.62) in the five StatTile cards on the

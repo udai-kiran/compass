@@ -239,8 +239,8 @@ Full review: [`reviews/roadmap-feature-review-1.md`](../reviews/roadmap-feature-
 
 Recorded here because each is a real property of this codebase, verified during planning:
 
-- **All 155 URLs are hardcoded** — no route module uses a Fastify `prefix` today. The route snapshot from 0.3 is the highest-value guard in the release; during Phase 1 it must not change at all.
-- **8 tables have no `user_id`** and scope via parent FK: `transaction_splits`, `import_rows`, `budget_lines`, `attachments`, `transaction_links`, `holding_valuations`, `holding_events` (plus `users` as the identity root). A naive sharing guard silently misses every one.
+- **All 158 URLs are hardcoded** — no route module uses a Fastify `prefix` today. The route snapshot from 0.3 is the highest-value guard in the release; during Phase 1 it must not change at all.
+- **7 tables have no `user_id`** and scope via parent FK: `import_rows`, `budget_lines`, `attachments`, `transaction_links`, `holding_valuations`, `holding_events` (plus `users` as the identity root). A naive sharing guard silently misses every one.
 - **Offer caps decide everything** in 7.4 — a 10% offer capped at ₹500 beats a 5% uncapped offer only below ₹10,000 of spend. Test at the cap boundary.
 - **`backup.test.ts` fails on any table missing** from `ALL_TABLES`/`USER_TABLES` — new tables land across phases 2, 6 and 7.
 - **`LEDGER_DAY_TZ = "Etc/UTC"` is test-enforced** in `jobs/index.test.ts`; moving job wiring during migration must not relax it.
