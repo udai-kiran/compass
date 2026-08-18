@@ -2,7 +2,7 @@ import { and, eq } from "drizzle-orm";
 import type { DbOrTx } from "../../../db/index.ts";
 import { sharingGrants } from "../schema.ts";
 import { HttpError } from "../../../lib/errors.ts";
-import type { CreateSharingGrant, SharingGrant } from "@compass/shared";
+import type { CreateSharingGrant, SharingGrant, SharingResourceType } from "@compass/shared";
 
 function toGrant(row: typeof sharingGrants.$inferSelect): SharingGrant {
   return {
@@ -52,11 +52,11 @@ export async function revokeGrant(
 export async function listGrants(
   db: DbOrTx,
   userId: string,
-  filters?: { resourceType?: string; resourceId?: string },
+  filters?: { resourceType?: SharingResourceType; resourceId?: string },
 ): Promise<SharingGrant[]> {
   const conditions = [eq(sharingGrants.ownerUserId, userId)];
   if (filters?.resourceType) {
-    conditions.push(eq(sharingGrants.resourceType, filters.resourceType as any));
+    conditions.push(eq(sharingGrants.resourceType, filters.resourceType));
   }
   if (filters?.resourceId) {
     conditions.push(eq(sharingGrants.resourceId, filters.resourceId));

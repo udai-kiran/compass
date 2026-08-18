@@ -1,7 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 import {
-  AcceptInviteSchema,
   HouseholdInviteSchema,
   HouseholdMemberSchema,
   HouseholdSchema,

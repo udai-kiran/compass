@@ -1,4 +1,4 @@
-import { and, eq, gt } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { randomBytes } from "node:crypto";
 import type { Household, HouseholdMember, HouseholdInvite } from "@compass/shared";
 import type { Db } from "../../../db/index.ts";

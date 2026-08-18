@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import {
   computeIncomeSurplus,
   type CommittedOutflow,
-  type IncomeSurplusComputation,
   type MonthlyIncome,
 } from "./income-surplus.ts";
 

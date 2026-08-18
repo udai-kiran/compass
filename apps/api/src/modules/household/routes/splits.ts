@@ -2,8 +2,9 @@ import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
 import { CreateHouseholdSplitSchema, HouseholdBalancesSchema, HouseholdSplitSchema, UpdateHouseholdSplitSchema } from "@compass/shared";
+import type { HouseholdSplit } from "@compass/shared";
 import type { Db } from "../../../db/index.ts";
-import { householdMembers } from "../schema.ts";
+import { householdMembers, splits, splitShares } from "../schema.ts";
 import { transactions } from "../../../db/shared/ledger.ts";
 import { and, eq } from "drizzle-orm";
 import { HttpError } from "../../../lib/errors.ts";
@@ -22,7 +23,10 @@ async function assertMember(db: Db, userId: string, householdId: string): Promis
   if (rows.length === 0) throw new HttpError(403, "Not a member of this household");
 }
 
-function toSplitResponse(split: any, shares: any[]): any {
+function toSplitResponse(
+  split: typeof splits.$inferSelect,
+  shares: (typeof splitShares.$inferSelect)[],
+): HouseholdSplit {
   return {
     id: split.id,
     transactionId: split.transactionId,
@@ -32,7 +36,7 @@ function toSplitResponse(split: any, shares: any[]): any {
     createdByUserId: split.createdByUserId,
     createdAt: split.createdAt,
     updatedAt: split.updatedAt,
-    shares: shares.map((s: any) => ({
+    shares: shares.map((s) => ({
       id: s.id,
       splitId: s.splitId,
       personId: s.personId,

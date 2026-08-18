@@ -2,8 +2,9 @@ import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
 import { CreateSettlementSchema, SettlementSchema } from "@compass/shared";
+import type { Settlement } from "@compass/shared";
 import type { Db } from "../../../db/index.ts";
-import { householdMembers } from "../schema.ts";
+import { householdMembers, settlements } from "../schema.ts";
 import { and, eq } from "drizzle-orm";
 import { HttpError } from "../../../lib/errors.ts";
 import { createSettlement, listSettlements } from "../services/settlements.ts";
@@ -18,7 +19,7 @@ async function assertMember(db: Db, userId: string, householdId: string): Promis
   if (rows.length === 0) throw new HttpError(403, "Not a member of this household");
 }
 
-function toSettlement(row: any): any {
+function toSettlement(row: typeof settlements.$inferSelect): Settlement {
   return {
     id: row.id,
     householdId: row.householdId,
