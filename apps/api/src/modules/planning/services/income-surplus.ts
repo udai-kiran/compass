@@ -117,6 +117,15 @@ function lastDayOf(key: string): string {
 /**
  * Compute monthly income and investable surplus from the user's ledger.
  *
+ * OWNER-ONLY SCOPING: Results are filtered strictly on `userId` — only
+ * accounts and transactions owned by this user are considered. `withSharing`
+ * (lib/sharing.ts) is deliberately NOT used because it currently has zero
+ * production call sites anywhere in the codebase. Making this function
+ * sharing-aware would be inconsistent with every other user-facing query.
+ * This decision is reversible and tracked for a future sharing-rollout task
+ * (task 061). Household-shared accounts are therefore omitted from income
+ * and surplus figures.
+ *
  * @param lookbackMonths Number of calendar months to look back (default 12).
  */
 export async function getIncomeSurplus(

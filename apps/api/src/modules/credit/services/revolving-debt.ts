@@ -86,6 +86,23 @@ export function estimateMonthlyCharge(
 
 // ---------- DB function ----------
 
+/**
+ * Compute revolving-debt exposure across the user's credit cards.
+ *
+ * OWNER-ONLY SCOPING: Despite the "Household" name (a pre-existing naming
+ * issue in commit b829d87), results are filtered strictly on `userId` — only
+ * credit card accounts owned by this user are queried. `withSharing`
+ * (lib/sharing.ts) is deliberately NOT used because it currently has zero
+ * production call sites anywhere in the codebase. Making this function
+ * sharing-aware would be inconsistent with every other user-facing query.
+ * Shared credit cards are therefore silently omitted. This decision is
+ * reversible and tracked for a future sharing-rollout task (task 061).
+ *
+ * Note: the name `getHouseholdRevolvingDebt` overpromises — it does not
+ * deliver household-inclusive scope. Renaming is deferred to task 061 to
+ * avoid churning the shared contract (HouseholdRevolvingDebt / HouseholdRevolvingDebtSchema)
+ * already verified in task 058.
+ */
 export async function getHouseholdRevolvingDebt(
   db: Db,
   userId: string,

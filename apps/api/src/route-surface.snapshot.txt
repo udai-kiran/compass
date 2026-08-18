@@ -55,6 +55,7 @@ GET /api/cashflow
 GET /api/cashflow/export.csv
 GET /api/categories
 GET /api/categories/tree
+GET /api/credit/revolving-debt
 GET /api/dashboard
 GET /api/emis
 GET /api/emis/:templateId/installments
@@ -93,6 +94,8 @@ GET /api/net-worth
 GET /api/net-worth/by-goal
 GET /api/notification-prefs
 GET /api/notifications
+GET /api/planning/data-completeness
+GET /api/planning/income-surplus
 GET /api/portfolio
 GET /api/profile
 GET /api/projection-settings
@@ -145,6 +148,7 @@ HEAD /api/cashflow
 HEAD /api/cashflow/export.csv
 HEAD /api/categories
 HEAD /api/categories/tree
+HEAD /api/credit/revolving-debt
 HEAD /api/dashboard
 HEAD /api/emis
 HEAD /api/emis/:templateId/installments
@@ -183,6 +187,8 @@ HEAD /api/net-worth
 HEAD /api/net-worth/by-goal
 HEAD /api/notification-prefs
 HEAD /api/notifications
+HEAD /api/planning/data-completeness
+HEAD /api/planning/income-surplus
 HEAD /api/portfolio
 HEAD /api/profile
 HEAD /api/projection-settings

@@ -156,6 +156,22 @@ const INVESTMENT_TYPES = new Set(["investment", "ppf", "epf", "nps", "ssy"]);
 // Main report assembly
 // ---------------------------------------------------------------------------
 
+/**
+ * Build a data-freshness report for all of the user's active accounts.
+ *
+ * OWNER-ONLY SCOPING: Results are filtered strictly on `userId` — only
+ * accounts owned by this user are included in the readiness report.
+ * `withSharing` (lib/sharing.ts) is deliberately NOT used because it
+ * currently has zero production call sites anywhere in the codebase. Making
+ * this function sharing-aware would be inconsistent with every other
+ * user-facing query. This decision is reversible and tracked for a future
+ * sharing-rollout task (task 061). Household-shared accounts visible elsewhere
+ * in the household UI are therefore silently omitted from readiness reporting.
+ *
+ * @param today Optional override for "now" — a determinism seam for tests.
+ *              Not exposed via the HTTP route; clients always get the server's
+ *              current date.
+ */
 export async function getDataCompletenessReport(
   db: Db,
   userId: string,

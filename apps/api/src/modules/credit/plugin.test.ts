@@ -20,9 +20,10 @@ const EXPECTED_PAIRS: Array<{ method: string; url: string; routeFile: string }> 
   { method: "GET", url: "/api/emis", routeFile: "emis.ts" },
   { method: "GET", url: "/api/accounts/:accountId/bank-details", routeFile: "bank-details.ts" },
   { method: "GET", url: "/api/accounts/:accountId/overdraft-details", routeFile: "overdraft-details.ts" },
+  { method: "GET", url: "/api/credit/revolving-debt", routeFile: "revolving-debt.ts" },
 ];
 
-test("creditRoutes registers one uniquely-attributable route from each of the 4 internal route files", async (t) => {
+test("creditRoutes registers one uniquely-attributable route from each of the 5 internal route files", async (t) => {
   const app = Fastify({ logger: false });
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
@@ -31,7 +32,7 @@ test("creditRoutes registers one uniquely-attributable route from each of the 4 
   await app.ready();
   t.after(() => app.close());
 
-  assert.equal(EXPECTED_PAIRS.length, 4, "must assert exactly one pair per each of the 4 route files");
+  assert.equal(EXPECTED_PAIRS.length, 5, "must assert exactly one pair per each of the 5 route files");
 
   for (const { method, url, routeFile } of EXPECTED_PAIRS) {
     assert.ok(
