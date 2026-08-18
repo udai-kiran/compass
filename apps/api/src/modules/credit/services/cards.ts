@@ -28,6 +28,10 @@ function toDetails(d: DetailsRow): CardDetails {
     cycleDay: d.cycleDay,
     dueDay: d.dueDay,
     earnRatePer100: d.earnRatePer100,
+    aprBps: d.aprBps,
+    cashAprBps: d.cashAprBps,
+    lateFeePaise: d.lateFeePaise,
+    interestFreeDays: d.interestFreeDays,
     // Expose only that a password exists — never the value itself.
     hasStatementPassword: d.statementPasswordEnc !== "",
   };

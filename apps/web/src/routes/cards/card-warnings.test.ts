@@ -11,6 +11,10 @@ const cardDetails = (overrides: Partial<CardDetails> = {}): CardDetails => ({
   dueDay: 15,
   earnRatePer100: 1,
   hasStatementPassword: false,
+  aprBps: null,
+  cashAprBps: null,
+  lateFeePaise: null,
+  interestFreeDays: null,
   ...overrides,
 });
 

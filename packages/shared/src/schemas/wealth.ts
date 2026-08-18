@@ -18,6 +18,10 @@ export const CardDetailsSchema = z.object({
   cycleDay: z.number().int().min(1).max(28),
   dueDay: z.number().int().min(1).max(28),
   earnRatePer100: z.number().int().min(0),
+  aprBps: z.number().int().min(0).nullable(),
+  cashAprBps: z.number().int().min(0).nullable(),
+  lateFeePaise: z.number().int().min(0).nullable(),
+  interestFreeDays: z.number().int().min(0).nullable(),
   /** whether a statement-PDF password is stored; the value itself is never sent out */
   hasStatementPassword: z.boolean(),
 });
@@ -36,6 +40,10 @@ export const UpsertCardDetailsSchema = z.object({
   cycleDay: z.number().int().min(1).max(28).default(1),
   dueDay: z.number().int().min(1).max(28).default(15),
   earnRatePer100: z.number().int().min(0).default(0),
+  aprBps: z.number().int().min(0).nullable().default(null),
+  cashAprBps: z.number().int().min(0).nullable().default(null),
+  lateFeePaise: z.number().int().min(0).nullable().default(null),
+  interestFreeDays: z.number().int().min(0).nullable().default(null),
 });
 export type UpsertCardDetails = z.input<typeof UpsertCardDetailsSchema>;
 

@@ -64,6 +64,14 @@ export const cardDetails = pgTable("card_details", {
   dueDay: integer("due_day").notNull().default(15),
   /** reward points earned per ₹100 spent (0 = no program) */
   earnRatePer100: integer("earn_rate_per_100").notNull().default(0),
+  /** Annual purchase APR in basis points; null when not set. 4200 = 42% p.a. */
+  aprBps: integer("apr_bps"),
+  /** APR for cash advances/withdrawals (usually higher); null when not set. */
+  cashAprBps: integer("cash_apr_bps"),
+  /** Flat late fee in paise; null when not set. */
+  lateFeePaise: bigint("late_fee_paise", { mode: "number" }),
+  /** Grace / interest-free period in days from statement close; null when not set. Typically 45–50. */
+  interestFreeDays: integer("interest_free_days"),
   /**
    * Password to open this card's statement PDFs, encrypted at rest (secret-box).
    * "" when unset. Never returned to the client — the API exposes only whether
