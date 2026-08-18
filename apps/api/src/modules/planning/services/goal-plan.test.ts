@@ -308,3 +308,27 @@ test("buildGlidePathSchedule: requiredMonthlyPaise is 0 when already fully funde
   assert.equal(steps.length, 2);
   assert.equal(steps[0]!.requiredMonthlyPaise, 0);
 });
+
+// P7: every projectedCorpusPaise must be an integer (CLAUDE.md money invariant).
+// A nontrivial (≥3-step) schedule is required to catch fractional paise that only
+// appear in steps 2+ due to the compound-growth projection.
+test("buildGlidePathSchedule: projectedCorpusPaise is an integer on every step (P7)", () => {
+  const today = new Date("2026-08-18");
+  // 8-year retirement goal → 5 steps (see band-boundaries test above).
+  // fundedPaise is non-zero and monthlyInflowPaise is non-zero so the compound-growth
+  // path in annuityFV() is exercised and fractional intermediate values arise.
+  const steps = buildGlidePathSchedule({
+    goalType: "retirement", monthsToTarget: 96,
+    targetPaise: 1_00_00_000_00, // ₹1Cr target
+    fundedPaise: 10_00_000_00,   // ₹10L funded
+    monthlyInflowPaise: 5_000_00, // ₹5k/month SIP
+    equityReturnBps: 1200, debtReturnBps: 700, today,
+  });
+  assert.ok(steps.length >= 3, `expected ≥3 steps, got ${steps.length}`);
+  for (const step of steps) {
+    assert.ok(
+      Number.isInteger(step.projectedCorpusPaise),
+      `projectedCorpusPaise ${step.projectedCorpusPaise} is not an integer (fromDate=${step.fromDate})`,
+    );
+  }
+});

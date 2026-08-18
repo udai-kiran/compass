@@ -163,7 +163,7 @@ export function buildGlidePathSchedule(input: GlidePathInput): GlideStep[] {
       equityPct: band.equityPct, debtPct: band.debtPct,
       monthsRemaining: band.remaining,
       requiredMonthlyPaise: req,
-      projectedCorpusPaise: corpusAtStepStart,
+      projectedCorpusPaise: Math.round(corpusAtStepStart),
     });
 
     // Project corpus to next step.

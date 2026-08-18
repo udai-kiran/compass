@@ -173,8 +173,10 @@ test("de-risking schedule has one event per band transition in the glide path", 
   const evt = plan.deRiskingSchedule[0]!;
   assert.equal(evt.fromEquityPct, 20);
   assert.equal(evt.toEquityPct, 0);
-  // equityToSwitchPaise = projectedCorpus at step[1].start × 20/100 > 0
-  assert.ok(evt.equityToSwitchPaise > 0);
+  // Exact value: step[1].projectedCorpusPaise = Math.round(50_000_000 × 1.08) = 54_000_000
+  // equityToSwitchPaise = Math.round(54_000_000 × 20 / 100) = 10_800_000
+  // Derived from actual buildGlidePathSchedule output: steps[1].projectedCorpusPaise = 54000000
+  assert.equal(evt.equityToSwitchPaise, 10_800_000);
 });
 
 test("CONTRIBUTION_CORRECTION_MONTHS is 18", () => {
