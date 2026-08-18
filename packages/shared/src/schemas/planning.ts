@@ -261,3 +261,107 @@ export const InstrumentGuidanceSchema = z.object({
   suggestions: z.array(InstrumentSuggestionSchema),
 });
 export type InstrumentGuidance = z.output<typeof InstrumentGuidanceSchema>;
+
+// ---------------------------------------------------------------------------
+// 7. Income adequacy report schemas (task 6.5)
+// ---------------------------------------------------------------------------
+
+export const ExtendTimelinePerGoalSchema = z.object({
+  goalId: z.string(),
+  goalName: z.string(),
+  originalMonthsToTarget: z.number().int().nullable(),
+  newMonthsToTarget: z.number().int().nullable(),
+  slipMonths: z.number().int().nullable(),
+});
+
+export const ExtendTimelineLeverSchema = z.object({
+  type: z.literal("extend_timeline"),
+  perGoal: z.array(ExtendTimelinePerGoalSchema),
+});
+export type ExtendTimelineLever = z.output<typeof ExtendTimelineLeverSchema>;
+
+export const ReduceTargetPerGoalSchema = z.object({
+  goalId: z.string(),
+  goalName: z.string(),
+  originalTargetPaise: paiseField().nullable(),
+  achievableTargetPaise: paiseField().nullable(),
+  reductionPct: z.number().nullable(),
+});
+
+export const ReduceTargetLeverSchema = z.object({
+  type: z.literal("reduce_target"),
+  perGoal: z.array(ReduceTargetPerGoalSchema),
+});
+export type ReduceTargetLever = z.output<typeof ReduceTargetLeverSchema>;
+
+export const CutExpensesOpportunitySchema = z.object({
+  categoryName: z.string(),
+  monthlySpendPaise: paiseField(),
+  coversPct: z.number(),
+});
+
+export const CutExpensesLeverSchema = z.object({
+  type: z.literal("cut_expenses"),
+  requiredMonthlyReductionPaise: paiseField(),
+  opportunities: z.array(CutExpensesOpportunitySchema),
+});
+export type CutExpensesLever = z.output<typeof CutExpensesLeverSchema>;
+
+export const IncomeIncreaseLeverSchema = z.object({
+  type: z.literal("increase_income"),
+  requiredMonthlyIncreasePaise: paiseField(),
+  pctOfCurrentIncome: z.number(),
+});
+export type IncomeIncreaseLever = z.output<typeof IncomeIncreaseLeverSchema>;
+
+export const AdequacyLeverSchema = z.discriminatedUnion("type", [
+  ExtendTimelineLeverSchema,
+  ReduceTargetLeverSchema,
+  CutExpensesLeverSchema,
+  IncomeIncreaseLeverSchema,
+]);
+export type AdequacyLever = z.output<typeof AdequacyLeverSchema>;
+
+export const IncomeAdequacyReportSchema = z.object({
+  totalShortfallPaise: paiseField(),
+  hasShortfall: z.boolean(),
+  conservativeSurplusPaise: paiseField().nullable(),
+  optimisticSurplusPaise: paiseField().nullable(),
+  levers: z.array(AdequacyLeverSchema),
+});
+export type IncomeAdequacyReport = z.output<typeof IncomeAdequacyReportSchema>;
+
+// ---------------------------------------------------------------------------
+// 8. Tax-aware rebalancing schemas (task 6.7)
+// ---------------------------------------------------------------------------
+
+export const SwitchTaxAnnotationSchema = z.object({
+  actionIndex: z.number().int(),
+  action: CorpusSwitchActionSchema,
+  estimatedLtcgPaise: paiseField(),
+  estimatedStcgPaise: paiseField(),
+  estimatedExemptPaise: paiseField(),
+  ltcgHeadroomBeforePaise: paiseField(),
+  /** May be negative when LTCG exceeds headroom */
+  ltcgHeadroomAfterPaise: z.number().int().safe(),
+  ltcgFitsInHeadroom: z.boolean(),
+  lockedCategoryDetails: z.array(
+    z.object({
+      category: InstrumentCategorySchema,
+      lockInSummary: z.string(),
+    }),
+  ),
+  earliestStcgFlipDate: isoDateString.nullable(),
+  redirectionAvailable: z.boolean(),
+  notRecommendedNow: z.boolean(),
+  notRecommendedReason: z.string().nullable(),
+});
+export type SwitchTaxAnnotation = z.output<typeof SwitchTaxAnnotationSchema>;
+
+export const TaxAwareRebalancingPlanSchema = z.object({
+  plan: RebalancingPlanSchema,
+  switchAnnotations: z.array(SwitchTaxAnnotationSchema),
+  ltcgHeadroomPaise: paiseField(),
+  redirectionNote: z.string(),
+});
+export type TaxAwareRebalancingPlan = z.output<typeof TaxAwareRebalancingPlanSchema>;

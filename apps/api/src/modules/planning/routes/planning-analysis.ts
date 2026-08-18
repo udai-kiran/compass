@@ -1,9 +1,19 @@
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
-import { DataCompletenessReportSchema, IncomeSurplusResultSchema } from "@compass/shared";
+import {
+  DataCompletenessReportSchema,
+  IncomeSurplusResultSchema,
+  MultiGoalAllocationPlanSchema,
+  IncomeAdequacyReportSchema,
+  type Goal,
+} from "@compass/shared";
 import { getIncomeSurplus } from "../services/income-surplus.ts";
 import { getDataCompletenessReport } from "../services/data-completeness.ts";
+import { listGoals, getGoalProgress } from "../services/goals.ts";
+import { allocateAcrossGoals } from "../services/multi-goal-allocation.ts";
+import { buildIncomeAdequacyReport } from "../services/income-adequacy.ts";
+import type { UnderfundedGoal } from "../services/income-adequacy.ts";
 
 /**
  * GET /api/planning/income-surplus
@@ -62,4 +72,131 @@ export async function planningAnalysisRoutes(app: FastifyInstance) {
     },
     async (req) => getDataCompletenessReport(app.db, req.session!.userId),
   );
+
+  r.get(
+    "/api/planning/multi-goal-allocation",
+    {
+      schema: {
+        response: { 200: MultiGoalAllocationPlanSchema },
+      },
+    },
+    async (req) => {
+      const userId = req.session!.userId;
+
+      const goals = await listGoals(app.db, userId);
+      const activeGoals = goals.filter((g) => !g.archived);
+      const surplus = await getIncomeSurplus(app.db, userId);
+      if (surplus.conservativeSurplusPaise === null) {
+        return { perGoal: [], totalAllocatedPaise: 0, freeCashPaise: 0 };
+      }
+      const progresses = await Promise.all(
+        activeGoals.map((g) => getGoalProgress(app.db, userId, g.id)),
+      );
+
+      const entries = progresses.map((p, i) => ({
+        id: activeGoals[i]!.id,
+        goalType: activeGoals[i]!.type,
+        monthsToTarget: monthsToTargetOf(activeGoals[i]!),
+        requiredMonthlyPaise: p.plan.gapMonthlyPaise,
+        fundedPaise: p.fundedPaise,
+        targetPaise: p.effectiveTargetPaise,
+        blendedReturnBps: p.blendedReturnBps,
+        sortOrder: i,
+      }));
+
+      const availableSurplus = surplus.conservativeSurplusPaise;
+      return allocateAcrossGoals(entries, availableSurplus);
+    },
+  );
+
+  r.get(
+    "/api/planning/income-adequacy",
+    {
+      schema: {
+        response: { 200: IncomeAdequacyReportSchema },
+      },
+    },
+    async (req) => {
+      const userId = req.session!.userId;
+
+      const goals = await listGoals(app.db, userId);
+      const activeGoals = goals.filter((g) => !g.archived);
+      const surplus = await getIncomeSurplus(app.db, userId);
+      if (surplus.conservativeSurplusPaise === null) {
+        return {
+          totalShortfallPaise: 0,
+          hasShortfall: false,
+          conservativeSurplusPaise: null,
+          optimisticSurplusPaise: null,
+          levers: [],
+        };
+      }
+      const progresses = await Promise.all(
+        activeGoals.map((g) => getGoalProgress(app.db, userId, g.id)),
+      );
+
+      const entries = progresses.map((p, i) => ({
+        id: activeGoals[i]!.id,
+        goalType: activeGoals[i]!.type,
+        monthsToTarget: monthsToTargetOf(activeGoals[i]!),
+        requiredMonthlyPaise: p.plan.gapMonthlyPaise,
+        fundedPaise: p.fundedPaise,
+        targetPaise: p.effectiveTargetPaise,
+        blendedReturnBps: p.blendedReturnBps,
+        sortOrder: i,
+      }));
+
+      const availableSurplus = surplus.conservativeSurplusPaise;
+      const plan = allocateAcrossGoals(entries, availableSurplus);
+
+      const allocationByGoalId = new Map(plan.perGoal.map((r) => [r.goalId, r]));
+      const progressByGoalId = new Map(progresses.map((p) => [p.id, p]));
+
+      const underfunded: UnderfundedGoal[] = entries
+        .filter((e) => {
+          const alloc = allocationByGoalId.get(e.id);
+          return alloc && !alloc.fullyCovered && (e.requiredMonthlyPaise ?? 0) > 0;
+        })
+        .map((e) => {
+          const alloc = allocationByGoalId.get(e.id)!;
+          const progress = progressByGoalId.get(e.id)!;
+          return {
+            goalId: e.id,
+            goalName: progress.name,
+            monthsToTarget: e.monthsToTarget,
+            targetPaise: e.targetPaise,
+            fundedPaise: e.fundedPaise,
+            blendedReturnBps: e.blendedReturnBps,
+            allocatedMonthlyPaise: alloc.allocatedMonthlyPaise,
+            shortfallPaise: (e.requiredMonthlyPaise ?? 0) - alloc.allocatedMonthlyPaise,
+            slipMonths: alloc.slipMonths,
+          };
+        });
+
+      const sorted = [...surplus.months].sort((a, b) => a.incomePaise - b.incomePaise);
+      const mid = Math.floor(sorted.length / 2);
+      const medianMonthlyIncomePaise =
+        sorted.length === 0 ? 0 : (sorted[mid]?.incomePaise ?? 0);
+
+      return buildIncomeAdequacyReport({
+        underfundedGoals: underfunded,
+        conservativeSurplusPaise: surplus.conservativeSurplusPaise,
+        optimisticSurplusPaise: surplus.optimisticSurplusPaise,
+        medianMonthlyIncomePaise,
+      });
+    },
+  );
+}
+
+function monthsToTargetOf(g: Goal): number | null {
+  if (g.targetDate) {
+    return Math.max(
+      0,
+      Math.round(
+        (new Date(g.targetDate).getTime() - Date.now()) /
+          (1000 * 60 * 60 * 24 * 30.44),
+      ),
+    );
+  }
+  return g.targetMonths ?? null;
 }

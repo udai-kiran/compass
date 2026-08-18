@@ -8,6 +8,8 @@ import { insightRoutes } from "./routes/insights.ts";
 import { reportRoutes } from "./routes/reports.ts";
 import { projectionSettingsRoutes } from "./routes/projection-settings.ts";
 import { planningAnalysisRoutes } from "./routes/planning-analysis.ts";
+import { goalAnalysisRoutes } from "./routes/goal-analysis.ts";
+import { roadmapNarrativeRoutes } from "./routes/roadmap-narrative.ts";
 
 /**
  * `modules/planning/` — fifth of 8 Phase-1 module migrations (task 1.5),
@@ -40,4 +42,6 @@ export async function planningRoutes(app: FastifyInstance): Promise<void> {
   await app.register(reportRoutes);
   await app.register(projectionSettingsRoutes);
   await app.register(planningAnalysisRoutes);
+  await app.register(goalAnalysisRoutes);
+  await app.register(roadmapNarrativeRoutes);
 }

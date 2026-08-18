@@ -18,6 +18,11 @@ import { useAssetGoalMutation, useNetWorthByGoal } from "../../lib/wealth-querie
 import { SERIES } from "../../lib/viz.tsx";
 import { formatGoalDeadlineDistance } from "./goal-date.ts";
 import { DateField } from "../../components/DateField.tsx";
+import { RoadmapPanel } from "./RoadmapPanel.tsx";
+import { InstrumentPanel } from "./InstrumentPanel.tsx";
+import { RebalancePanel } from "./RebalancePanel.tsx";
+import { AllocationPanel } from "./AllocationPanel.tsx";
+import { LeverPanel } from "./LeverPanel.tsx";
 
 const GOAL_TYPES: Array<{ value: GoalType; label: string }> = [
   { value: "savings", label: "Savings" },
@@ -85,6 +90,13 @@ export function GoalsPage() {
           </p>
         )}
       </div>
+
+      {active.length > 0 && (
+        <>
+          <AllocationPanel goals={active} />
+          <LeverPanel />
+        </>
+      )}
 
       {archived.length > 0 && (
         <details className="mt-6">
@@ -302,6 +314,9 @@ function GoalProgressBody({ goal, p }: { goal: Goal; p: GoalProgress }) {
       <GoalPlanBody p={p} />
       <MappedAssets goalId={goal.id} p={p} />
       <SipsSummary goalId={goal.id} p={p} />
+      <RoadmapPanel goalId={goal.id} />
+      <InstrumentPanel goalId={goal.id} />
+      <RebalancePanel goalId={goal.id} />
     </>
   );
 }

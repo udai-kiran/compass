@@ -64,6 +64,11 @@ GET /api/export/transactions.csv
 GET /api/family
 GET /api/forecast
 GET /api/goals
+GET /api/goals/:goalId/glide-path
+GET /api/goals/:goalId/instrument-guidance
+GET /api/goals/:goalId/rebalancing-plan
+GET /api/goals/:goalId/roadmap-narrative
+GET /api/goals/:goalId/tax-aware-rebalancing
 GET /api/goals/:id/progress
 GET /api/goals/:id/sips
 GET /api/holdings/:id/gold
@@ -95,7 +100,9 @@ GET /api/net-worth/by-goal
 GET /api/notification-prefs
 GET /api/notifications
 GET /api/planning/data-completeness
+GET /api/planning/income-adequacy
 GET /api/planning/income-surplus
+GET /api/planning/multi-goal-allocation
 GET /api/portfolio
 GET /api/profile
 GET /api/projection-settings
@@ -157,6 +164,11 @@ HEAD /api/export/transactions.csv
 HEAD /api/family
 HEAD /api/forecast
 HEAD /api/goals
+HEAD /api/goals/:goalId/glide-path
+HEAD /api/goals/:goalId/instrument-guidance
+HEAD /api/goals/:goalId/rebalancing-plan
+HEAD /api/goals/:goalId/roadmap-narrative
+HEAD /api/goals/:goalId/tax-aware-rebalancing
 HEAD /api/goals/:id/progress
 HEAD /api/goals/:id/sips
 HEAD /api/holdings/:id/gold
@@ -188,7 +200,9 @@ HEAD /api/net-worth/by-goal
 HEAD /api/notification-prefs
 HEAD /api/notifications
 HEAD /api/planning/data-completeness
+HEAD /api/planning/income-adequacy
 HEAD /api/planning/income-surplus
+HEAD /api/planning/multi-goal-allocation
 HEAD /api/portfolio
 HEAD /api/profile
 HEAD /api/projection-settings

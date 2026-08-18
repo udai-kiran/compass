@@ -39,6 +39,10 @@ import { buildRebalancingPlan } from "./rebalancing-plan.ts";
 import type { InstrumentGuidance as ServiceInstrumentGuidance } from "./instrument-guidance.ts";
 import { buildInstrumentGuidance } from "./instrument-guidance.ts";
 
+import type { IncomeAdequacyReport as ServiceIncomeAdequacyReport } from "./income-adequacy.ts";
+
+import type { TaxAwareRebalancingPlan as ServiceTaxAwareRebalancingPlan } from "./tax-aware-rebalancing.ts";
+
 // Schema imports from the shared package.
 import {
   // Barrel smoke: all required names from TASK.md complete export list.
@@ -62,6 +66,8 @@ import {
   SuitabilityTierSchema,
   InstrumentSuggestionSchema,
   InstrumentGuidanceSchema,
+  IncomeAdequacyReportSchema,
+  TaxAwareRebalancingPlanSchema,
 } from "@compass/shared";
 
 // ---------------------------------------------------------------------------
@@ -102,6 +108,16 @@ type _InstrumentGuidanceParity = Assert<
   Equal<z.output<typeof InstrumentGuidanceSchema>, ServiceInstrumentGuidance>
 >;
 
+// 7. IncomeAdequacyReport
+type _IncomeAdequacyReportParity = Assert<
+  Equal<z.output<typeof IncomeAdequacyReportSchema>, ServiceIncomeAdequacyReport>
+>;
+
+// 8. TaxAwareRebalancingPlan
+type _TaxAwareRebalancingPlanParity = Assert<
+  Equal<z.output<typeof TaxAwareRebalancingPlanSchema>, ServiceTaxAwareRebalancingPlan>
+>;
+
 // ---------------------------------------------------------------------------
 // Barrel smoke test — every required name from TASK.md must be importable
 // ---------------------------------------------------------------------------
@@ -128,6 +144,8 @@ test("barrel smoke: all required planning schema names are importable from @comp
     SuitabilityTierSchema,
     InstrumentSuggestionSchema,
     InstrumentGuidanceSchema,
+    IncomeAdequacyReportSchema,
+    TaxAwareRebalancingPlanSchema,
   ];
   for (const schema of names) {
     assert.ok(schema !== undefined, "schema must be defined");
