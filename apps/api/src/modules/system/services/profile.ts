@@ -29,6 +29,7 @@ export function toFamilyMember(row: FamilyMemberRow): FamilyMember {
     expectedCompletionYear: row.expectedCompletionYear,
     notes: row.notes,
     sortOrder: row.sortOrder,
+    linkedUserId: row.linkedUserId,
   };
 }
 
@@ -70,6 +71,9 @@ export async function createFamilyMember(
   input: CreateFamilyMember,
 ): Promise<FamilyMember> {
   const parsed = CreateFamilyMemberSchema.parse(input);
+  if (parsed.relationship === "self") {
+    throw new HttpError(400, "Cannot create a self person manually");
+  }
   const [last] = await db
     .select({ sortOrder: familyMembers.sortOrder })
     .from(familyMembers)
@@ -100,6 +104,13 @@ export async function updateFamilyMember(
 }
 
 export async function deleteFamilyMember(db: Db, userId: string, id: string): Promise<void> {
+  const existing = await db.query.familyMembers.findFirst({
+    where: and(eq(familyMembers.id, id), eq(familyMembers.userId, userId)),
+  });
+  if (!existing) throw new HttpError(404, "Family member not found");
+  if (existing.relationship === "self") {
+    throw new HttpError(400, "Cannot delete the self person");
+  }
   const rows = await db
     .delete(familyMembers)
     .where(and(eq(familyMembers.id, id), eq(familyMembers.userId, userId)))

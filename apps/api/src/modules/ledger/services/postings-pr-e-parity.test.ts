@@ -102,6 +102,7 @@ async function createAcct(
     institution: null,
     accountLast4: null,
     holderName: null,
+    holderId: null,
     currency: "INR",
     openingBalancePaise,
   });

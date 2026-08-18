@@ -187,6 +187,7 @@ export const AccountSchema = z.object({
   institution: z.string().nullable(),
   accountLast4: z.string().nullable(),
   holderName: z.string().nullable(),
+  holderId: z.uuid().nullable(),
   upiIds: z.array(z.string()),
   currency: z.string(),
   openingBalancePaise: z.number().int(),
@@ -245,6 +246,7 @@ export const CreateAccountSchema = z.object({
   institution: z.string().min(1).nullable().default(null),
   accountLast4: Last4Schema.default(null),
   holderName: z.string().min(1).max(120).nullable().default(null),
+  holderId: z.uuid().nullable().default(null),
   currency: z.string().min(3).max(3).default("INR"),
   openingBalancePaise: z.number().int().default(0),
 });
@@ -256,6 +258,7 @@ export const UpdateAccountSchema = z.object({
   institution: z.string().min(1).nullable().optional(),
   accountLast4: Last4Schema.optional(),
   holderName: z.string().min(1).max(120).nullable().optional(),
+  holderId: z.uuid().nullable().optional(),
   upiIds: UpiIdsSchema.optional(),
   goalId: z.uuid().nullable().optional(),
   linkedAccountId: z.uuid().nullable().optional(),

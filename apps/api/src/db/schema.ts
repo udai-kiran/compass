@@ -9,26 +9,24 @@
  *   - `../modules/<domain>/schema.ts` — domain-resident tables/enums (38 tables, 16 enums)
  *
  * Drizzle Kit resolves the full schema graph from this single entry point
- * (configured in drizzle.config.ts). The export set is exactly 49 tables
- * (48 domain + users) and 38 enums, each exported exactly once.
+ * (configured in drizzle.config.ts). The export set is exactly 57 tables
+ * (56 domain + users) and 42 enums, each exported exactly once.
  */
 
 export { users } from "./core-schema.ts";
 
 export * from "./shared/foundation.ts";
 export * from "./shared/hubs.ts";
+export * from "./shared/persons.ts";
 export * from "./shared/recurring.ts";
 export * from "./shared/spines.ts";
 export * from "./shared/ledger.ts";
 
 export {
   userProfiles,
-  familyMembers,
   notifications,
   alertLedger,
   notificationPrefs,
-  familyRelationship,
-  educationStage,
 } from "../modules/system/schema.ts";
 
 export {
@@ -96,3 +94,16 @@ export {
   aiEventKind,
   aiEventStatus,
 } from "../modules/automation/schema.ts";
+
+export {
+  households,
+  householdMembers,
+  householdInvites,
+  householdRole,
+  sharingGrants,
+  sharingResourceType,
+  splitRule,
+  splits,
+  splitShares,
+  settlements,
+} from "../modules/household/schema.ts";

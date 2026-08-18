@@ -15,6 +15,7 @@ import { getTableName, type Table } from "drizzle-orm";
 // All shared-layer entry points
 import * as foundation from "../db/shared/foundation.ts";
 import * as hubs from "../db/shared/hubs.ts";
+import * as persons from "../db/shared/persons.ts";
 import * as recurring from "../db/shared/recurring.ts";
 import * as spines from "../db/shared/spines.ts";
 import * as ledgerShared from "../db/shared/ledger.ts";
@@ -28,6 +29,7 @@ import * as protection from "../modules/protection/schema.ts";
 import * as planning from "../modules/planning/schema.ts";
 import * as ingest from "../modules/ingest/schema.ts";
 import * as automation from "../modules/automation/schema.ts";
+import * as household from "../modules/household/schema.ts";
 
 // The barrel itself
 import * as barrel from "../db/schema.ts";
@@ -57,8 +59,7 @@ function isPgEnum(val: unknown): boolean {
 // ── Expected residents per module ──────────────────────────────────────────
 
 const systemResidents = new Set([
-  "userProfiles", "familyMembers", "notifications", "alertLedger", "notificationPrefs",
-  "familyRelationship", "educationStage",
+  "userProfiles", "notifications", "alertLedger", "notificationPrefs",
 ]);
 
 const ledgerResidents = new Set([
@@ -93,12 +94,18 @@ const automationResidents = new Set([
   "aiSettings", "aiEvents", "aiProvider", "aiEventKind", "aiEventStatus",
 ]);
 
+const householdResidents = new Set([
+  "households", "householdMembers", "householdInvites",
+  "householdRole", "sharingGrants", "sharingResourceType",
+  "splits", "splitShares", "settlements", "splitRule",
+]);
+
 // ── Tests ──────────────────────────────────────────────────────────────────
 
 describe("db/schema.ts decomposition", () => {
 
-  // T3c: barrel exports exactly 49 tables + 39 enums + users, no duplicates
-  it("exports exactly 49 tables + 39 enums + users with no duplicates", () => {
+  // T3c: barrel exports exactly 57 tables + 42 enums + users, no duplicates
+  it("exports exactly 57 tables + 42 enums + users with no duplicates", () => {
     const tables: string[] = [];
     const enums: string[] = [];
     // Postgres-level object names — JS export keys are unique by construction,
@@ -130,8 +137,8 @@ describe("db/schema.ts decomposition", () => {
       `duplicate enum DB names: ${enumDbNames.filter((n, i) => enumDbNames.indexOf(n) !== i)}`,
     );
 
-    assert.equal(tables.length, 49, `expected 49 tables, got ${tables.length}: ${tables.join(", ")}`);
-    assert.equal(enums.length, 39, `expected 39 enums, got ${enums.length}: ${enums.join(", ")}`);
+    assert.equal(tables.length, 57, `expected 57 tables, got ${tables.length}: ${tables.join(", ")}`);
+    assert.equal(enums.length, 42, `expected 42 enums, got ${enums.length}: ${enums.join(", ")}`);
 
     // users is also in the barrel
     assert.ok(isPgTable(barrel.users), "users should be a pgTable in the barrel");
@@ -174,13 +181,18 @@ describe("db/schema.ts decomposition", () => {
     for (const k of automationResidents) {
       identityMap[k] = { module: automation as unknown as Record<string, unknown>, key: k };
     }
+    // Household residents
+    for (const k of householdResidents) {
+      identityMap[k] = { module: household as unknown as Record<string, unknown>, key: k };
+    }
 
     // Shared tables in shared layers
     const sharedLayers: Array<{ name: string; mod: Record<string, unknown>; keys: string[] }> = [
       { name: "foundation", mod: foundation as unknown as Record<string, unknown>, keys: ["goals", "categories", "resources", "mailboxAccounts"] },
       { name: "hubs", mod: hubs as unknown as Record<string, unknown>, keys: ["accounts", "emailIngestions"] },
+      { name: "persons", mod: persons as unknown as Record<string, unknown>, keys: ["familyMembers"] },
       { name: "recurring", mod: recurring as unknown as Record<string, unknown>, keys: ["recurringTemplates"] },
-      { name: "spines", mod: spines as unknown as Record<string, unknown>, keys: ["holdings", "insurancePolicies", "statementReconciliations", "sips"] },
+      { name: "spines", mod: spines as unknown as Record<string, unknown>, keys: ["holdings", "insurancePolicies", "statementReconciliations", "sips", "policyCoveredPersons"] },
       { name: "ledger", mod: ledgerShared as unknown as Record<string, unknown>, keys: ["transactions", "postings"] },
     ];
 
@@ -211,6 +223,7 @@ describe("db/schema.ts decomposition", () => {
     const sharedEnumLayers: Array<{ name: string; mod: Record<string, unknown>; keys: string[] }> = [
       { name: "foundation", mod: foundation as unknown as Record<string, unknown>, keys: ["goalType", "categoryKind", "expenseNecessity", "resourceKind", "mailboxProvider", "mailboxStatus"] },
       { name: "hubs", mod: hubs as unknown as Record<string, unknown>, keys: ["accountType", "emailClass", "emailIngestStatus", "accountSystemKind"] },
+      { name: "persons", mod: persons as unknown as Record<string, unknown>, keys: ["familyRelationship", "educationStage"] },
       { name: "recurring", mod: recurring as unknown as Record<string, unknown>, keys: ["recurringFrequency", "recurringKind"] },
       { name: "spines", mod: spines as unknown as Record<string, unknown>, keys: ["assetClass", "gainsTaxClass", "insuranceKind", "vehicleKind", "healthType", "premiumFrequency", "sipTargetKind", "sipStatus", "sipFundingSource", "sipFrequency"] },
       { name: "ledger", mod: ledgerShared as unknown as Record<string, unknown>, keys: ["transactionSource"] },
@@ -223,9 +236,6 @@ describe("db/schema.ts decomposition", () => {
     }
 
     // Module resident enums
-    for (const k of ["familyRelationship", "educationStage"]) {
-      enumMap[k] = { module: system as unknown as Record<string, unknown>, key: k };
-    }
     for (const k of ["cardNetwork", "bankAccountSubtype"]) {
       enumMap[k] = { module: credit as unknown as Record<string, unknown>, key: k };
     }

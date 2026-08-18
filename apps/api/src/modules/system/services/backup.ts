@@ -35,9 +35,11 @@ export const ALL_TABLES = [
   "budgets", "budget_lines", "budget_alerts", "notifications", "recurring_templates",
   "goals", "alert_ledger", "subscription_dismissals", "notification_prefs", "projection_settings",
   "user_profiles", "family_members",
+  "households", "household_members", "household_invites", "sharing_grants",
+  "splits", "split_shares", "settlements",
   "ai_settings",
   "card_details", "card_issuer_settings", "card_statements", "bank_details", "retirement_details", "account_nps_details", "overdraft_details",
-  "insurance_policies", "insurance_health_cards",
+  "insurance_policies", "policy_covered_persons", "insurance_health_cards",
   "reward_entries", "emi_details", "holdings", "nps_details", "gold_details",
   "holding_valuations", "sips", "holding_events", "net_worth_snapshots",
   "mailbox_accounts", "mailbox_credentials", "email_ingestions", "extracted_transactions",
@@ -50,7 +52,11 @@ export const USER_TABLES: Record<string, string> = {
   imports: "user_id", import_presets: "user_id", merchant_rules: "user_id",
   budgets: "user_id", budget_alerts: "user_id", notifications: "user_id", recurring_templates: "user_id",
   goals: "user_id", sips: "user_id", alert_ledger: "user_id", subscription_dismissals: "user_id", notification_prefs: "user_id",
-  projection_settings: "user_id", user_profiles: "user_id", family_members: "user_id", ai_settings: "user_id",
+  projection_settings: "user_id", user_profiles: "user_id", family_members: "user_id",
+  households: "created_by_user_id", household_members: "user_id", household_invites: "invited_by_user_id",
+  sharing_grants: "owner_user_id",
+  splits: "created_by_user_id",
+  ai_settings: "user_id",
   card_details: "user_id", card_issuer_settings: "user_id", card_statements: "user_id",
   bank_details: "user_id", retirement_details: "user_id", account_nps_details: "user_id",
   overdraft_details: "user_id", insurance_policies: "user_id", insurance_health_cards: "user_id",
@@ -67,7 +73,7 @@ export const USER_TABLES: Record<string, string> = {
  * one, so the export stays a complete per-user reconstruction rather than only
  * the rows Postgres happens to tag with a user_id.
  */
-export const LINKED_TABLES: Record<string, { fk: string; parent: string }> = {
+export const LINKED_TABLES: Record<string, { fk: string; parent: string; parentUserCol?: string }> = {
   postings: { fk: "transaction_id", parent: "transactions" },
   attachments: { fk: "transaction_id", parent: "transactions" },
   transaction_links: { fk: "transaction_id", parent: "transactions" },
@@ -75,6 +81,9 @@ export const LINKED_TABLES: Record<string, { fk: string; parent: string }> = {
   budget_lines: { fk: "budget_id", parent: "budgets" },
   holding_valuations: { fk: "holding_id", parent: "holdings" },
   holding_events: { fk: "holding_id", parent: "holdings" },
+  policy_covered_persons: { fk: "policy_id", parent: "insurance_policies" },
+  split_shares: { fk: "split_id", parent: "splits", parentUserCol: "created_by_user_id" },
+  settlements: { fk: "household_id", parent: "households", parentUserCol: "created_by_user_id" },
 };
 
 /**
@@ -99,7 +108,7 @@ async function dumpUserTable(db: Db, table: string, userId: string): Promise<unk
     ? await db.execute(sql`
         select c.* from ${sql.identifier(table)} c
         join ${sql.identifier(linked.parent)} p on p.id = c.${sql.identifier(linked.fk)}
-        where p.user_id = ${userId}`)
+        where p.${sql.identifier(linked.parentUserCol ?? "user_id")} = ${userId}`)
     : await db.execute(sql`
         select * from ${sql.identifier(table)}
         where ${sql.identifier(USER_TABLES[table]!)} = ${userId}`);

@@ -9,6 +9,8 @@ DELETE /api/family/:id
 DELETE /api/goals/:id
 DELETE /api/holdings/:id
 DELETE /api/holdings/:id/events/:eventId
+DELETE /api/households/:id
+DELETE /api/households/:id/members/:memberId
 DELETE /api/imports/:id
 DELETE /api/insurance/policies/:id
 DELETE /api/insurance/policies/:id/document
@@ -17,8 +19,10 @@ DELETE /api/mailboxes/:id
 DELETE /api/merchant-rules/:id
 DELETE /api/recurring/:id
 DELETE /api/resources/:id
+DELETE /api/sharing-grants/:id
 DELETE /api/sips/:id
 DELETE /api/sips/:id/installments/link/:transactionId
+DELETE /api/splits/:id
 DELETE /api/transaction-links/:id
 DELETE /api/transactions/:id
 DELETE /api/transfers/:id
@@ -64,6 +68,11 @@ GET /api/goals/:id/sips
 GET /api/holdings/:id/gold
 GET /api/holdings/:id/nps
 GET /api/holdings/capital-gains
+GET /api/households
+GET /api/households/:id
+GET /api/households/:id/balances
+GET /api/households/:id/members
+GET /api/households/:id/settlements
 GET /api/imports
 GET /api/imports/:id
 GET /api/imports/:id/rows
@@ -94,8 +103,10 @@ GET /api/resources
 GET /api/retirement/:accountId/details
 GET /api/search
 GET /api/search/recent
+GET /api/sharing-grants
 GET /api/sips
 GET /api/sips/:id/installment-candidates
+GET /api/splits/:id
 GET /api/subscriptions/suggestions
 GET /api/transactions
 GET /api/transactions/:id
@@ -147,6 +158,11 @@ HEAD /api/goals/:id/sips
 HEAD /api/holdings/:id/gold
 HEAD /api/holdings/:id/nps
 HEAD /api/holdings/capital-gains
+HEAD /api/households
+HEAD /api/households/:id
+HEAD /api/households/:id/balances
+HEAD /api/households/:id/members
+HEAD /api/households/:id/settlements
 HEAD /api/imports
 HEAD /api/imports/:id
 HEAD /api/imports/:id/rows
@@ -177,8 +193,10 @@ HEAD /api/resources
 HEAD /api/retirement/:accountId/details
 HEAD /api/search
 HEAD /api/search/recent
+HEAD /api/sharing-grants
 HEAD /api/sips
 HEAD /api/sips/:id/installment-candidates
+HEAD /api/splits/:id
 HEAD /api/subscriptions/suggestions
 HEAD /api/transactions
 HEAD /api/transactions/:id
@@ -195,10 +213,12 @@ PATCH /api/categories/:id
 PATCH /api/family/:id
 PATCH /api/goals/:id
 PATCH /api/holdings/:id
+PATCH /api/households/:id
 PATCH /api/imports/:id/rows/:rowId
 PATCH /api/recurring/:id
 PATCH /api/resources/:id
 PATCH /api/sips/:id
+PATCH /api/splits/:id
 PATCH /api/transactions/:id
 PATCH /api/user-tasks/:id
 POST /api/accounts
@@ -230,6 +250,11 @@ POST /api/holdings/:id/events/:eventId/move
 POST /api/holdings/import-mf/commit
 POST /api/holdings/import-mf/preview
 POST /api/holdings/refresh-nav
+POST /api/households
+POST /api/households/:id/invite
+POST /api/households/:id/leave
+POST /api/households/:id/settlements
+POST /api/households/invites/accept
 POST /api/imports
 POST /api/imports/:id/commit
 POST /api/imports/:id/rollback
@@ -253,6 +278,7 @@ POST /api/notifications/:id/read
 POST /api/notifications/read-all
 POST /api/recurring
 POST /api/resources
+POST /api/sharing-grants
 POST /api/sips
 POST /api/sips/:id/installments
 POST /api/sips/:id/installments/link
@@ -260,6 +286,7 @@ POST /api/subscriptions/dismiss
 POST /api/transactions
 POST /api/transactions/:id/attachments
 POST /api/transactions/:id/links
+POST /api/transactions/:txId/split
 POST /api/transactions/bulk
 POST /api/transfers
 POST /api/transfers/record

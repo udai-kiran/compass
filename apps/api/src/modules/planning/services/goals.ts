@@ -63,6 +63,7 @@ function toGoal(g: GoalRow): Goal {
     targetMonths: g.targetMonths,
     targetDate: g.targetDate,
     sortOrder: g.sortOrder,
+    beneficiaryId: g.beneficiaryId ?? null,
     archived: g.archivedAt !== null,
   };
 }

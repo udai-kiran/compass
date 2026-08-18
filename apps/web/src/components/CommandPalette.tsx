@@ -22,6 +22,7 @@ const PAGES: Array<{ label: string; to: string }> = [
   { label: "Insights", to: "/insights" },
   { label: "Reports", to: "/reports" },
   { label: "Notifications", to: "/notifications" },
+  { label: "Household", to: "/household" },
   { label: "Settings", to: "/settings" },
 ];
 

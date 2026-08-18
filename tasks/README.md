@@ -114,14 +114,14 @@ Phase 4 and 5 are **extensions of real working code**, not greenfield. Verified 
 | 3.1 | [Architecture & docs update](./03.01-docs-and-prd.md) | 3 — Ship 2.0.0 | done |
 | 3.2 | [2.0.0 release](./03.02-release-2-0-0.md) | 3 — Ship 2.0.0 | done |
 | — | **↓ 2.1.0** | | |
-| 4.1 | [Household person & roles model](./04.01-household-person-model.md) | 4 — Household & Split | todo |
-| 4.2 | [Households schema + membership](./04.02-households-schema.md) | 4 — Household & Split | todo |
-| 4.3 | [Central withSharing() authorization guard](./04.03-sharing-guard.md) | 4 — Household & Split | todo |
-| 4.4 | [Splits, shares & settle-up](./04.04-splits-and-settlements.md) | 4 — Household & Split | todo |
-| 4.5 | [Household & split API routes](./04.05-household-api.md) | 4 — Household & Split | todo |
-| 4.6 | [Household switcher & management page](./04.06-household-switcher-ui.md) 🎨 | 4 — Household & Split | todo |
-| 4.7 | [Per-record sharing controls](./04.07-sharing-controls-ui.md) 🎨 | 4 — Household & Split | todo |
-| 4.8 | [Split modal, balances & settle-up](./04.08-split-modal-ui.md) 🎨 | 4 — Household & Split | todo |
+| 4.1 | [Household person & roles model](./04.01-household-person-model.md) | 4 — Household & Split | done |
+| 4.2 | [Households schema + membership](./04.02-households-schema.md) | 4 — Household & Split | done |
+| 4.3 | [Central withSharing() authorization guard](./04.03-sharing-guard.md) | 4 — Household & Split | done |
+| 4.4 | [Splits, shares & settle-up](./04.04-splits-and-settlements.md) | 4 — Household & Split | done |
+| 4.5 | [Household & split API routes](./04.05-household-api.md) | 4 — Household & Split | done |
+| 4.6 | [Household switcher & management page](./04.06-household-switcher-ui.md) 🎨 | 4 — Household & Split | done |
+| 4.7 | [Per-record sharing controls](./04.07-sharing-controls-ui.md) 🎨 | 4 — Household & Split | done |
+| 4.8 | [Split modal, balances & settle-up](./04.08-split-modal-ui.md) 🎨 | 4 — Household & Split | done |
 | — | **↓ 2.2.0** | | |
 | 5.1 | [Goal glide-path roadmap (forward path)](./05.01-goal-glide-path-roadmap.md) | 5 — Goal roadmap & instruments | todo |
 | 5.2 | [Instrument rules registry](./05.02-instrument-rules-registry.md) | 5 — Goal roadmap & instruments | todo |

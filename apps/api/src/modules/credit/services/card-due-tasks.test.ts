@@ -171,6 +171,7 @@ async function createCardAccount(
     institution: institution ?? null,
     accountLast4: null,
     holderName: null,
+    holderId: null,
     currency: "INR",
     openingBalancePaise,
   }, openingDate);

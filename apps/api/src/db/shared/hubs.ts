@@ -13,6 +13,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { users } from "../core-schema.ts";
 import { goals, mailboxAccounts } from "./foundation.ts";
+import { familyMembers } from "./persons.ts";
 
 /**
  * Long-lived financial containers are accounts. Their current value is the
@@ -87,6 +88,7 @@ export const accounts = pgTable(
      * ("HDFC Ammu PPF"), which is the same trap the last-4 used to be in.
      */
     holderName: text("holder_name"),
+    holderId: uuid("holder_id").references(() => familyMembers.id, { onDelete: "set null" }),
     /**
      * UPI handles that resolve to this account, primary first. Not bank-only —
      * RuPay credit cards link to UPI too, so this can't live on bank_details.

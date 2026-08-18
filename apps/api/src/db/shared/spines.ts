@@ -7,6 +7,7 @@ import {
   integer,
   pgEnum,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   uniqueIndex,
@@ -15,6 +16,7 @@ import {
 import { users } from "../core-schema.ts";
 import { goals, resources } from "./foundation.ts";
 import { accounts, emailIngestions } from "./hubs.ts";
+import { familyMembers } from "./persons.ts";
 
 /**
  * No ppf/epf here — those are account types. Their balance is a credited fact,
@@ -148,6 +150,7 @@ export const insurancePolicies = pgTable(
     /** endowment/money-back maturity; null for pure term, health, vehicle */
     maturityDate: date("maturity_date"),
     nominee: text("nominee").notNull().default(""),
+    nomineePersonId: uuid("nominee_person_id").references(() => familyMembers.id, { onDelete: "set null" }),
     /** people covered by the policy — e.g. a family-floater's members. */
     coveredMembers: text("covered_members")
       .array()
@@ -164,6 +167,19 @@ export const insurancePolicies = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("insurance_policies_user_idx").on(t.userId)],
+);
+
+export const policyCoveredPersons = pgTable(
+  "policy_covered_persons",
+  {
+    policyId: uuid("policy_id")
+      .notNull()
+      .references(() => insurancePolicies.id, { onDelete: "cascade" }),
+    personId: uuid("person_id")
+      .notNull()
+      .references(() => familyMembers.id, { onDelete: "cascade" }),
+  },
+  (t) => [primaryKey({ columns: [t.policyId, t.personId] })],
 );
 
 /**

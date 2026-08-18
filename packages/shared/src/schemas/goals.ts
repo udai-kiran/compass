@@ -18,6 +18,7 @@ export const GoalSchema = z.object({
   id: z.uuid(),
   name: z.string(),
   type: GoalTypeSchema,
+  beneficiaryId: z.uuid().nullable(),
   targetPaise: z.number().int().nullable(),
   targetMonths: z.number().int().nullable(),
   targetDate: z.iso.date().nullable(),
@@ -30,6 +31,7 @@ export const CreateGoalSchema = z
   .object({
     name: z.string().min(1),
     type: GoalTypeSchema.default("savings"),
+    beneficiaryId: z.uuid().nullable().default(null),
     targetPaise: z.number().int().positive().nullable().default(null),
     targetMonths: z.number().int().min(1).max(36).nullable().default(null),
     targetDate: z.iso.date().nullable().default(null),
@@ -52,6 +54,7 @@ export type CreateGoal = z.input<typeof CreateGoalSchema>;
 export const UpdateGoalSchema = z.object({
   name: z.string().min(1).optional(),
   type: GoalTypeSchema.optional(),
+  beneficiaryId: z.uuid().nullable().optional(),
   targetPaise: z.number().int().positive().nullable().optional(),
   targetMonths: z.number().int().min(1).max(36).nullable().optional(),
   targetDate: z.iso.date().nullable().optional(),

@@ -3,6 +3,7 @@ import { z } from "zod";
 // ---------- Family & Profile ----------
 
 export const FamilyRelationshipSchema = z.enum([
+  "self",
   "spouse",
   "child",
   "parent",
@@ -45,6 +46,7 @@ export const FamilyMemberSchema = z.object({
   expectedCompletionYear: z.number().int().min(COMPLETION_YEAR_MIN).max(COMPLETION_YEAR_MAX).nullable(),
   notes: z.string().nullable(),
   sortOrder: z.number().int(),
+  linkedUserId: z.uuid().nullable(),
 });
 export type FamilyMember = z.infer<typeof FamilyMemberSchema>;
 
