@@ -1,5 +1,10 @@
 CREATE TYPE "public"."household_role" AS ENUM('owner', 'member');--> statement-breakpoint
-ALTER TYPE "public"."family_relationship" ADD VALUE 'self' BEFORE 'spouse';--> statement-breakpoint
+ALTER TYPE "public"."family_relationship" RENAME TO "family_relationship_old";--> statement-breakpoint
+CREATE TYPE "public"."family_relationship" AS ENUM ('self','spouse','child','parent','sibling','other');--> statement-breakpoint
+ALTER TABLE "family_members" ALTER COLUMN "relationship"
+  TYPE "public"."family_relationship"
+  USING "relationship"::text::"public"."family_relationship";--> statement-breakpoint
+DROP TYPE "public"."family_relationship_old";--> statement-breakpoint
 CREATE TABLE "household_invites" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"household_id" uuid NOT NULL,
