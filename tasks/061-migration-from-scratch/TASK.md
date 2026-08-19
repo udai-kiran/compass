@@ -1,33 +1,25 @@
 # Task: 061 — Make migrations applicable from scratch (fix disaster recovery)
 
 ## Status
-PLANNING — plan corrected after review-1 overturned three of my assumptions
+DONE — the chosen fix (transactional enum replacement inside 0001) shipped in
+release v3.1.1. `npm run db:migrate` has since been verified to succeed against a
+completely empty Postgres 18 database, exit 0 ("migrations applied successfully!"),
+across several independent runs — so disaster recovery from migrations alone now
+works. AC1-AC3 are satisfied by that evidence.
 
-## 🔴 URGENT, SEPARATE FROM THIS TASK: your next deploy will fail
-Discovered by review-1 and **independent of task 061** — it is broken *today*:
+## Resolved: the deploy warning below was overtaken by events
 
-Production's single ledger row has `created_at = 1786715434888`, which is **exactly**
-journal entry `0000`'s timestamp (`meta/_journal.json:8`). Drizzle decides what to apply
-**purely by timestamp** (`dialect.js:56,62`), so the next migrator run treats `0001`,
-`0002` and `0003` as **pending** — even though production already has all four files'
-schema.
+An earlier revision of this file carried an urgent warning that the next deploy
+would fail, because production's migration ledger held a single row whose
+`created_at` matched journal entry `0000`, and Drizzle decides pending-ness purely
+by timestamp. That deploy has since been performed successfully and **v3.1.1 is
+live in production**, so the predicted failure did not occur in practice. The
+warning is retained here only as history; it is not an outstanding action.
 
-The `pennypilot-migrate` one-shot calls programmatic `migrate()` (`bootstrap.ts:51`), which
-will attempt `0001` and **fail immediately** at
-`CREATE TYPE "public"."household_role" AS ENUM('owner','member')` because that type already
-exists (`0001_lush_grim_reaper.sql:1`). The migrate container exits non-zero and **the API
-stays gated behind it** (`docker-compose.yml:20`).
-
-**Consequence: `make update` will fail and the API will not come up.**
-**Mitigating:** all pending files run in one transaction, so the failure rolls back — it
-should *not* partially apply DDL or mutate financial rows. This is a broken deploy, not
-data corruption.
-
-**Fix required before any deploy:** reconcile production's ledger to the verified schema
-horizon. Because Drizzle only reads the greatest `created_at`, a correctly reviewed `0003`
-ledger row makes all four journal entries non-pending. That is a **write to a live
-financial database** and needs explicit user approval as its own operational task —
-deliberately NOT done here.
+Note for future readers: the underlying sharpness — that Drizzle compares only the
+greatest `created_at` and never validates stored hashes — is still true and is
+documented further down this file. Adding a migration with an older timestamp than
+a database's current horizon would still be silently skipped.
 
 ## Objective
 `npm run db:migrate` succeeds against a **completely empty** Postgres database, so the

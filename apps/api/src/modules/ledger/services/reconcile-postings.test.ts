@@ -118,6 +118,16 @@ test("findInconsistentPostings: tenant-scope — reports only the target user's 
 });
 
 test("findInconsistentPostings: detects orphan posting (missing transaction)", async (t) => {
+  // Creating an orphan posting requires suppressing the FK cascade via
+  // `SET LOCAL session_replication_role`, which PostgreSQL restricts to superusers
+  // (or a role granted SET on it). CI's `compass` role in the postgres:18 container
+  // is superuser, so coverage holds there; on a least-privileged local app role we
+  // skip rather than fail with a permission error that looks like a real defect.
+  const suRows = await db.execute(sql`select current_setting('is_superuser') as is_superuser`);
+  if (String((suRows.rows[0] as { is_superuser: string }).is_superuser) !== "on") {
+    t.skip("requires a superuser DB role (session_replication_role) to forge an orphan posting");
+    return;
+  }
   const userId = await createUser();
   t.after(() => cleanupUser(userId));
   await seedSystemAccounts(db, userId);
@@ -129,25 +139,38 @@ test("findInconsistentPostings: detects orphan posting (missing transaction)", a
     .returning({ id: transactions.id });
   const txnId = txn!.id;
   await db.insert(postings).values({ transactionId: txnId, accountId: acct.id, amountPaise: 500 });
-  // Delete the transaction while bypassing cascade (disable triggers so FK cascade doesn't run)
-  // This simulates data corruption where a transaction was removed but its postings remain.
-  // Requires ALTER TABLE privilege on the postings table.
-  await db.execute(sql`ALTER TABLE postings DISABLE TRIGGER ALL`);
-  try {
-    await db.execute(sql`DELETE FROM transactions WHERE id = ${txnId}`);
-  } finally {
-    await db.execute(sql`ALTER TABLE postings ENABLE TRIGGER ALL`);
-  }
-  // Run the global scan (no userId filter) so the orphan check executes
-  const problems = await findInconsistentPostings(db);
-  const orphan = problems.find(
-    (p) => p.transactionId === txnId && p.reason === "orphan posting (transaction missing)",
-  );
-  assert.ok(orphan, `expected orphan posting problem for txn ${txnId}, got: ${JSON.stringify(problems)}`);
-  // Cleanup the orphaned posting (the transaction no longer exists so cleanupUser won't cascade-delete it)
-  t.after(async () => {
-    await db.execute(sql`DELETE FROM postings WHERE transaction_id = ${txnId}`);
+  // Delete the transaction while suppressing the ON DELETE CASCADE that would
+  // otherwise remove its posting, so an orphan posting exists for the scan to find.
+  //
+  // `SET LOCAL session_replication_role = replica` suppresses internal RI/cascade
+  // triggers for THIS TRANSACTION's session only, and Postgres reverts it at
+  // commit. Do NOT use `ALTER TABLE ... DISABLE TRIGGER ALL`: that is cluster-wide
+  // and persistent, so — because `node --test` runs test files concurrently against
+  // one shared database — it would strip the cascade from every OTHER test deleting
+  // a transaction at that moment, orphaning their postings and breaking their
+  // cleanup with a postings_account_id_accounts_id_fk violation.
+  //
+  // Requires a superuser role (true for the CI Postgres container).
+  await db.transaction(async (trx) => {
+    await trx.execute(sql`SET LOCAL session_replication_role = replica`);
+    await trx.execute(sql`DELETE FROM transactions WHERE id = ${txnId}`);
   });
+  // Run the global scan (no userId filter) so the orphan check executes.
+  // The orphan posting MUST be deleted before any after-hook runs: its transaction
+  // is gone, so nothing cascades it away, and the leftover row would both block
+  // this test's `cleanupUser` (`delete from accounts` → FK violation) and poison
+  // subsequent runs against the same database. A `t.after` is NOT sufficient —
+  // node:test runs after-hooks in registration order, and `cleanupUser` is
+  // registered at the top of this test, so it would run first.
+  try {
+    const problems = await findInconsistentPostings(db);
+    const orphan = problems.find(
+      (p) => p.transactionId === txnId && p.reason === "orphan posting (transaction missing)",
+    );
+    assert.ok(orphan, `expected orphan posting problem for txn ${txnId}, got: ${JSON.stringify(problems)}`);
+  } finally {
+    await db.execute(sql`DELETE FROM postings WHERE transaction_id = ${txnId}`);
+  }
 });
 
 test("findInconsistentPostings: detects global ledger imbalance", async (t) => {

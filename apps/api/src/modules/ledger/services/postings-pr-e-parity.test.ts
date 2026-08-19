@@ -587,7 +587,7 @@ test("postings-pr-e-parity: PE7 — search returns one result per transaction, r
 });
 
 // ---------------------------------------------------------------------------
-// PE8a — imports.ts: applyMapping dedup query parity
+// PE8a — imports.ts: applyMapping dedup query returns the expected rows
 // ---------------------------------------------------------------------------
 
 test("postings-pr-e-parity: PE8a — applyMapping dedup query parity", async (t) => {
@@ -634,30 +634,22 @@ test("postings-pr-e-parity: PE8a — applyMapping dedup query parity", async (t)
       ),
     );
 
-  // Legacy query
-  const legacyRows = (
-    await db.execute(sql`
-      select date, amount_paise, merchant from transactions
-      where user_id = ${userId} and account_id = ${bankAcct.id}
-        and date >= ${minDate} and date <= ${maxDate}
-    `)
-  ).rows as Array<{ date: string; amount_paise: string; merchant: string }>;
-
   assert.equal(postingsRows.length, 2);
-  assert.equal(legacyRows.length, 2);
   const pSorted = postingsRows
     .map((r) => `${r.date}|${r.amountPaise}|${r.merchant}`)
     .sort();
-  const lSorted = legacyRows
-    .map((r) => `${r.date}|${Number(r.amount_paise)}|${r.merchant}`)
-    .sort();
-  assert.deepEqual(pSorted, lSorted, "applyMapping dedup query parity");
+  // Assert the two expected rows are present with the correct dates and amounts.
+  // merchant is "" when not supplied to createTransaction (normalizeMerchant default).
+  assert.deepEqual(pSorted, [
+    `${iso(-10)}|-3000|`,
+    `${iso(-5)}|-7000|`,
+  ].sort());
 
   assert.deepEqual(await findInconsistentPostings(db, userId), []);
 });
 
 // ---------------------------------------------------------------------------
-// PE8b — imports.ts: commitImport reconciliation query parity
+// PE8b — imports.ts: commitImport reconciliation query returns the expected rows
 // ---------------------------------------------------------------------------
 
 test("postings-pr-e-parity: PE8b — commitImport reconciliation query parity", async (t) => {
@@ -667,12 +659,12 @@ test("postings-pr-e-parity: PE8b — commitImport reconciliation query parity", 
 
   const ccAcct = await createAcct(userId, "CC", "credit_card");
 
-  await createTransaction(db, userId, {
+  const early = await createTransaction(db, userId, {
     accountId: ccAcct.id,
     date: iso(-10),
     amountPaise: -5000,
   });
-  await createTransaction(db, userId, {
+  const late = await createTransaction(db, userId, {
     accountId: ccAcct.id,
     date: iso(-4),
     amountPaise: -12000,
@@ -709,29 +701,17 @@ test("postings-pr-e-parity: PE8b — commitImport reconciliation query parity", 
     )
     .orderBy(transactions.date, transactions.id);
 
-  // Legacy query
-  const legacyRows = (
-    await db.execute(sql`
-      select id, date, amount_paise, merchant, notes, source from transactions
-      where user_id = ${userId} and account_id = ${ccAcct.id} and deleted_at is null
-        and date >= ${start} and date <= ${end}
-      order by date, id
-    `)
-  ).rows as Array<{
-    id: string;
-    date: string;
-    amount_paise: string;
-    merchant: string;
-    notes: string;
-    source: string;
-  }>;
-
   assert.equal(postingsRows.length, 2);
-  assert.equal(legacyRows.length, 2);
+  // Ordered by date asc: iso(-10) first (-5000), then iso(-4) (-12000). Assert the
+  // row IDENTITIES as well as the amounts — a wrong join or projection returning
+  // different rows that happened to carry the same two amounts must not pass.
   assert.deepEqual(
     postingsRows.map((r) => ({ id: r.id, amountPaise: r.amountPaise })),
-    legacyRows.map((r) => ({ id: r.id, amountPaise: Number(r.amount_paise) })),
-    "commitImport reconciliation query parity",
+    [
+      { id: early.id, amountPaise: -5000 },
+      { id: late.id, amountPaise: -12000 },
+    ],
+    "reconciliation reader must return exactly the two created transactions, in date order, with their posting amounts",
   );
 
   assert.deepEqual(await findInconsistentPostings(db, userId), []);
@@ -779,16 +759,8 @@ test("postings-pr-e-parity: PE9 — listPolicyPremiums total and amounts from re
   assert.equal(premiums.items[0]!.amountPaise, -2500);
   assert.equal(premiums.items[1]!.amountPaise, -1000);
   assert.equal(premiums.items[0]!.accountId, bankAcct.id, "accountId from posting");
-
-  // Legacy comparison
-  const legRows = (
-    await db.execute(sql`
-      select abs(amount_paise) as abs_amt from transactions
-      where policy_id = ${policyId} and user_id = ${userId} and deleted_at is null
-    `)
-  ).rows as Array<{ abs_amt: string }>;
-  const legTotal = legRows.reduce((s, r) => s + Number(r.abs_amt), 0);
-  assert.equal(premiums.totalPaise, legTotal, "listPolicyPremiums total matches legacy sum");
+  // totalPaise is the sum of absolute amounts for the two premiums created above.
+  assert.equal(premiums.totalPaise, 1000 + 2500, "listPolicyPremiums total is sum of both premium amounts");
 
   // txn1 and txn2 referenced to suppress unused-variable lint warnings
   assert.ok(txn1.id);

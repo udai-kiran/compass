@@ -31,6 +31,9 @@ function ident(value: string): string {
   return `"${value}"`;
 }
 
+/** Callers MUST pass rows through `firstPassRow()`, which strips
+ *  OMITTED_RESTORE_COLUMNS (database-generated and v3.0.0-dropped legacy
+ *  columns) — so no filtering is needed or duplicated here. */
 async function insertRow(client: pg.PoolClient, table: string, row: Record<string, unknown>) {
   const entries = Object.entries(row);
   if (entries.length === 0) return;

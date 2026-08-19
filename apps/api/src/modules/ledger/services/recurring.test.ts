@@ -1,4 +1,4 @@
-import { test, after, before } from "node:test";
+import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { and, eq, isNull, sql } from "drizzle-orm";
@@ -11,6 +11,8 @@ import { HttpError } from "../../../lib/errors.ts";
 import { createEmi, listEmiInstallments, upsertEmiDetails } from "../../credit/services/emis.ts";
 import { incomeExpense, spentByCategory } from "../../../lib/periods.ts";
 import { advanceDate, createTemplate, materializeDue, updateTemplate } from "./recurring.ts";
+import { createAccount as createAccountSvc } from "./accounts.ts";
+import { seedSystemAccounts } from "./post-entry.ts";
 
 // ---------- DB-backed regression coverage for materializeDue's lock-then-read
 // refactor, the new EMI+destination-account branch, and the updateTemplate/
@@ -20,19 +22,12 @@ import { advanceDate, createTemplate, materializeDue, updateTemplate } from "./r
 // DB-mocking infrastructure. Each test creates its own throwaway user(s) and
 // cleans them up via t.after().
 //
-// IMPORTANT: materializeDue(db) is a *global* batch job with no per-user or
-// per-template scoping — it materializes every due template for every user
-// in the database it's given, by design (it's meant to be run as a single
-// cron-style job across the whole instance). Run against this repo's shared
-// dev Postgres, a single materializeDue(db) call in these tests will also
-// materialize any other genuinely-due recurring template that happens to
-// exist in that database at the moment the test runs (the same thing a real
-// cron run would do — not a correctness bug, just a real side effect with no
-// way to sandbox it, since this repo has no isolated/ephemeral test
-// database). To avoid asserting on — or being made flaky by — those
-// unrelated rows, every assertion below is scoped to the test's own
-// userId/accountId/templateId via a direct follow-up query, never to
-// materializeDue's aggregate `created`/`userIds` return value.
+// IMPORTANT: materializeDue is a global cron-style batch job in production,
+// but every call in this file passes an explicit { userId } scope so it only
+// ever materializes templates belonging to the throwaway user created by that
+// test. This scoping is what makes the file safe to run concurrently with
+// other test files against a shared database. Do NOT change any call here
+// back to the unscoped two-argument form (materializeDue(db, callback)).
 
 function requireDatabaseUrl(): string {
   const url = process.env.DATABASE_URL;
@@ -56,42 +51,6 @@ function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-// One-time preflight guard: this file's tests call the real, global
-// materializeDue(db) against this repo's shared dev Postgres (no test-DB
-// isolation exists). Every materializeDue(db) call below would silently
-// process — not just this file's own throwaway fixtures, but *any* other
-// due, unpaused recurring_templates row that happens to exist in the
-// database at the moment the suite runs (advancing its real nextDueDate,
-// inserting real transactions against it, advancing its EMI principal
-// counter). Refuse to run rather than risk that.
-//
-// Filtered on due (next_due_date <= today) AND unpaused (paused_at is
-// null) — deliberately NOT a blanket count(*) — because emis.test.ts (a
-// different file, run concurrently by `node --test`) intentionally creates
-// its own EMI templates dated 2099-01-05 (never due), specifically so
-// materializeDue never touches them; a blanket count would spuriously trip
-// this guard just from emis.test.ts running at the same time. This
-// filtered check only refuses to run when something would *actually* get
-// materialized as an unwanted side effect, which is the real risk being
-// guarded against.
-before(async () => {
-  const today = todayIso();
-  const rows = await db.execute(
-    sql`select count(*)::int as count from recurring_templates
-        where next_due_date <= ${today} and paused_at is null`,
-  );
-  const count = Number((rows.rows[0] as { count: number }).count);
-  if (count > 0) {
-    throw new Error(
-      `recurring.test.ts calls the real, global materializeDue(db) against this repo's ` +
-        `shared dev Postgres (no test-DB isolation exists). Found ${count} pre-existing ` +
-        `due (next_due_date <= today, not paused) recurring_templates row(s) — refusing to run, ` +
-        `since materializeDue would silently process them too (advance their real nextDueDate, ` +
-        `insert real transactions against them). Clear or pause unrelated due recurring templates ` +
-        `from this database before running this test file.`,
-    );
-  }
-});
 
 async function createUser(): Promise<string> {
   const [u] = await db
@@ -215,7 +174,7 @@ for (const kind of ["none", "bill", "subscription", "insurance"] as const satisf
       resourceId: null,
     });
 
-    await materializeDue(db);
+    await materializeDue(db, undefined, { userId });
 
     const rows = await transactionsFor(userId, accountId, tpl.id);
     assert.equal(rows.length, 1);
@@ -250,7 +209,7 @@ test("materializeDue: an EMI with no loanAccountId materializes exactly one sour
     loanAccountId: null,
   });
 
-  await materializeDue(db);
+  await materializeDue(db, undefined, { userId });
 
   const rows = await transactionsFor(userId, sourceId, emi.templateId);
   assert.equal(rows.length, 3);
@@ -287,7 +246,7 @@ test("materializeDue: an EMI with a loanAccountId posts source+destination legs 
   assert.equal(emi.loanAccountId, destId);
   await forceHandTracedInstallment(emi.templateId);
 
-  await materializeDue(db);
+  await materializeDue(db, undefined, { userId });
 
   const sourceRows = await transactionsFor(userId, sourceId, emi.templateId);
   assert.equal(sourceRows.length, 3);
@@ -313,7 +272,21 @@ test("materializeDue: an EMI's destination-account balance walks from -principal
   const userId = await createUser();
   t.after(() => cleanupUser(userId));
   const sourceId = await createAccount(userId, "bank");
-  const destId = await createAccount(userId, "loan", -100000);
+  // Use the real createAccount service (not the local raw-insert helper) so the
+  // opening balance is represented as a real posting against the Opening Balances
+  // system account. Balance = sum(postings), so the opening posting must exist.
+  await seedSystemAccounts(db, userId);
+  const destAcct = await createAccountSvc(db, userId, {
+    name: "Test loan",
+    type: "loan",
+    institution: null,
+    accountLast4: null,
+    holderName: null,
+    holderId: null,
+    currency: "INR",
+    openingBalancePaise: -100000,
+  });
+  const destId = destAcct.id;
   const emi = await createEmi(db, userId, {
     accountId: sourceId,
     name: "Balance-walk EMI",
@@ -325,7 +298,7 @@ test("materializeDue: an EMI's destination-account balance walks from -principal
   });
   await forceHandTracedInstallment(emi.templateId);
 
-  await materializeDue(db);
+  await materializeDue(db, undefined, { userId });
 
   // Balance = sum of all postings on destId (opening -100000 + installments).
   const balanceResult = await db
@@ -361,7 +334,7 @@ test("upsertEmiDetails: detaching a destination (non-null -> null) leaves outsta
 
   // Advance outstandingPrincipalPaise to a known non-null value via the
   // real materializer, same hand-traced fixture as AC3/AC4.
-  await materializeDue(db);
+  await materializeDue(db, undefined, { userId });
   const beforeDetach = await emiDetailsRow(emi.templateId);
   assert.equal(beforeDetach.outstandingPrincipalPaise, 7);
 
@@ -400,7 +373,7 @@ test("materializeDue: an archived destination account falls back to source-only 
   });
   await archiveAccount(destId);
 
-  await materializeDue(db);
+  await materializeDue(db, undefined, { userId });
 
   const sourceRows = await transactionsFor(userId, sourceId, emi.templateId);
   assert.equal(sourceRows.length, 3);
@@ -431,7 +404,7 @@ test("materializeDue: a schedule that somehow isn't monthly/interval-1 at materi
     .set({ frequency: "weekly" })
     .where(eq(recurringTemplates.id, emi.templateId));
 
-  await materializeDue(db);
+  await materializeDue(db, undefined, { userId });
 
   const sourceRows = await transactionsFor(userId, sourceId, emi.templateId);
   assert.ok(sourceRows.length >= 1);
@@ -468,7 +441,7 @@ test("materializeDue: a destination account belonging to a different user (corru
     .set({ loanAccountId: otherUsersAccount })
     .where(eq(emiDetails.templateId, emi.templateId));
 
-  await materializeDue(db);
+  await materializeDue(db, undefined, { userId: userA });
 
   const sourceRows = await transactionsFor(userA, sourceId, emi.templateId);
   assert.equal(sourceRows.length, 3);
@@ -503,7 +476,7 @@ test("materializeDue: a forced mid-transaction failure between the source and de
   await assert.rejects(
     materializeDue(db, (templateId) => {
       if (templateId === emi.templateId) throw new Error("forced failure for AC14");
-    }),
+    }, { userId }),
     /forced failure for AC14/,
   );
 
@@ -536,7 +509,7 @@ test("listEmiInstallments: returns only source-account rows even when destinatio
   });
   await forceHandTracedInstallment(emi.templateId);
 
-  await materializeDue(db);
+  await materializeDue(db, undefined, { userId });
 
   const installments = await listEmiInstallments(db, userId, emi.templateId);
   assert.equal(installments.length, 3);
@@ -568,7 +541,7 @@ test("incomeExpense: the full installment counts as expense; the destination pri
   });
   await forceHandTracedInstallment(emi.templateId);
 
-  await materializeDue(db);
+  await materializeDue(db, undefined, { userId });
 
   const { incomePaise, expensePaise } = await incomeExpense(db, userId, "2020-01-01", "2020-03-31");
   assert.equal(expensePaise, 34000 * 3);

@@ -113,13 +113,16 @@ async function createIngestion(userId: string): Promise<IngestionRecord> {
  * Insert a ledger transaction row directly, shaped exactly the way
  * `acceptRepayment` (apps/api/src/services/inbox.ts:667-677) creates its card
  * ("in") leg: `merchant = "Card repayment from <paying account name>"`,
- * `category_id = null`, `source = 'import'`, carrying the alert's precise
- * `occurred_at` instant.
+ * `source = 'import'`, carrying the alert's precise `occurred_at` instant.
  *
  * Also inserts the real posting on the card account (same signed amount) so
  * that `loadCardLedgerTxns`, now postings-sourced (PR-F), can find this row.
  * Plain single-leg fixture — legal because the DB has no zero-sum trigger
  * (enforcement lives in `replacePostings`, not SQL).
+ *
+ * Does NOT write `account_id`, `amount_paise`, or `category_id` — those columns
+ * were dropped from `transactions` in v3.0.0. Amount and account are carried by
+ * the posting row inserted via createPosting() below.
  */
 async function createLedgerTxn(
   userId: string,
@@ -128,10 +131,10 @@ async function createLedgerTxn(
 ): Promise<string> {
   const res = await pool.query<{ id: string }>(
     `insert into transactions
-       (user_id, account_id, date, occurred_at, amount_paise, merchant, category_id, notes, tags, source)
-     values ($1, $2, $3, $4, $5, $6, null, '', '{}', 'import')
+       (user_id, date, occurred_at, merchant, notes, tags, source)
+     values ($1, $2, $3, $4, '', '{}', 'import')
      returning id`,
-    [userId, accountId, opts.date, opts.occurredAtTs, opts.amountPaise, opts.merchant],
+    [userId, opts.date, opts.occurredAtTs, opts.merchant],
   );
   const id = res.rows[0]!.id;
   await createPosting(id, accountId, opts.amountPaise);
@@ -256,37 +259,11 @@ test("AC2: ordinary card spend returns negative amountPaise equal to the card po
   assert.equal(rows[0]!.amountPaise, -50000, "signed paise must be negative for a card spend");
 });
 
-test(
-  "AC3: when transactions.amount_paise holds a decoy value, loadCardLedgerTxns returns " +
-    "the posting's amount — proving the reader is postings-sourced",
-  async (t) => {
-    const userId = await createUser();
-    t.after(() => cleanupUser(userId));
-    const cardAccountId = await createAccount(userId, "credit_card");
-
-    // Insert a transaction with a decoy amount_paise (-99999) that differs from
-    // the real posting amount (-50000). If the reader still used the legacy
-    // transactions.amount_paise column it would return -99999.
-    const txnRes = await pool.query<{ id: string }>(
-      `insert into transactions
-         (user_id, account_id, date, occurred_at, amount_paise, merchant, category_id, notes, tags, source)
-       values ($1, $2, '2026-05-01', null, -99999, 'Decoy Merchant', null, '', '{}', 'import')
-       returning id`,
-      [userId, cardAccountId],
-    );
-    const txnId = txnRes.rows[0]!.id;
-    // The real posting carries the authoritative amount.
-    await createPosting(txnId, cardAccountId, -50000);
-
-    const rows = await loadCardLedgerTxns(pool, userId, cardAccountId, "2026-04-01", "2026-06-30");
-    assert.equal(rows.length, 1);
-    assert.equal(
-      rows[0]!.amountPaise,
-      -50000,
-      "must return the posting's amount (-50000), not the transactions row decoy (-99999)",
-    );
-  },
-);
+// AC3 was removed in v3.1.2: its premise was a decoy value in
+// transactions.amount_paise proving the reader is postings-sourced. That column
+// was dropped in v3.0.0, so the decoy cannot be constructed and the property is
+// now guaranteed by the schema itself. AC2 carries the remaining coverage
+// (returned amountPaise equals the posting amount).
 
 test(
   "AC4: a transfer leg on the card account (with a balancing Clearing posting, D7) " +
@@ -299,14 +276,14 @@ test(
     // the absence of a NOT EXISTS (system_kind='clearing') filter.
     const clearingAccountId = await createSystemAccount(userId, "clearing");
 
-    // Insert the transfer transaction row (account_id is the card, amount
-    // reflects a repayment to the card).
+    // Insert the transfer transaction row. Amount and account are carried by
+    // the postings inserted below.
     const txnRes = await pool.query<{ id: string }>(
       `insert into transactions
-         (user_id, account_id, date, occurred_at, amount_paise, merchant, category_id, notes, tags, source)
-       values ($1, $2, '2026-05-05', null, 500000, 'Card repayment', null, '', '{}', 'import')
+         (user_id, date, occurred_at, merchant, notes, tags, source)
+       values ($1, '2026-05-05', null, 'Card repayment', '', '{}', 'import')
        returning id`,
-      [userId, cardAccountId],
+      [userId],
     );
     const txnId = txnRes.rows[0]!.id;
 
@@ -329,25 +306,24 @@ test(
     const cardAccountId = await createAccount(userId, "credit_card");
     const otherAccountId = await createAccount(userId, "bank");
 
-    // Decoy: transactions.account_id deliberately set to the QUERIED card account
-    // (same technique as AC3). Under the OLD legacy reader that filtered on
-    // transactions.account_id this would have returned a row. Under the new
-    // postings reader it must not, because the posting is on the OTHER account.
+    // Insert a transaction without specifying account_id/amount_paise/category_id
+    // (those columns were dropped in v3.0.0). The posting is placed on the OTHER
+    // account, not the card. The postings reader must not return this row when
+    // querying the card account, because no posting exists on cardAccountId.
     const txnRes = await pool.query<{ id: string }>(
       `insert into transactions
-         (user_id, account_id, date, occurred_at, amount_paise, merchant, category_id, notes, tags, source)
-       values ($1, $2, '2026-05-01', null, -50000, 'Other Merchant', null, '', '{}', 'import')
+         (user_id, date, occurred_at, merchant, notes, tags, source)
+       values ($1, '2026-05-01', null, 'Other Merchant', '', '{}', 'import')
        returning id`,
-      [userId, cardAccountId],
+      [userId],
     );
     const txnId = txnRes.rows[0]!.id;
-    // Posting is on the other account — not the card. This is the decisive
-    // difference: the legacy reader would return this row (account_id matches),
-    // but the postings reader must not (no posting on cardAccountId).
+    // Posting is on the other account — not the card. The postings-based reader
+    // must not return this row (no posting on cardAccountId).
     await createPosting(txnId, otherAccountId, -50000);
 
     const rows = await loadCardLedgerTxns(pool, userId, cardAccountId, "2026-04-01", "2026-06-30");
-    assert.equal(rows.length, 0, "must return 0 rows — posting is on a different account even though transactions.account_id = cardAccountId");
+    assert.equal(rows.length, 0, "must return 0 rows — posting is on a different account, not on cardAccountId");
   },
 );
 
@@ -379,16 +355,14 @@ test(
       await cleanupUser(userA);
     });
     const cardAccountId = await createAccount(userA, "credit_card");
-    // User B needs their own account so their transaction FK is satisfied.
-    const userBAccountId = await createAccount(userB, "bank");
 
-    // User B's transaction (user_id = userB, account_id = userB's own account).
+    // User B's transaction (user_id = userB).
     const txnRes = await pool.query<{ id: string }>(
       `insert into transactions
-         (user_id, account_id, date, occurred_at, amount_paise, merchant, category_id, notes, tags, source)
-       values ($1, $2, '2026-05-01', null, -50000, 'Cross-tenant', null, '', '{}', 'import')
+         (user_id, date, occurred_at, merchant, notes, tags, source)
+       values ($1, '2026-05-01', null, 'Cross-tenant', '', '{}', 'import')
        returning id`,
-      [userB, userBAccountId],
+      [userB],
     );
     const txnId = txnRes.rows[0]!.id;
     // Cross-tenant posting: references user A's card account but belongs to user B's transaction.
@@ -465,10 +439,10 @@ test(
     // two postings on the same account manually.
     const txnRes = await pool.query<{ id: string }>(
       `insert into transactions
-         (user_id, account_id, date, occurred_at, amount_paise, merchant, category_id, notes, tags, source)
-       values ($1, $2, '2026-05-01', null, -50000, 'Split Merchant', null, '', '{}', 'import')
+         (user_id, date, occurred_at, merchant, notes, tags, source)
+       values ($1, '2026-05-01', null, 'Split Merchant', '', '{}', 'import')
        returning id`,
-      [userId, cardAccountId],
+      [userId],
     );
     const txnId = txnRes.rows[0]!.id;
     await createPosting(txnId, cardAccountId, -30000);
@@ -490,10 +464,10 @@ test(
 
     const txnRes = await pool.query<{ id: string }>(
       `insert into transactions
-         (user_id, account_id, date, occurred_at, amount_paise, merchant, category_id, notes, tags, source)
-       values ($1, $2, '2026-05-01', null, 0, 'Overflow Test', null, '', '{}', 'import')
+         (user_id, date, occurred_at, merchant, notes, tags, source)
+       values ($1, '2026-05-01', null, 'Overflow Test', '', '{}', 'import')
        returning id`,
-      [userId, cardAccountId],
+      [userId],
     );
     const txnId = txnRes.rows[0]!.id;
     // MAX_SAFE_INTEGER + 1 two-posting sum overflows JavaScript's safe-integer range.

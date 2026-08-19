@@ -176,7 +176,7 @@ test("restoreDump's second pass issues an update for every column in DEFERRED_RE
   // One row per deferred-column table, each deferred column set to a distinct
   // non-null value — a column the loop skips shows up as a missing update call.
   const dump: Record<string, Array<Record<string, unknown>>> = Object.fromEntries(ALL_TABLES.map((t) => [t, []]));
-  dump.accounts = [{ id: "acc1", goal_id: "goal1" }];
+  dump.accounts = [{ id: "acc1", goal_id: "goal1", linked_account_id: "acc0" }];
   dump.categories = [{ id: "cat1", parent_id: "cat0" }];
   dump.transactions = [
     { id: "txn1", policy_id: "pol1", recurring_template_id: "rt1", reconciled_statement_id: "rs1", sip_id: "sip1" },
