@@ -141,6 +141,7 @@ function toAccount(row: AccountRow): Account {
     institution: row.institution,
     accountLast4: row.accountLast4,
     holderName: row.holderName,
+    holderId: row.holderId ?? null,
     upiIds: row.upiIds,
     currency: row.currency,
     openingBalancePaise: row.openingBalancePaise,

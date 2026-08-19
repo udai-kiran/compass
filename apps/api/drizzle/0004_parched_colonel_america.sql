@@ -1,0 +1,1 @@
+ALTER TYPE "public"."ai_event_kind" ADD VALUE 'goal_roadmap';

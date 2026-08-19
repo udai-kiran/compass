@@ -108,6 +108,9 @@ const StatusPage = lazy(() =>
 const EventLogPage = lazy(() =>
   import("./routes/events/EventLogPage.tsx").then((m) => ({ default: m.EventLogPage })),
 );
+const HouseholdPage = lazy(() =>
+  import("./routes/household/HouseholdPage.tsx").then((m) => ({ default: m.HouseholdPage })),
+);
 
 function onApiError(err: unknown) {
   // 401s are handled by redirecting to /login — don't toast them.
@@ -156,6 +159,7 @@ const router = createBrowserRouter([
       { path: "tasks", element: <TasksPage /> },
       { path: "insights", element: <InsightsPage /> },
       { path: "reports", element: <ReportsPage /> },
+      { path: "household", element: <HouseholdPage /> },
       { path: "settings", element: <SettingsPage /> },
       { path: "settings/accounts/:id", element: <AccountDetailPage /> },
       { path: "events", element: <EventLogPage /> },

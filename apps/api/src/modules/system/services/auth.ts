@@ -2,7 +2,7 @@ import argon2 from "argon2";
 import { eq } from "drizzle-orm";
 import type { User } from "@compass/shared";
 import type { Db } from "../../../db/index.ts";
-import { users } from "../schema.ts";
+import { familyMembers, users } from "../schema.ts";
 import { HttpError, pgError } from "../../../lib/errors.ts";
 import { findUserByEmail, findUserById, type UserRow } from "./users.ts";
 import { seedDefaultCategories } from "../../ledger/services/categories.ts";
@@ -44,6 +44,12 @@ export async function registerUser(
       const created = inserted[0]!;
       await seedDefaultCategories(tx, created.id);
       await seedSystemAccounts(tx, created.id);
+      await tx.insert(familyMembers).values({
+        userId: created.id,
+        name: created.displayName,
+        relationship: "self",
+        linkedUserId: created.id,
+      });
       return created;
     });
   } catch (err) {

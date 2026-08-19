@@ -213,10 +213,18 @@ function todayIso(): string {
 export async function materializeDue(
   db: Db,
   onEmiLegsForTest?: (templateId: string) => void | Promise<void>,
+  // Optional user scope: when provided, only templates belonging to that user
+  // are materialized. Exists so tests can avoid cross-file interference on a
+  // shared database (node --test runs test files concurrently). The production
+  // job passes nothing and materializes across all users as before.
+  opts?: { userId?: string },
 ): Promise<{ created: number; userIds: string[] }> {
   const today = todayIso();
+  const userIdScope = opts?.userId;
   const due = await db.query.recurringTemplates.findMany({
-    where: and(isNull(recurringTemplates.pausedAt), lte(recurringTemplates.nextDueDate, today)),
+    where: userIdScope
+      ? and(isNull(recurringTemplates.pausedAt), lte(recurringTemplates.nextDueDate, today), eq(recurringTemplates.userId, userIdScope))
+      : and(isNull(recurringTemplates.pausedAt), lte(recurringTemplates.nextDueDate, today)),
     columns: { id: true },
   });
   let created = 0;

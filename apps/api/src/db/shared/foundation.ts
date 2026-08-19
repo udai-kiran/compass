@@ -13,6 +13,7 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import { users } from "../core-schema.ts";
+import { familyMembers } from "./persons.ts";
 
 export const goalType = pgEnum("goal_type", [
   "savings",
@@ -34,6 +35,7 @@ export const goals = pgTable(
       .references(() => users.id),
     name: text("name").notNull(),
     type: goalType("type").notNull().default("savings"),
+    beneficiaryId: uuid("beneficiary_id").references(() => familyMembers.id, { onDelete: "set null" }),
     targetPaise: bigint("target_paise", { mode: "number" }),
     /** emergency_fund preset: target = N months of trailing average expenses */
     targetMonths: integer("target_months"),

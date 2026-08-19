@@ -10,6 +10,7 @@ const account = (overrides: Partial<Account> = {}): Account => ({
   institution: "HDFC",
   accountLast4: "1234",
   holderName: null,
+  holderId: null,
   upiIds: [],
   currency: "INR",
   openingBalancePaise: 0,

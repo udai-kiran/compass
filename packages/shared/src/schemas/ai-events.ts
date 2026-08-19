@@ -8,6 +8,7 @@ export const AiEventKindSchema = z.enum([
   "categorize",
   "summary",
   "assistant",
+  "goal_roadmap",
 ]);
 export type AiEventKind = z.infer<typeof AiEventKindSchema>;
 

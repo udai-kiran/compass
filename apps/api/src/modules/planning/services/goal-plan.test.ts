@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildGoalPlan, equityShareOfInvestable, targetAllocation } from "./goal-plan.ts";
+import { buildGoalPlan, buildGlidePathSchedule, equityShareOfInvestable, targetAllocation } from "./goal-plan.ts";
 
 test("equityShareOfInvestable ignores 'other' assets", () => {
   assert.equal(equityShareOfInvestable(60, 40), 60); // no other
@@ -202,4 +202,133 @@ test("no SIPs → the whole recommendation is the gap", () => {
   });
   assert.equal(plan.committedMonthlyPaise, 0);
   assert.equal(plan.gapMonthlyPaise, plan.recommendedMonthlyPaise);
+});
+
+// ---------------------------------------------------------------------------
+// buildGlidePathSchedule tests
+// ---------------------------------------------------------------------------
+
+test("buildGlidePathSchedule: returns [] for emergency fund", () => {
+  const steps = buildGlidePathSchedule({
+    goalType: "emergency_fund", monthsToTarget: 120,
+    targetPaise: 5_00_000_00, fundedPaise: 0, monthlyInflowPaise: 0,
+    equityReturnBps: 1200, debtReturnBps: 700,
+  });
+  assert.equal(steps.length, 0);
+});
+
+test("buildGlidePathSchedule: returns [] for undated goal", () => {
+  const steps = buildGlidePathSchedule({
+    goalType: "savings", monthsToTarget: null,
+    targetPaise: null, fundedPaise: 0, monthlyInflowPaise: 0,
+    equityReturnBps: 1200, debtReturnBps: 700,
+  });
+  assert.equal(steps.length, 0);
+});
+
+test("buildGlidePathSchedule: 2-year goal has 2 steps (de-risks at 12-month mark)", () => {
+  const today = new Date("2026-08-18");
+  // 24 months: starts 20/80 (≥12m). Crosses the 12-month threshold at month 12 → 0/100.
+  const steps = buildGlidePathSchedule({
+    goalType: "home", monthsToTarget: 24,
+    targetPaise: null, fundedPaise: 0, monthlyInflowPaise: 0,
+    equityReturnBps: 1200, debtReturnBps: 700, today,
+  });
+  assert.equal(steps.length, 2);
+  // Step 1: today → today+12m, remaining=24, 20/80
+  assert.equal(steps[0]!.equityPct, 20);
+  assert.equal(steps[0]!.debtPct, 80);
+  assert.equal(steps[0]!.monthsRemaining, 24);
+  assert.equal(steps[0]!.fromDate, "2026-08-18");
+  assert.equal(steps[0]!.toDate, "2027-08-18");
+  assert.equal(steps[0]!.requiredMonthlyPaise, null); // no targetPaise
+  // Step 2: today+12m → target, remaining=12, 0/100 (capital protection)
+  assert.equal(steps[1]!.equityPct, 0);
+  assert.equal(steps[1]!.debtPct, 100);
+  assert.equal(steps[1]!.monthsRemaining, 12);
+});
+
+test("buildGlidePathSchedule: 8-year goal crosses 4 band boundaries → 5 steps", () => {
+  const today = new Date("2026-08-18");
+  // 96 months (8y): starts 70/30. Switches: →60/40 at month 12, →40/60 at 36, →20/80 at 60, →0/100 at 84
+  const steps = buildGlidePathSchedule({
+    goalType: "retirement", monthsToTarget: 96,
+    targetPaise: null, fundedPaise: 0, monthlyInflowPaise: 0,
+    equityReturnBps: 1200, debtReturnBps: 700, today,
+  });
+  assert.equal(steps.length, 5);
+  // Step 1: months 0–12, remaining=96, 70/30
+  assert.equal(steps[0]!.equityPct, 70);
+  assert.equal(steps[0]!.debtPct, 30);
+  assert.equal(steps[0]!.monthsRemaining, 96);
+  // Step 2: months 12–36, remaining=84, 60/40 (crossed 7-year threshold)
+  assert.equal(steps[1]!.equityPct, 60);
+  assert.equal(steps[1]!.debtPct, 40);
+  assert.equal(steps[1]!.monthsRemaining, 84);
+  // Step 3: months 36–60, remaining=60, 40/60
+  assert.equal(steps[2]!.equityPct, 40);
+  assert.equal(steps[2]!.debtPct, 60);
+  assert.equal(steps[2]!.monthsRemaining, 60);
+  // Step 4: months 60–84, remaining=36, 20/80
+  assert.equal(steps[3]!.equityPct, 20);
+  assert.equal(steps[3]!.debtPct, 80);
+  assert.equal(steps[3]!.monthsRemaining, 36);
+  // Step 5: months 84–96, remaining=12, 0/100
+  assert.equal(steps[4]!.equityPct, 0);
+  assert.equal(steps[4]!.debtPct, 100);
+  assert.equal(steps[4]!.monthsRemaining, 12);
+});
+
+test("buildGlidePathSchedule: requiredMonthlyPaise computed when targetPaise given", () => {
+  const today = new Date("2026-08-18");
+  // 24-month goal: T=12 < 24 → 2 steps (20/80 for months 0–12, then 0/100 for months 12–24)
+  const steps = buildGlidePathSchedule({
+    goalType: "home", monthsToTarget: 24,
+    targetPaise: 50_00_000_00, // ₹50L target
+    fundedPaise: 10_00_000_00, // ₹10L funded
+    monthlyInflowPaise: 0,
+    equityReturnBps: 1200, debtReturnBps: 700, today,
+  });
+  assert.equal(steps.length, 2);
+  // required monthly on the first step should be positive and non-null
+  assert.ok(steps[0]!.requiredMonthlyPaise !== null);
+  assert.ok(steps[0]!.requiredMonthlyPaise! > 0);
+});
+
+test("buildGlidePathSchedule: requiredMonthlyPaise is 0 when already fully funded", () => {
+  const today = new Date("2026-08-18");
+  // 24-month goal → 2 steps; funded corpus already exceeds target so both steps → 0
+  const steps = buildGlidePathSchedule({
+    goalType: "home", monthsToTarget: 24,
+    targetPaise: 5_00_000_00, // ₹50L target (500_000_000 paise)
+    fundedPaise: 10_00_000_00, // ₹1Cr funded (1_000_000_000 paise) — already exceeds target
+    monthlyInflowPaise: 0,
+    equityReturnBps: 1200, debtReturnBps: 700, today,
+  });
+  assert.equal(steps.length, 2);
+  assert.equal(steps[0]!.requiredMonthlyPaise, 0);
+});
+
+// P7: every projectedCorpusPaise must be an integer (CLAUDE.md money invariant).
+// A nontrivial (≥3-step) schedule is required to catch fractional paise that only
+// appear in steps 2+ due to the compound-growth projection.
+test("buildGlidePathSchedule: projectedCorpusPaise is an integer on every step (P7)", () => {
+  const today = new Date("2026-08-18");
+  // 8-year retirement goal → 5 steps (see band-boundaries test above).
+  // fundedPaise is non-zero and monthlyInflowPaise is non-zero so the compound-growth
+  // path in annuityFV() is exercised and fractional intermediate values arise.
+  const steps = buildGlidePathSchedule({
+    goalType: "retirement", monthsToTarget: 96,
+    targetPaise: 1_00_00_000_00, // ₹1Cr target
+    fundedPaise: 10_00_000_00,   // ₹10L funded
+    monthlyInflowPaise: 5_000_00, // ₹5k/month SIP
+    equityReturnBps: 1200, debtReturnBps: 700, today,
+  });
+  assert.ok(steps.length >= 3, `expected ≥3 steps, got ${steps.length}`);
+  for (const step of steps) {
+    assert.ok(
+      Number.isInteger(step.projectedCorpusPaise),
+      `projectedCorpusPaise ${step.projectedCorpusPaise} is not an integer (fromDate=${step.fromDate})`,
+    );
+  }
 });

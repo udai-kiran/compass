@@ -25,9 +25,10 @@ const EXPECTED_PAIRS: Array<{ method: string; url: string; routeFile: string }> 
   { method: "GET", url: "/api/insights", routeFile: "insights.ts" },
   { method: "GET", url: "/api/reports", routeFile: "reports.ts" },
   { method: "GET", url: "/api/projection-settings", routeFile: "projection-settings.ts" },
+  { method: "GET", url: "/api/planning/income-surplus", routeFile: "planning-analysis.ts" },
 ];
 
-test("planningRoutes registers one uniquely-attributable route from each of the 8 internal route files", async (t) => {
+test("planningRoutes registers one uniquely-attributable route from each of the 9 internal route files", async (t) => {
   const app = Fastify({ logger: false });
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
@@ -36,7 +37,7 @@ test("planningRoutes registers one uniquely-attributable route from each of the 
   await app.ready();
   t.after(() => app.close());
 
-  assert.equal(EXPECTED_PAIRS.length, 8, "must assert exactly one pair per each of the 8 route files");
+  assert.equal(EXPECTED_PAIRS.length, 9, "must assert exactly one pair per each of the 9 route files");
 
   for (const { method, url, routeFile } of EXPECTED_PAIRS) {
     assert.ok(

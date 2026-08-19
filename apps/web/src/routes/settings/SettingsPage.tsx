@@ -129,6 +129,7 @@ function AccountsPanel() {
         // Holder name, UPI and bank details are set afterwards, in Details —
         // this form stays the short path to getting an account on the books.
         holderName: null,
+        holderId: null,
         currency: "INR",
         // Liability balances are negative. For Maxgain, limit availed is the
         // current amount owed and therefore becomes the opening balance.

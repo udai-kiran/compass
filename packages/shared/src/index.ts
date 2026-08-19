@@ -19,3 +19,6 @@ export * from "./schemas/ai-events.ts";
 export * from "./schemas/email.ts";
 export * from "./schemas/family.ts";
 export * from "./schemas/user-tasks.ts";
+export * from "./schemas/household.ts";
+export * from "./schemas/planning.ts";
+export * from "./schemas/credit.ts";

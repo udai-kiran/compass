@@ -9,6 +9,7 @@ const KIND_LABELS: Record<AiEventKind, string> = {
   categorize: "Categorize",
   summary: "Monthly summary",
   assistant: "Assistant",
+  goal_roadmap: "Goal roadmap",
 };
 
 const FILTERS: Array<{ id: AiEventKind | "all"; label: string }> = [
@@ -19,6 +20,7 @@ const FILTERS: Array<{ id: AiEventKind | "all"; label: string }> = [
   { id: "categorize", label: "Categorize" },
   { id: "summary", label: "Monthly" },
   { id: "assistant", label: "Assistant" },
+  { id: "goal_roadmap", label: "Roadmap" },
 ];
 
 function fmtTime(iso: string): string {

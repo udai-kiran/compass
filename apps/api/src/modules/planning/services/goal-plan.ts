@@ -1,5 +1,181 @@
 import type { GoalPlan } from "@compass/shared";
 
+// ---------------------------------------------------------------------------
+// Glide-path schedule — forward allocation from today to target date
+// ---------------------------------------------------------------------------
+
+/** Thresholds (months-before-target) where targetAllocation() changes band. */
+const GLIDE_THRESHOLDS_MONTHS = [120, 84, 60, 36, 12] as const;
+
+export interface GlideStep {
+  /** ISO date string (YYYY-MM-DD) when this step's allocation takes effect */
+  fromDate: string;
+  /** ISO date string when the next step begins (== target date for the final step) */
+  toDate: string;
+  equityPct: number;
+  debtPct: number;
+  /** months remaining to target at the START of this step (integer) */
+  monthsRemaining: number;
+  /**
+   * Monthly contribution needed to reach targetPaise from the projected corpus
+   * at this step's start.  0 = already funded.  null = targetPaise was null.
+   */
+  requiredMonthlyPaise: number | null;
+  /**
+   * Current estimated corpus (paise) at the START of this step.
+   * The first step's value equals `fundedPaise`; subsequent steps are the
+   * projected corpus after growing the prior step's corpus through its duration.
+   */
+  projectedCorpusPaise: number;
+}
+
+export interface GlidePathInput {
+  goalType: string;
+  /** null → undated goal → returns [] */
+  monthsToTarget: number | null;
+  /** total target corpus, paise; null → requiredMonthlyPaise is null on each step */
+  targetPaise: number | null;
+  /** current corpus mapped to this goal, paise */
+  fundedPaise: number;
+  /** existing committed monthly inflow (SIPs), paise — used to project corpus forward */
+  monthlyInflowPaise: number;
+  equityReturnBps: number;
+  debtReturnBps: number;
+  /** defaults to new Date() — accept for testability */
+  today?: Date;
+}
+
+/** Add an integer number of months to a Date, returning a new Date. */
+function addMonthsToDate(d: Date, months: number): Date {
+  const r = new Date(d);
+  r.setUTCMonth(r.getUTCMonth() + Math.round(months));
+  return r;
+}
+
+function toISODate(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+/** Monthly rate from annual basis points. */
+function monthlyRateFrom(annualBps: number): number {
+  return (1 + annualBps / 10_000) ** (1 / 12) - 1;
+}
+
+/** Future value of `n` months of `monthly` contributions at monthly rate `rm`. */
+function annuityFV(monthly: number, n: number, rm: number): number {
+  if (monthly <= 0 || n <= 0) return 0;
+  return Math.abs(rm) < 1e-9 ? monthly * n : monthly * (((1 + rm) ** n - 1) / rm);
+}
+
+/**
+ * Required monthly contribution to grow `funded` to `target` in `n` months
+ * at blended annual `annualBps`.  Returns 0 when already funded.
+ */
+function computeRequiredMonthlyPaise(
+  funded: number,
+  target: number,
+  n: number,
+  annualBps: number,
+): number {
+  if (n <= 0 || target <= 0) return 0;
+  const rm = monthlyRateFrom(annualBps);
+  const corpusFV = funded * (1 + annualBps / 10_000) ** (n / 12);
+  if (corpusFV >= target) return 0;
+  const factor = Math.abs(rm) < 1e-9 ? n : ((1 + rm) ** n - 1) / rm;
+  return Math.max(0, Math.ceil((target - corpusFV) / factor));
+}
+
+/**
+ * Produce the full forward allocation schedule for a goal from today to its
+ * target date.  Returns [] for emergency funds and undated goals (no glide).
+ *
+ * Each step covers one allocation band.  The `requiredMonthlyPaise` per step
+ * projects the current corpus forward to that step's start (using the step's
+ * blended return + the existing committed monthly inflow) and then computes
+ * the additional monthly needed to reach `targetPaise` in the remaining months.
+ */
+export function buildGlidePathSchedule(input: GlidePathInput): GlideStep[] {
+  const { goalType, monthsToTarget, targetPaise, fundedPaise, monthlyInflowPaise,
+    equityReturnBps, debtReturnBps } = input;
+  const today = input.today ?? new Date();
+
+  // No schedule for emergency funds or undated goals.
+  if (goalType === "emergency_fund" || monthsToTarget === null) return [];
+
+  // Build the list of distinct allocation bands from today to the target.
+  // At each threshold T (months-before-target), the transition INTO the next
+  // lower-equity band happens when remaining drops BELOW T.  The new allocation
+  // is targetAllocation(T - 1) — one month inside the threshold — which matches
+  // the band that applies when remaining < T.  Only add a band when the
+  // allocation actually changes (deduplicate thresholds that don't shift the mix
+  // for this particular starting horizon, e.g. T=84 for a 90-month goal still
+  // starts in the 70/30 band — the real change is at T=60).
+  type Band = { offset: number; remaining: number; equityPct: number; debtPct: number };
+
+  const startAlloc = targetAllocation(goalType, monthsToTarget);
+  const bands: Band[] = [{
+    offset: 0,
+    remaining: monthsToTarget,
+    equityPct: startAlloc.equityPct,
+    debtPct: startAlloc.debtPct,
+  }];
+
+  let prevEquity = startAlloc.equityPct;
+  let prevDebt = startAlloc.debtPct;
+
+  for (const T of GLIDE_THRESHOLDS_MONTHS) {
+    if (T >= monthsToTarget) continue;
+    const newAlloc = targetAllocation(goalType, T - 1); // allocation inside the threshold
+    if (newAlloc.equityPct !== prevEquity || newAlloc.debtPct !== prevDebt) {
+      bands.push({
+        offset: monthsToTarget - T,
+        remaining: T,
+        equityPct: newAlloc.equityPct,
+        debtPct: newAlloc.debtPct,
+      });
+      prevEquity = newAlloc.equityPct;
+      prevDebt = newAlloc.debtPct;
+    }
+  }
+
+  // Convert bands to steps, projecting the corpus forward through each.
+  const steps: GlideStep[] = [];
+  let corpusAtStep = fundedPaise;
+
+  for (let i = 0; i < bands.length; i++) {
+    const band = bands[i]!;
+    const nextOffset = i + 1 < bands.length ? bands[i + 1]!.offset : monthsToTarget;
+    const stepDuration = nextOffset - band.offset;
+    const total = band.equityPct + band.debtPct || 100;
+    const blendedBps = Math.round((band.equityPct * equityReturnBps + band.debtPct * debtReturnBps) / total);
+
+    const fromDate = toISODate(addMonthsToDate(today, band.offset));
+    const toDate = toISODate(addMonthsToDate(today, nextOffset));
+
+    let req: number | null = null;
+    if (targetPaise !== null) {
+      req = computeRequiredMonthlyPaise(corpusAtStep, targetPaise, band.remaining, blendedBps);
+    }
+
+    const corpusAtStepStart = corpusAtStep; // snapshot before projection
+    steps.push({
+      fromDate, toDate,
+      equityPct: band.equityPct, debtPct: band.debtPct,
+      monthsRemaining: band.remaining,
+      requiredMonthlyPaise: req,
+      projectedCorpusPaise: Math.round(corpusAtStepStart),
+    });
+
+    // Project corpus to next step.
+    const rm = monthlyRateFrom(blendedBps);
+    corpusAtStep =
+      corpusAtStep * (1 + blendedBps / 10_000) ** (stepDuration / 12) +
+      annuityFV(monthlyInflowPaise, stepDuration, rm);
+  }
+
+  return steps;
+}
+
 /**
  * Goal asset-allocation planning: what equity/debt mix a goal *should* hold, and
  * the monthly investment that keeps it on track — the prescriptive counterpart to

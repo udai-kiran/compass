@@ -102,6 +102,22 @@ async function allTransactionsFor(userId: string) {
     .where(and(eq(transactions.userId, userId), isNull(transactions.deletedAt)));
 }
 
+/**
+ * Returns the categoryId from the SYSTEM-account posting leg of a transaction.
+ * In the postings model, the category is carried on the system-account leg
+ * (Income/Expenses side), not the asset leg — so transactionsFor().categoryId
+ * is legitimately null for the asset posting. Use this helper when the test
+ * needs to verify the income/expense categorization.
+ */
+async function categoryIdFromSystemLeg(transactionId: string): Promise<string | null> {
+  const rows = await db
+    .select({ categoryId: postings.categoryId })
+    .from(postings)
+    .innerJoin(accounts, eq(accounts.id, postings.accountId))
+    .where(and(eq(postings.transactionId, transactionId), isNotNull(accounts.systemKind)));
+  return rows[0]?.categoryId ?? null;
+}
+
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
 }
@@ -141,9 +157,12 @@ test("recordEpfContribution: creates exactly one income transaction on the retir
   assert.equal(row.source, "manual");
   assert.deepEqual(row.tags, ["payslip"]);
   assert.equal(row.merchant, employer);
-  assert.ok(row.categoryId !== null);
+  // The category is on the system-account (Income) leg, not the asset leg;
+  // fetch it from the system-account posting to assert the correct classification.
+  const catId = await categoryIdFromSystemLeg(row.id);
+  assert.ok(catId !== null, "system-account posting must carry a category id");
 
-  const category = await db.query.categories.findFirst({ where: eq(categories.id, row.categoryId!) });
+  const category = await db.query.categories.findFirst({ where: eq(categories.id, catId!) });
   assert.ok(category);
   assert.equal(category!.kind, "income");
   assert.equal(category!.userId, userId);

@@ -24,6 +24,7 @@ test("toFamilyMember maps all fields correctly", () => {
     sortOrder: 0,
     createdAt: new Date("2026-01-01"),
     updatedAt: new Date("2026-01-02"),
+    linkedUserId: null,
   };
 
   const result = toFamilyMember(row);
@@ -39,6 +40,7 @@ test("toFamilyMember maps all fields correctly", () => {
     expectedCompletionYear: 2028,
     notes: "Loves math",
     sortOrder: 0,
+    linkedUserId: null,
   });
 });
 
@@ -57,6 +59,7 @@ test("toFamilyMember does not leak userId/createdAt/updatedAt", () => {
     sortOrder: 1,
     createdAt: new Date("2026-01-01"),
     updatedAt: new Date("2026-01-02"),
+    linkedUserId: null,
   };
 
   const result = toFamilyMember(row);
@@ -81,6 +84,7 @@ test("toFamilyMember passes through null fields", () => {
     sortOrder: 2,
     createdAt: new Date("2026-01-01"),
     updatedAt: new Date("2026-01-02"),
+    linkedUserId: null,
   };
 
   const result = toFamilyMember(row);

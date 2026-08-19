@@ -17,10 +17,12 @@ export const DEFERRED_RESTORE_COLUMNS = {
 } as const satisfies Record<string, readonly string[]>;
 
 /** Database-generated columns present in `select *` dumps but never insertable.
- * `is_opening` was a legacy column on `transactions` that was dropped; old
- * per-user archives may still carry it, so we silently drop it on restore. */
+ * `search` is database-generated (tsvector) and cannot be inserted directly.
+ * `is_opening`, `account_id`, `amount_paise`, and `category_id` are legacy
+ * columns dropped in v3.0.0; old per-user archives exported before that release
+ * may still carry them, so we silently drop them on restore. */
 export const OMITTED_RESTORE_COLUMNS = {
-  transactions: ["search", "is_opening"],
+  transactions: ["search", "is_opening", "account_id", "amount_paise", "category_id"],
 } as const satisfies Record<string, readonly string[]>;
 
 function ident(value: string): string {

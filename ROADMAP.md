@@ -94,9 +94,18 @@ Full detail lives in [`tasks/README.md`](./tasks/README.md); 94 tasks across nin
 
 **Architecture.** The app grew from an expense tracker into a full personal-finance OS without domain boundaries: one 1,767-line schema file, 102 files in a flat services folder, 39 route modules registered flat, and cache invalidation driven by a URL regex. 3.0.0 completed the restructure: the schema is now 49 tables split into layered schema slices under `db/shared/` and `modules/*/schema.ts`, the flat services folder is replaced by eight domain modules with prefixed Fastify plugins, and a domain event bus is in place — all verified by a route-table snapshot that proved all 155 URLs stayed byte-identical.
 
-### 2.1.0 — Household & Split *(8 tasks)*
+### 2.1.0 — Household & Split *(8 tasks — complete)*
 
 Compass becomes multi-player: households, explicit per-record sharing grants, and built-in expense splitting with a running who-owes-whom balance. The authorization model gains one central sharing guard; private stays the default.
+
+**What shipped (v2.1.0):**
+- **Person model** — `family_members` promoted to a DAG-shared layer (`db/shared/persons.ts`) so accounts, goals and insurance policies can FK to a person by ID. Every user auto-gets a `"self"` person on registration. `linkedUserId` ties a registered household member back to their user account.
+- **Households** — `households` / `household_members` / `household_invites` tables; owner/member roles; invite-via-token flow; leave / remove-member; solo users see no behaviour change.
+- **Sharing guard** — `sharing_grants` table + `withSharing(userId, userIdCol, idCol, resourceType)` helper in `lib/sharing.ts`; composable into any service list query; private is the default; `sharingResourceType` enum covers account / goal / holding / insurance_policy / budget.
+- **Splits & settlements** — `splits` (transactionId unique FK, payerPersonId, rule), `split_shares` (personId, sharePaise), `settlements` (fromPersonId, toPersonId, amountPaise). Pure split-math functions (`computeEqualShares`, `computeProportionalShares`, `validateExactShares`) with tested largest-remainder and deterministic remainder; zero-sum balance invariant enforced per split.
+- **Household API** — 20 new routes covering full CRUD for households, membership, sharing grants, splits, and settlements. Route-level `assertMember` guards all household-scoped mutations. Transaction ownership verified before split creation. Route snapshots updated (313 routes).
+- **Household UI** — "Household" nav item + ⌘K entry; `/household` page with create / invite / accept-invite / leave / remove-member; per-household member list; invite token display. SharingControl component for per-record grant management. BalancesPanel showing net paise balances and settlements.
+- **Schema growth** — 57 tables (↑ from 49), 42 enums (↑ from 39). Drizzle migrations `0001` (person model) and `0002` (splits/settlements) generated. Backup coverage updated for all new tables.
 
 ### 2.2.0 — Goal-based planning *(15 tasks)*
 

@@ -10,6 +10,7 @@ const account = (overrides: Partial<AccountWithBalance> = {}): AccountWithBalanc
   institution: "Test Bank",
   accountLast4: "1234",
   holderName: "Test Holder",
+  holderId: null,
   upiIds: [],
   currency: "INR",
   openingBalancePaise: 0,

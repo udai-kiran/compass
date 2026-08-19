@@ -36,6 +36,12 @@ npm run test -w apps/api
 node --test apps/api/src/services/capital-gains.test.ts
 ```
 
+`apps/api/package.json` passes `--experimental-test-module-mocks` to `node --test`. This flag enables `node:test`'s `mock.module()` API, which two hermetic route tests require to stub a service module so the real route plugin can be registered and its real handler exercised without a DB or Redis connection:
+- `apps/api/src/modules/planning/routes/planning-analysis.hermetic.test.ts`
+- `apps/api/src/modules/credit/routes/revolving-debt.hermetic.test.ts`
+
+These files run through the normal `npm run test -w apps/api` command so CI never silently skips them (`.github/workflows/ci.yml` runs `npm test`). The flag is Node "Stability 1.0 — Early development" and emits two `ExperimentalWarning` lines per run; this is expected and harmless. CI pins Node major 24 (`engines.node` in the root `package.json` is `>=24`). If a future Node release renames or removes the flag, the API test command fails loudly with an unknown-option error rather than producing silently wrong results.
+
 ## Architecture
 
 ### Backend — `apps/api` (Fastify)

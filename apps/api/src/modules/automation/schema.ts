@@ -64,6 +64,7 @@ export const aiEventKind = pgEnum("ai_event_kind", [
   "categorize", // in-app "Suggest categories"
   "summary", // the monthly narrative summary
   "assistant", // an assistant chat turn
+  "goal_roadmap", // goal roadmap narrative (task 5.4)
 ]);
 export const aiEventStatus = pgEnum("ai_event_status", ["ok", "error"]);
 
