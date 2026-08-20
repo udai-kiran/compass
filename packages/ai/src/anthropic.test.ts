@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createAnthropicProvider } from "./anthropic.ts";
-import type { ToolSpec } from "./types.ts";
+import { AiImageRejectedError, MAX_IMAGE_BYTES, type AiImageMediaType, type ContentBlock, type ToolSpec } from "./types.ts";
 
 interface CapturedCall {
   url: string;
@@ -313,4 +313,142 @@ test("chat: forwards timeoutMs to postJson — a genuinely abort-aware stub prov
   }
   assert.equal(calls.length, 1);
   assert.ok(calls[0]!.init.signal, "an AbortSignal must be attached for timeoutMs to have any effect");
+});
+
+// ---------------------------------------------------------------------------
+// Vision: image content serialization (task 8.1)
+// ---------------------------------------------------------------------------
+
+test("chat: multi-part user message serializes to native Anthropic content-block shape", async () => {
+  const { restore, calls } = stubFetch([
+    { status: 200, body: JSON.stringify({ content: [{ type: "text", text: "ok" }] }) },
+  ]);
+  try {
+    const ai = createAnthropicProvider({ apiKey: "k", model: "m" });
+    await ai.chat({
+      system: "sys",
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "what is this" },
+            { type: "image", mediaType: "image/png", data: "aGVsbG8=" },
+          ],
+        },
+      ],
+      tools: [],
+    });
+  } finally {
+    restore();
+  }
+  const parsed = body(calls[0]!);
+  assert.deepEqual((parsed.messages as Array<{ content: unknown }>)[0]!.content, [
+    { type: "text", text: "what is this" },
+    { type: "image", source: { type: "base64", media_type: "image/png", data: "aGVsbG8=" } },
+  ]);
+});
+
+test("chat: plain string user message still serializes as a bare string (vision regression)", async () => {
+  const { restore, calls } = stubFetch([
+    { status: 200, body: JSON.stringify({ content: [{ type: "text", text: "ok" }] }) },
+  ]);
+  try {
+    const ai = createAnthropicProvider({ apiKey: "k", model: "m" });
+    await ai.chat({
+      system: "sys",
+      messages: [{ role: "user", content: "hello" }],
+      tools: [],
+    });
+  } finally {
+    restore();
+  }
+  assert.deepEqual(body(calls[0]!).messages, [{ role: "user", content: "hello" }]);
+});
+
+test("chat: oversized image throws AiImageRejectedError before any fetch call", async () => {
+  const { restore, calls } = stubFetch([
+    { status: 200, body: JSON.stringify({ content: [] }) },
+  ]);
+  try {
+    const ai = createAnthropicProvider({ apiKey: "k", model: "m" });
+    await assert.rejects(
+      () =>
+        ai.chat({
+          system: "sys",
+          messages: [
+            {
+              role: "user",
+              content: [
+                {
+                  type: "image",
+                  mediaType: "image/png",
+                  data: "A".repeat(MAX_IMAGE_BYTES * 2),
+                },
+              ],
+            },
+          ],
+          tools: [],
+        }),
+      (err: unknown) => {
+        assert.ok(err instanceof AiImageRejectedError);
+        assert.match(err.message, /above the \d+-byte limit/);
+        return true;
+      },
+    );
+    assert.equal(calls.length, 0, "no HTTP call must be made when image is rejected");
+  } finally {
+    restore();
+  }
+});
+
+test("chat: an unsupported image media type throws before any fetch call", async () => {
+  const { restore, calls } = stubFetch([{ status: 200, body: JSON.stringify({ content: [] }) }]);
+  try {
+    const ai = createAnthropicProvider({ apiKey: "k", model: "m" });
+    await assert.rejects(
+      () =>
+        ai.chat({
+          system: "sys",
+          messages: [
+            {
+              role: "user",
+              content: [{ type: "image", mediaType: "image/tiff" as AiImageMediaType, data: "aGVsbG8=" }],
+            },
+          ],
+          tools: [],
+        }),
+      (err: unknown) => {
+        assert.ok(err instanceof AiImageRejectedError);
+        assert.match(err.message, /Unsupported image media type/);
+        return true;
+      },
+    );
+    assert.equal(calls.length, 0, "no HTTP call must be made when the media type is rejected");
+  } finally {
+    restore();
+  }
+});
+
+test("chat: an unknown content block type is rejected before any fetch call", async () => {
+  // Guards against a runtime-shaped block bypassing the media-type and size
+  // checks and being serialized as an image anyway.
+  const { restore, calls } = stubFetch([{ status: 200, body: JSON.stringify({ content: [] }) }]);
+  try {
+    const rogue = {
+      type: "not-image",
+      mediaType: "image/tiff",
+      data: "A".repeat(8 * 1024 * 1024),
+    } as unknown as ContentBlock;
+    await assert.rejects(
+      () => createAnthropicProvider({ apiKey: "k", model: "m" }).chat({ system: "sys", messages: [{ role: "user", content: [rogue] }], tools: [] }),
+      (err: unknown) => {
+        assert.ok(err instanceof AiImageRejectedError);
+        assert.match(err.message, /Unsupported content block type/);
+        return true;
+      },
+    );
+    assert.equal(calls.length, 0, "no HTTP call must be made for an unknown block type");
+  } finally {
+    restore();
+  }
 });

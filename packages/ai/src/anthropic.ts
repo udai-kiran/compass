@@ -3,12 +3,14 @@ import { categorizationPrompt, summaryPrompt, SUMMARY_SYSTEM } from "./prompts.t
 import {
   AiUnavailableError,
   assertToolChoiceValid,
+  assertImagesValid,
   CategorySuggestionsSchema,
   type AiObserver,
   type AiProvider,
   type ChatRequest,
   type ChatTurn,
   type CategorySuggestion,
+  type MessageContent,
   type SuggestCategoriesInput,
   type SummaryInput,
   type ToolCall,
@@ -93,6 +95,7 @@ export function createAnthropicProvider(config: AnthropicConfig): AiProvider {
 
     async chat(request: ChatRequest): Promise<ChatTurn> {
       assertToolChoiceValid(request);
+      assertImagesValid(request.messages);
       const res = await call(
         {
           max_tokens: request.maxTokens ?? 1024,
@@ -117,11 +120,24 @@ export function createAnthropicProvider(config: AnthropicConfig): AiProvider {
   };
 }
 
+/** Native Anthropic content for one user message. A plain string stays a bare
+ * string (unchanged wire shape for every pre-vision call site); a block list
+ * becomes typed content blocks. */
+function toAnthropicContent(content: MessageContent): unknown {
+  if (typeof content === "string") return content;
+  return content.flatMap((b): unknown[] => {
+    if (b.type === "text") return [{ type: "text", text: b.text }];
+    if (b.type === "image")
+      return [{ type: "image", source: { type: "base64", media_type: b.mediaType, data: b.data } }];
+    return []; // unreachable via chat(): assertImagesValid rejects unknown types first
+  });
+}
+
 function toAnthropicMessages(request: ChatRequest): unknown[] {
   const out: unknown[] = [];
   for (const m of request.messages) {
     if (m.role === "user") {
-      out.push({ role: "user", content: m.content });
+      out.push({ role: "user", content: toAnthropicContent(m.content) });
     } else if (m.role === "assistant") {
       const blocks: unknown[] = [];
       if (m.content) blocks.push({ type: "text", text: m.content });
