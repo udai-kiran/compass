@@ -640,7 +640,7 @@ test("extractStatementTxns: request wiring — record_statement_transactions too
   // Category-list behavior is unchanged — the user message still carries it.
   const userMsg = req.messages[0]!;
   assert.equal(userMsg.role, "user");
-  assert.match(userMsg.content, /Food/);
+  assert.match(userMsg.content as string, /Food/);
 });
 
 test("extractStatementSummary: request wiring — record_statement_summary tool, matching toolChoice, unchanged system/maxTokens/timeoutMs/retries", async () => {

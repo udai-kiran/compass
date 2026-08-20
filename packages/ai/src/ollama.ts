@@ -2,12 +2,14 @@ import { extractJson, postJson } from "./http.ts";
 import { categorizationPrompt, summaryPrompt, SUMMARY_SYSTEM } from "./prompts.ts";
 import {
   AiUnavailableError,
+  assertNoImages,
   CategorySuggestionsSchema,
   type AiObserver,
   type AiProvider,
   type ChatRequest,
   type ChatTurn,
   type CategorySuggestion,
+  type MessageContent,
   type SuggestCategoriesInput,
   type SummaryInput,
   type ToolCall,
@@ -75,6 +77,7 @@ export function createOllamaProvider(config: OllamaConfig): AiProvider {
     },
 
     async chat(request: ChatRequest): Promise<ChatTurn> {
+      assertNoImages(request.messages, "ollama");
       const res = await call({
         messages: toOllamaMessages(request),
         tools: request.tools.map((t) => ({
@@ -95,10 +98,18 @@ export function createOllamaProvider(config: OllamaConfig): AiProvider {
   };
 }
 
+/** Ollama is text-only here — `assertNoImages` has already rejected any image —
+ * so a block list can only contain `TextBlock`s; they are joined with `\n`.
+ * Exported for direct unit testing — an image block cannot reach it through `chat()`, which rejects images first. */
+export function toOllamaContent(content: MessageContent): string {
+  if (typeof content === "string") return content;
+  return content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("\n");
+}
+
 function toOllamaMessages(request: ChatRequest): unknown[] {
   const out: unknown[] = [{ role: "system", content: request.system }];
   for (const m of request.messages) {
-    if (m.role === "user") out.push({ role: "user", content: m.content });
+    if (m.role === "user") out.push({ role: "user", content: toOllamaContent(m.content) });
     else if (m.role === "assistant")
       out.push({
         role: "assistant",

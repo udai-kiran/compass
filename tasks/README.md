@@ -8,7 +8,7 @@ Tasks marked 🎨 carry `ui: true` in their frontmatter and are written to be ex
 
 **How these get built: [TDD.md](./TDD.md).** Every acceptance-criterion checkbox is a test written *before* the code that satisfies it — tick the box only once its test exists and passes. Money invariants get property tests, not example tests; refactors get characterization tests written before the move.
 
-**Currently at `v3.0.0`.** v2.x tags (v2.0.0-v2.8.17) were incremental releases during the module migration and postings work. Themed releases resume at v3.x. See [REVAMP.md](./REVAMP.md) for the architectural critique and the Shopping Intelligence pillar.
+**Currently at `v3.1.2`.** v2.x tags (v2.0.0-v2.8.17) were incremental releases during the module migration and postings work. Themed releases resume at v3.x. See [REVAMP.md](./REVAMP.md) for the architectural critique and the Shopping Intelligence pillar.
 
 ## Release roadmap
 
@@ -139,7 +139,7 @@ Phase 4 and 5 are **extensions of real working code**, not greenfield. Verified 
 | 7.3 | [Income allocation & lever advisor](./07.03-allocation-levers-ui.md) 🎨 | 7 — Planning surface | todo |
 | 7.4 | [Rebalancing & tax-cost panel](./07.04-rebalancing-ui.md) 🎨 | 7 — Planning surface | todo |
 | — | **↓ 2.3.0** | | |
-| 8.1 | [Vision support in packages/ai](./08.01-ai-vision-support.md) | 8 — Vision | todo |
+| 8.1 | [Vision support in packages/ai](./08.01-ai-vision-support.md) | 8 — Vision | done |
 | 9.1 | [Shopping schema + shared contracts](./09.01-shopping-schema.md) | 9 — Shopping core | todo |
 | 9.2 | [Shopping lists CRUD + API](./09.02-lists-crud.md) | 9 — Shopping core | todo |
 | 9.3 | [Catalog canonicalization + unit normalization](./09.03-catalog-canonicalization.md) | 9 — Shopping core | todo |

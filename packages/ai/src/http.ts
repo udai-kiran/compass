@@ -1,10 +1,206 @@
-import { AiUnavailableError, type AiObserver } from "./types.ts";
+import { AiUnavailableError, base64ByteLength, type AiObserver } from "./types.ts";
 
-function stringifyBody(body: unknown): string {
+/** Placeholder written to the AI event log in place of image bytes. */
+function imagePlaceholder(mediaType: string, bytes: number): string {
+  return `[image omitted: ${mediaType}, ${bytes} bytes]`;
+}
+
+/** Case-insensitive: data-URI schemes and media types are, and a `DATA:` variant
+ *  would otherwise skip redaction AND leave `hadImage` false. */
+const DATA_URI_RE = /^data:([^;,]+);base64,([\s\S]*)$/i;
+
+/** Threaded through {@link redactImages} so one walk both redacts the body and
+ *  reports whether it carried an image. A separate predicate would be a second
+ *  source of truth, free to drift from the redactor. */
+interface RedactionState {
+  hadImage: boolean;
+}
+
+/**
+ * Copy a plain-JSON `value`, replacing every provider image payload with a short
+ * placeholder. Only ever called on the output of a `JSON.parse(JSON.stringify(…))`
+ * round-trip, so every input is a plain object, array or primitive.
+ * Applied ONLY to the string handed to the observer — the body actually POSTed is
+ * serialized separately from the untouched original — so `ai_events` records
+ * that an image was sent, plus its type and size, without storing megabytes of
+ * base64 (which `recordAiEvent` would only truncate into noise anyway).
+ */
+function redactImages(value: unknown, state: RedactionState): unknown {
+  if (Array.isArray(value)) return value.map((v) => redactImages(v, state));
+  if (value === null || typeof value !== "object") return value;
+
+  // Walk every property FIRST, then apply this node's own image redaction to the
+  // result. Redacting first and returning early would copy the node's other keys
+  // verbatim, so a second image sitting in a sibling property would survive.
+  const walked: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    walked[k] = redactImages(v, state);
+  }
+
+  // Anthropic: { type: "image", source: { type: "base64", media_type, data } }
+  if (walked.type === "image" && walked.source !== null && typeof walked.source === "object") {
+    const source = walked.source as Record<string, unknown>;
+    if (typeof source.data === "string") {
+      const mediaType = typeof source.media_type === "string" ? source.media_type : "unknown";
+      state.hadImage = true;
+      return {
+        ...walked,
+        source: { ...source, data: imagePlaceholder(mediaType, base64ByteLength(source.data)) },
+      };
+    }
+  }
+
+  // OpenAI-compatible: { type: "image_url", image_url: { url: "data:<type>;base64,<data>" } }
+  // A non-data URL carries no bytes, so it is left intact.
+  if (walked.type === "image_url" && walked.image_url !== null && typeof walked.image_url === "object") {
+    const imageUrl = walked.image_url as Record<string, unknown>;
+    if (typeof imageUrl.url === "string") {
+      const match = DATA_URI_RE.exec(imageUrl.url);
+      if (match) {
+        state.hadImage = true;
+        return {
+          ...walked,
+          image_url: {
+            ...imageUrl,
+            url: imagePlaceholder(match[1]!.toLowerCase(), base64ByteLength(match[2]!)),
+          },
+        };
+      }
+    }
+  }
+
+  return walked;
+}
+
+/**
+ * Replace IMAGE data-URI payloads echoed back by a provider. Some endpoints
+ * include the submitted body in an error reply, which would otherwise store
+ * megabytes of base64 in `ai_events.response_raw`. Everything else in the reply
+ * is preserved verbatim — that field is the provider's raw response and its
+ * debugging value depends on being unaltered — so only `data:image/...;base64,`
+ * payloads are touched, and `data:text/plain`, `data:application/pdf` and the
+ * like are deliberately left alone.
+ *
+ * Two properties are load-bearing:
+ *  - The character classes are FLAT. An alternation such as
+ *    `(?:[A-Za-z0-9+=]|\\/|\\u002[fF])+` blows the regex stack on a
+ *    multi-megabyte payload, and because this runs inside `report`'s try/catch
+ *    the resulting RangeError would be swallowed and the audit record lost.
+ *  - The classes include `\` so a JSON-escaped separator (`image\/png`) or
+ *    payload character (`AAA\/AAAA`, `AAA\u002fAAAA`) is consumed rather than
+ *    cutting the match short and leaving image bytes behind. Some providers
+ *    escape `/` in JSON strings; PHP's `json_encode` does so by default. The
+ *    separator class after `image` is what keeps this image-only: without it,
+ *    a media type merely beginning with "image" (`imagefoo/png`) would be
+ *    rewritten too.
+ *  - The `data:`, `;` and `,` delimiters may each arrive JSON-escaped (`\u003a`,
+ *    `\u003b`, `\u002c`), so each accepts both forms. These are fixed-length
+ *    one-off alternations, not quantified ones, so they add no backtracking risk.
+ *
+ * Bare base64 is only redacted where the surrounding JSON structure identifies it
+ * as an image (Anthropic's `source.data`); loose base64 in prose is indistinguishable
+ * from ordinary text and is deliberately not touched. When the reply is JSON and
+ * mentions base64 at all it is re-serialized, so its values survive but its
+ * formatting is normalized and an own `__proto__` key would be dropped — an
+ * acceptable trade for not storing megabytes.
+ */
+/** Cheap case-insensitive pre-filter for the response redactor. Not `/g` — a
+ *  global regex would carry `lastIndex` between `.test()` calls. */
+const BASE64_HINT_RE = /base64/i;
+const RESPONSE_IMAGE_DATA_URI_RE =
+  /data(?::|\\u003[aA])(image[\\/][\w.+\\/-]*)(?:;|\\u003[bB])base64(?:,|\\u002[cC])([A-Za-z0-9+/=\\]+)/gi;
+
+/** Collapse JSON escape forms of `/` so the placeholder reports a clean media
+ *  type and an accurate byte count. */
+function unescapeSlashes(value: string): string {
+  return value.replace(/\\u002[fF]/g, "/").replace(/\\\//g, "/");
+}
+
+/** Scan one string for `data:image/...;base64,...` payloads. */
+function redactDataUriImages(text: string): string {
+  return text.replace(RESPONSE_IMAGE_DATA_URI_RE, (_match, mediaType: string, data: string) =>
+    imagePlaceholder(unescapeSlashes(mediaType).toLowerCase(), base64ByteLength(unescapeSlashes(data))),
+  );
+}
+
+/** Apply the data-URI scan to every string inside an already-parsed JSON value. */
+function redactStringValues(value: unknown): unknown {
+  if (typeof value === "string") return redactDataUriImages(value);
+  if (Array.isArray(value)) return value.map(redactStringValues);
+  if (value === null || typeof value !== "object") return value;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    out[k] = redactStringValues(v);
+  }
+  return out;
+}
+
+function redactResponseImages(text: string): string {
+  // Fast path. Every provider image shape contains the literal `base64` —
+  // Anthropic's block as `"type":"base64"`, OpenAI's inside its data URI — so an
+  // ordinary reply never pays for what follows. A JSON reply may unicode-escape
+  // characters of that marker, so a `\u00` escape also opens the gate; the parse
+  // below then resolves every escape.
+  // `/base64/i` rather than `.toLowerCase().includes(...)`: the latter would
+  // allocate a full lowercase copy of every response, and these can be megabytes.
+  if (!BASE64_HINT_RE.test(text) && !text.includes("\\u00")) return text;
+
+  // Use the SAME notion of "is this JSON" as the parser that accepted this body.
+  // `postJson` tolerates OpenRouter keep-alive padding via `extractJson`, so a bare
+  // `JSON.parse` here would reject a body the client already treated as a valid
+  // response and fall back to a text scan that an escaped marker defeats. Note the
+  // padding itself is dropped from the logged copy, which is noise anyway.
+  const parsed = parseResponseBody(text);
+  if (!parsed.ok) {
+    // Genuinely not JSON — a plain-text upstream error, say. Scan it for data URIs;
+    // there is no structure to inspect.
+    return redactDataUriImages(text);
+  }
+
   try {
-    return JSON.stringify(body, null, 2);
+    // Two passes. `redactImages` catches both providers' NATIVE shapes, including
+    // Anthropic's bare base64 at `source.data`, which no text scan could tell
+    // apart from prose. `redactStringValues` then catches data URIs, with every
+    // JSON escape already resolved by the parse — which is why this is a parse
+    // rather than an ever-growing set of escape cases in the regex.
+    // The response path ignores the flag; only the request decides suppression.
+    return JSON.stringify(redactStringValues(redactImages(parsed.value, { hadImage: false })));
   } catch {
-    return String(body);
+    // The body parsed but could not be walked or re-serialized — in practice
+    // nesting deep enough to exhaust the stack (about 5,000 levels). We cannot
+    // prove it carries no image, and the text scan cannot see bare base64, so the
+    // body is dropped rather than logged raw.
+    //
+    // Deliberately NO hint regex here: any raw-text check for an image marker is
+    // itself defeated by escaping the token it searches for (`"base64"`
+    // is valid JSON for `"base64"`). So this fails closed on ANY walk failure. A
+    // reply nested that deeply loses its audit body even if it held no image —
+    // an acceptable trade on a path that should never occur.
+    return "[response omitted: image payload could not be redacted]";
+  }
+}
+
+/**
+ * The request as recorded for the AI event log. Serializing BEFORE redacting is
+ * deliberate and load-bearing: `JSON.stringify` applies `toJSON()` and getters,
+ * so a `Date` still becomes an ISO string, and parsing back leaves only plain
+ * JSON values — so no object can smuggle image bytes past `redactImages` behind
+ * a custom `toJSON`. Never falls back to `String(body)`: a hostile or broken
+ * `toString()` would throw out of here, and this is called on the model-call
+ * path, so the audit log would break the request it merely describes.
+ * Also reports whether the body carried an image, so the caller can suppress the
+ * raw response for that call.
+ */
+function stringifyBody(body: unknown): { text: string; hadImage: boolean } {
+  const state: RedactionState = { hadImage: false };
+  try {
+    const plain = JSON.parse(JSON.stringify(body)) as unknown;
+    return { text: JSON.stringify(redactImages(plain, state), null, 2), hadImage: state.hadImage };
+  } catch {
+    // The body could not be serialized, so we cannot prove it carried no image.
+    // Report `hadImage` so the response is omitted too — the same fail-closed
+    // direction taken everywhere else on this path.
+    return { text: "[unserializable request body]", hadImage: true };
   }
 }
 
@@ -26,6 +222,15 @@ function parseResponseBody(text: string): { ok: true; value: unknown } | { ok: f
   }
 }
 
+/** Content-free stand-in for a response the audit log must not keep. The
+ *  character length is retained because it is useful for diagnosing a truncated
+ *  or empty reply and reveals nothing about the content. Characters (not bytes)
+ *  are reported because `response.length` counts UTF-16 code units, and the unit
+ *  matches the clamp applied by `recordAiEvent` (`slice(0, MAX_FIELD_CHARS)`). */
+function omittedResponse(response: string): string {
+  return `[response omitted: request contained an image (${response.length} chars)]`;
+}
+
 /**
  * Report one model round-trip to the observer. Fired exactly once per
  * {@link postJson} call (not per retry). Never throws.
@@ -40,12 +245,25 @@ function parseResponseBody(text: string): { ok: true; value: unknown } | { ok: f
 async function report(
   observe: AiObserver | undefined,
   request: string,
+  requestHadImage: boolean,
   startedAt: number,
   outcome: { response: string; ok: boolean; error?: string },
 ): Promise<void> {
   if (!observe) return;
   try {
-    await observe({ request, latencyMs: Date.now() - startedAt, ...outcome });
+    await observe({
+      request,
+      latencyMs: Date.now() - startedAt,
+      ...outcome,
+      // A request carrying an image never gets its raw response persisted: a
+      // provider echoing the submitted body could otherwise write those bytes
+      // into the audit log in any shape it liked. Pattern-matching the reply for
+      // every possible embedding proved unwinnable. Calls with no image keep the
+      // full reply, with the data-URI scan as a secondary defence.
+      response: requestHadImage
+        ? omittedResponse(outcome.response)
+        : redactResponseImages(outcome.response),
+    });
   } catch {
     // swallow — the AI event log is best-effort
   }
@@ -67,7 +285,7 @@ export async function postJson(
 ): Promise<unknown> {
   const { headers = {}, timeoutMs = 30_000, retries = 2, observe } = opts;
   const startedAt = Date.now();
-  const request = stringifyBody(body);
+  const { text: request, hadImage: requestHadImage } = stringifyBody(body);
   let lastErr: unknown;
   // Raw body of the last attempt that got an HTTP response — carried into the
   // final error observation so an unparseable/empty reply is still visible.
@@ -101,7 +319,7 @@ export async function postJson(
         lastResponse = text;
         const parsed = parseResponseBody(text);
         if (parsed.ok) {
-          void report(observe, request, startedAt, { response: text, ok: true });
+          void report(observe, request, requestHadImage, startedAt, { response: text, ok: true });
           return parsed.value;
         }
         lastErr = new AiUnavailableError("AI response was not valid JSON");
@@ -110,7 +328,7 @@ export async function postJson(
       lastErr = err;
       // 4xx is a permanent config error (bad key etc.) — surface it, don't retry.
       if (err instanceof AiUnavailableError && /\(4\d\d\)/.test(err.message)) {
-        void report(observe, request, startedAt, { response: lastResponse, ok: false, error: err.message });
+        void report(observe, request, requestHadImage, startedAt, { response: lastResponse, ok: false, error: err.message });
         throw err;
       }
     } finally {
@@ -122,7 +340,7 @@ export async function postJson(
   // body) to AiUnavailableError with a user-safe message — the upstream detail is
   // not leaked to the client (it only reaches server logs via the thrown stack).
   const finalErr = lastErr instanceof AiUnavailableError ? lastErr : new AiUnavailableError();
-  void report(observe, request, startedAt, { response: lastResponse, ok: false, error: finalErr.message });
+  void report(observe, request, requestHadImage, startedAt, { response: lastResponse, ok: false, error: finalErr.message });
   throw finalErr;
 }
 

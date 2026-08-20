@@ -3,12 +3,14 @@ import { categorizationPrompt, summaryPrompt, SUMMARY_SYSTEM } from "./prompts.t
 import {
   AiUnavailableError,
   assertToolChoiceValid,
+  assertImagesValid,
   CategorySuggestionsSchema,
   type AiObserver,
   type AiProvider,
   type ChatRequest,
   type ChatTurn,
   type CategorySuggestion,
+  type MessageContent,
   type SuggestCategoriesInput,
   type SummaryInput,
   type ToolCall,
@@ -105,6 +107,7 @@ export function createOpenAiCompatProvider(config: OpenAiCompatConfig): AiProvid
 
     async chat(request: ChatRequest): Promise<ChatTurn> {
       assertToolChoiceValid(request);
+      assertImagesValid(request.messages);
       const res = await call(
         {
           max_tokens: request.maxTokens ?? 1024,
@@ -144,11 +147,24 @@ function safeJson(raw: string | undefined): unknown {
   }
 }
 
+/** Native OpenAI content for one user message. A plain string stays a bare
+ * string (unchanged wire shape for every pre-vision call site); images are sent
+ * as base64 data URIs, which vision-capable OpenAI-compatible endpoints accept. */
+function toOpenAiContent(content: MessageContent): unknown {
+  if (typeof content === "string") return content;
+  return content.flatMap((b): unknown[] => {
+    if (b.type === "text") return [{ type: "text", text: b.text }];
+    if (b.type === "image")
+      return [{ type: "image_url", image_url: { url: `data:${b.mediaType};base64,${b.data}` } }];
+    return []; // unreachable via chat(): assertImagesValid rejects unknown types first
+  });
+}
+
 function toOpenAiMessages(request: ChatRequest): unknown[] {
   const out: unknown[] = [{ role: "system", content: request.system }];
   for (const m of request.messages) {
     if (m.role === "user") {
-      out.push({ role: "user", content: m.content });
+      out.push({ role: "user", content: toOpenAiContent(m.content) });
     } else if (m.role === "assistant") {
       const msg: Record<string, unknown> = { role: "assistant", content: m.content || null };
       if (m.toolCalls?.length) {
