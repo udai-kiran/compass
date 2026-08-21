@@ -67,6 +67,7 @@ export function createAnthropicProvider(config: AnthropicConfig): AiProvider {
   return {
     name: "anthropic",
     enabled: true,
+    supportsVision: true,
 
     async suggestCategories(input: SuggestCategoriesInput): Promise<CategorySuggestion[]> {
       if (input.transactions.length === 0) return [];

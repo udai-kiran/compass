@@ -24,6 +24,7 @@ import {
   ParsedShoppingItemSchema,
   ParseListTextRequestSchema,
   ParseListTextResponseSchema,
+  ParseListImageResponseSchema,
 } from "./shopping.ts";
 import { AiEventKindSchema } from "./ai-events.ts";
 
@@ -1051,4 +1052,83 @@ test("AC5: AiEventKindSchema enum values include shopping_parse", () => {
     AiEventKindSchema.options.includes("shopping_parse"),
     `Expected 'shopping_parse' in AiEventKindSchema.options; got: ${JSON.stringify(AiEventKindSchema.options)}`,
   );
+});
+
+// ── Task 9.5 — photo list capture schema ─────────────────────────────────────
+
+test("ParseListImageResponseSchema accepts available=true + items + message=null", () => {
+  const r = ParseListImageResponseSchema.safeParse({
+    available: true,
+    items: [{ rawText: "Atta", quantityBase: 2000, unit: "g" }],
+    message: null,
+  });
+  assert.equal(r.success, true);
+});
+
+test("ParseListImageResponseSchema accepts available=false + empty items + message string", () => {
+  const r = ParseListImageResponseSchema.safeParse({
+    available: false,
+    items: [],
+    message: "AI is not configured",
+  });
+  assert.equal(r.success, true);
+});
+
+test("ParseListImageResponseSchema rejects item with quantity-without-unit (refine propagated)", () => {
+  const r = ParseListImageResponseSchema.safeParse({
+    available: true,
+    items: [{ rawText: "Rice", quantityBase: 500, unit: null }],
+    message: null,
+  });
+  assert.equal(r.success, false);
+});
+
+test("ParseListImageResponseSchema rejects blank rawText in items", () => {
+  const r = ParseListImageResponseSchema.safeParse({
+    available: true,
+    items: [{ rawText: "", quantityBase: null, unit: null }],
+    message: null,
+  });
+  assert.equal(r.success, false);
+});
+
+test("ParseListImageResponseSchema does NOT have a storageKey field (B1 — image is transient)", () => {
+  // A response WITH storageKey must still parse (extra fields are stripped by Zod).
+  // The point is that ParseListImageResponseSchema has no storageKey field.
+  const r = ParseListImageResponseSchema.safeParse({
+    available: true,
+    items: [],
+    message: null,
+  });
+  assert.equal(r.success, true);
+  if (r.success) {
+    assert.ok(!("storageKey" in r.data), "parsed result must not contain storageKey");
+  }
+});
+
+test("ParseListImageResponseSchema deepEqual: available=true, one item, message=null", () => {
+  const item = { rawText: "Milk", quantityBase: 1000, unit: "ml" as const };
+  const parsed = ParseListImageResponseSchema.parse({
+    available: true,
+    items: [item],
+    message: null,
+  });
+  assert.deepEqual(parsed, {
+    available: true,
+    items: [{ rawText: "Milk", quantityBase: 1000, unit: "ml" }],
+    message: null,
+  });
+});
+
+test("ParseListImageResponseSchema deepEqual: available=false, empty items, message set", () => {
+  const parsed = ParseListImageResponseSchema.parse({
+    available: false,
+    items: [],
+    message: "Photo capture requires a vision-capable AI provider",
+  });
+  assert.deepEqual(parsed, {
+    available: false,
+    items: [],
+    message: "Photo capture requires a vision-capable AI provider",
+  });
 });

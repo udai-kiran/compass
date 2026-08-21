@@ -162,6 +162,33 @@ function normalizeItem(item: z.infer<typeof ModelItemSchema>): ParsedShoppingIte
   return { rawText, quantityBase: null, unit: null };
 }
 
+// ─── Shared turn→items helper (task 9.5) ─────────────────────────────────────
+
+/**
+ * Convert one assistant turn into a validated, normalized, blank-filtered
+ * `ParsedShoppingItem[]`. Combines `parseItemsFromTurn` + normalize + filter.
+ *
+ * Reused by both `parseListText` (text path) and `parseListImage` (vision path)
+ * so the blank-name blocking fix and quantity normalization are shared.
+ *
+ * Returns `[]` on any parse/validation failure — callers decide the message.
+ * Pure — no I/O, no side effects. Exported for the image service to import.
+ */
+export function itemsFromTurn(turn: ChatTurn, structured: boolean): ParsedShoppingItem[] {
+  const modelOutput = parseItemsFromTurn(turn, structured);
+
+  if (modelOutput === null || modelOutput.items.length === 0) {
+    return [];
+  }
+
+  // BLOCKING FIX (iter2): drop items whose rawText is empty after trim.
+  const items = modelOutput.items
+    .map(normalizeItem)
+    .filter((item) => item.rawText.length > 0);
+
+  return items;
+}
+
 // ─── Orchestrator ─────────────────────────────────────────────────────────────
 
 export type ParseListTextResult = z.infer<typeof ParseListTextResponseSchema>;
@@ -212,24 +239,7 @@ export async function parseListText(
 
   // CATCH ONLY the parse/interpret/normalize step.
   try {
-    const modelOutput = parseItemsFromTurn(turn, structured);
-
-    if (modelOutput === null || modelOutput.items.length === 0) {
-      return {
-        available: true,
-        items: [],
-        rawInput,
-        message: "Could not read any items from the text",
-      };
-    }
-
-    // BLOCKING FIX (iter2): drop items whose rawText is empty after trim.
-    // A whitespace-only model name (e.g. "   ") passes z.string().min(1) but
-    // normalizes to rawText:"", which violates ParsedShoppingItemSchema and
-    // would 500 on response validation. Filter them here, after normalize.
-    const items = modelOutput.items
-      .map(normalizeItem)
-      .filter((item) => item.rawText.length > 0);
+    const items = itemsFromTurn(turn, structured);
 
     if (items.length === 0) {
       return {

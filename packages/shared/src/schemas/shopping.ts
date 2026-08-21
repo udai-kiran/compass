@@ -376,3 +376,25 @@ export const ParseListTextResponseSchema = z.object({
   message: z.string().nullable(),
 });
 export type ParseListTextResponse = z.infer<typeof ParseListTextResponseSchema>;
+
+// ─── Photo list capture contracts (task 9.5) ─────────────────────────────────
+
+/**
+ * Response body for POST /api/shopping/parse-image.
+ *
+ * - `available`: false when the user has no AI provider configured or the
+ *   provider does not support vision.
+ * - `items`: zero or more candidate rows (empty on bad model output or
+ *   unreadable photo — never a 500).
+ * - `message`: human-readable explanation when `available` is false or items
+ *   is empty; null when items were successfully extracted.
+ *
+ * NO `storageKey` field — the image is transient (stored briefly for the AI
+ * call then deleted), so there is nothing for the client to reference.
+ */
+export const ParseListImageResponseSchema = z.object({
+  available: z.boolean(),
+  items: z.array(ParsedShoppingItemSchema),
+  message: z.string().nullable(),
+});
+export type ParseListImageResponse = z.infer<typeof ParseListImageResponseSchema>;

@@ -9,6 +9,7 @@ import { AiDisabledError, type AiProvider } from "./types.ts";
 export const NullProvider: AiProvider = {
   name: "none",
   enabled: false,
+  supportsVision: false,
   async suggestCategories() {
     throw new AiDisabledError();
   },

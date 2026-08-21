@@ -440,6 +440,7 @@ test("postings-pr-e-parity: PE5 — suggestCategoriesFor passes correct transact
   const fakeAi: AiProvider = {
     name: "fake",
     enabled: true,
+    supportsVision: false,
     suggestCategories: async (input) => {
       for (const txn of input.transactions) {
         capturedTxns.push({ id: txn.id, amountPaise: txn.amountPaise });

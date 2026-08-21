@@ -129,6 +129,7 @@
 │   ├── /match (GET, HEAD)
 │   └── /:id (GET, HEAD, PUT, DELETE)
 ├── /api/shopping/parse-text (POST)
+├── /api/shopping/parse-image (POST)
 ├── /api/splits/:id (GET, HEAD, PATCH, DELETE)
 ├── /api/user-tasks (GET, HEAD, POST)
 │   └── /:id (GET, HEAD, PATCH, DELETE)

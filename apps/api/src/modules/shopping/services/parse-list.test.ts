@@ -61,10 +61,12 @@ function makeToolCall(name: string, input: unknown): ToolCall {
 function makeStubProvider(opts: {
   name: string;
   onChat: (req: ChatRequest) => Promise<ChatTurn>;
+  supportsVision?: boolean;
 }): AiProvider {
   return {
     name: opts.name,
     enabled: true,
+    supportsVision: opts.supportsVision ?? false,
     chat: opts.onChat,
     suggestCategories: async () => [],
     generateSummary: async () => "",

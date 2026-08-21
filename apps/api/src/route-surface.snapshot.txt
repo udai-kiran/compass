@@ -318,6 +318,7 @@ POST /api/shopping/catalog
 POST /api/shopping/lists
 POST /api/shopping/lists/:id/items
 POST /api/shopping/lists/:listId/items/:itemId/canonicalize
+POST /api/shopping/parse-image
 POST /api/shopping/parse-text
 POST /api/sips
 POST /api/sips/:id/installments

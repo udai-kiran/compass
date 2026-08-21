@@ -5,6 +5,7 @@ import {
   assertToolChoiceValid,
   assertImagesValid,
   CategorySuggestionsSchema,
+  modelSupportsVision,
   type AiObserver,
   type AiProvider,
   type ChatRequest,
@@ -71,6 +72,7 @@ export function createOpenAiCompatProvider(config: OpenAiCompatConfig): AiProvid
   return {
     name: config.name,
     enabled: true,
+    supportsVision: modelSupportsVision(config.model),
 
     async suggestCategories(input: SuggestCategoriesInput): Promise<CategorySuggestion[]> {
       if (input.transactions.length === 0) return [];

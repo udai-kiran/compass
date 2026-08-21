@@ -250,6 +250,37 @@ export interface ChatTurn {
 }
 
 // ---------------------------------------------------------------------------
+// Vision capability helper (task 9.5)
+// ---------------------------------------------------------------------------
+
+/**
+ * Conservative allowlist: returns true only if the lowercased model name
+ * matches a known vision family. Unknown / text-only models (e.g.
+ * "deepseek-chat") return false — they would error on image input, and we
+ * gate before ever calling chat() with an image.
+ *
+ * Allowlist families: gpt-4o, gpt-4.1, gpt-4-turbo, claude-3, claude-4,
+ * llava, -vl suffix, qwen2-vl, pixtral. Bare "claude", "gemini", and the
+ * bare "vision" token are intentionally excluded — they cause false-positives
+ * on text-only models (claude-2, claude-instant, vision-benchmark-*).
+ * Exported so openai-compat.ts and tests can use it.
+ */
+export function modelSupportsVision(model: string): boolean {
+  const m = model.toLowerCase();
+  return (
+    m.includes("gpt-4o") ||
+    m.includes("gpt-4.1") ||
+    m.includes("gpt-4-turbo") ||
+    m.includes("claude-3") ||
+    m.includes("claude-4") ||
+    m.includes("llava") ||
+    m.includes("-vl") ||
+    m.includes("qwen2-vl") ||
+    m.includes("pixtral")
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Provider interface
 // ---------------------------------------------------------------------------
 
@@ -258,6 +289,13 @@ export interface AiProvider {
   readonly name: string;
   /** false only for the NullProvider. */
   readonly enabled: boolean;
+  /**
+   * True when the provider and its configured model can handle image blocks in
+   * a user message. Gates the photo-capture path (task 9.5): if false,
+   * `parseListImage` returns a graceful "not available" message without calling
+   * chat() or touching storage.
+   */
+  readonly supportsVision: boolean;
   suggestCategories(input: SuggestCategoriesInput): Promise<CategorySuggestion[]>;
   generateSummary(input: SummaryInput): Promise<string>;
   chat(request: ChatRequest): Promise<ChatTurn>;
