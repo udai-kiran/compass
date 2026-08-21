@@ -140,8 +140,8 @@ Phase 4 and 5 are **extensions of real working code**, not greenfield. Verified 
 | 7.4 | [Rebalancing & tax-cost panel](./07.04-rebalancing-ui.md) 🎨 | 7 — Planning surface | done |
 | — | **↓ 2.3.0** | | |
 | 8.1 | [Vision support in packages/ai](./08.01-ai-vision-support.md) | 8 — Vision | done |
-| 9.1 | [Shopping schema + shared contracts](./09.01-shopping-schema.md) | 9 — Shopping core | in-progress |
-| 9.2 | [Shopping lists CRUD + API](./09.02-lists-crud.md) | 9 — Shopping core | todo |
+| 9.1 | [Shopping schema + shared contracts](./09.01-shopping-schema.md) | 9 — Shopping core | done |
+| 9.2 | [Shopping lists CRUD + API](./09.02-lists-crud.md) | 9 — Shopping core | in-progress |
 | 9.3 | [Catalog canonicalization + unit normalization](./09.03-catalog-canonicalization.md) | 9 — Shopping core | todo |
 | 9.4 | [Paste-text list capture](./09.04-paste-text-capture.md) | 9 — Shopping core | todo |
 | 9.5 | [Photo list capture](./09.05-photo-capture.md) | 9 — Shopping core | todo |

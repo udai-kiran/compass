@@ -20,6 +20,8 @@ DELETE /api/merchant-rules/:id
 DELETE /api/recurring/:id
 DELETE /api/resources/:id
 DELETE /api/sharing-grants/:id
+DELETE /api/shopping/lists/:id
+DELETE /api/shopping/lists/:id/items/:itemId
 DELETE /api/sips/:id
 DELETE /api/sips/:id/installments/link/:transactionId
 DELETE /api/splits/:id
@@ -114,6 +116,8 @@ GET /api/retirement/:accountId/details
 GET /api/search
 GET /api/search/recent
 GET /api/sharing-grants
+GET /api/shopping/lists
+GET /api/shopping/lists/:id
 GET /api/shopping/units
 GET /api/sips
 GET /api/sips/:id/installment-candidates
@@ -215,6 +219,8 @@ HEAD /api/retirement/:accountId/details
 HEAD /api/search
 HEAD /api/search/recent
 HEAD /api/sharing-grants
+HEAD /api/shopping/lists
+HEAD /api/shopping/lists/:id
 HEAD /api/shopping/units
 HEAD /api/sips
 HEAD /api/sips/:id/installment-candidates
@@ -301,6 +307,8 @@ POST /api/notifications/read-all
 POST /api/recurring
 POST /api/resources
 POST /api/sharing-grants
+POST /api/shopping/lists
+POST /api/shopping/lists/:id/items
 POST /api/sips
 POST /api/sips/:id/installments
 POST /api/sips/:id/installments/link
@@ -332,4 +340,7 @@ PUT /api/notification-prefs
 PUT /api/profile
 PUT /api/projection-settings
 PUT /api/retirement/:accountId/details
+PUT /api/shopping/lists/:id
+PUT /api/shopping/lists/:id/items/:itemId
+PUT /api/shopping/lists/:id/items/reorder
 PUT /api/transactions/:id/splits

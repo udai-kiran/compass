@@ -169,3 +169,76 @@ export const HabitProfileSchema = z.object({
   { message: "consumptionBasePerMonth and unit must both be set or both be null" },
 );
 export type HabitProfile = z.infer<typeof HabitProfileSchema>;
+
+// ─── Shopping-list CRUD contracts (task 9.2) ─────────────────────────────────
+
+/** Create a new shopping list. */
+export const CreateShoppingListSchema = z.object({
+  /** 1–120 characters, trimmed, non-empty. */
+  name: z.string().min(1).max(120).trim().refine((v) => v.length > 0, { message: "name must not be blank after trimming" }),
+  /** Optional free-text note, max 1000 characters. */
+  note: z.string().max(1000).nullable().default(null),
+});
+export type CreateShoppingList = z.input<typeof CreateShoppingListSchema>;
+
+/**
+ * PUT (full replace) update of a shopping list. Every field is REQUIRED —
+ * NO .default() — so an omitted field is a 400 (no preserve-on-omission).
+ */
+export const UpdateShoppingListSchema = z.object({
+  name: z.string().min(1).max(120).trim().refine((v) => v.length > 0, { message: "name must not be blank after trimming" }),
+  note: z.string().max(1000).nullable(),
+  status: ShoppingListStatusSchema,
+});
+export type UpdateShoppingList = z.input<typeof UpdateShoppingListSchema>;
+
+/** Add a new item to a shopping list. */
+export const CreateShoppingListItemSchema = z.object({
+  /** Verbatim user text, 1–200 characters, trimmed non-empty. */
+  rawText: z.string().min(1).max(200).trim().refine((v) => v.length > 0, { message: "rawText must not be blank after trimming" }),
+  /** Optional link to a catalog item the user owns. */
+  catalogItemId: z.uuid().nullable().default(null),
+  /** Quantity in base units (g / ml / piece). Must be paired with unit. */
+  quantityBase: quantityField().nullable().default(null),
+  /** Unit for the quantity. Must be paired with quantityBase. */
+  unit: NormalizedUnitSchema.nullable().default(null),
+}).refine(
+  (v) => (v.quantityBase === null) === (v.unit === null),
+  { message: "quantityBase and unit must both be set or both be null" },
+);
+export type CreateShoppingListItem = z.input<typeof CreateShoppingListItemSchema>;
+
+/**
+ * PUT (full replace) update of a shopping list item. Every field is REQUIRED —
+ * NO .default() — so an omitted field is a 400 (no preserve-on-omission).
+ */
+export const UpdateShoppingListItemSchema = z.object({
+  rawText: z.string().min(1).max(200).trim().refine((v) => v.length > 0, { message: "rawText must not be blank after trimming" }),
+  catalogItemId: z.uuid().nullable(),
+  quantityBase: quantityField().nullable(),
+  unit: NormalizedUnitSchema.nullable(),
+  status: ShoppingListItemStatusSchema,
+}).refine(
+  (v) => (v.quantityBase === null) === (v.unit === null),
+  { message: "quantityBase and unit must both be set or both be null" },
+);
+export type UpdateShoppingListItem = z.input<typeof UpdateShoppingListItemSchema>;
+
+/**
+ * Reorder the items of a shopping list. `orderedIds` must be EXACTLY the list's
+ * current item ids — same cardinality, no duplicates, no foreign/missing ids.
+ * Duplicate uuids are rejected at the Zod boundary.
+ */
+export const ReorderItemsSchema = z.object({
+  orderedIds: z.array(z.uuid()),
+}).refine(
+  (v) => new Set(v.orderedIds).size === v.orderedIds.length,
+  { message: "orderedIds must not contain duplicate ids", path: ["orderedIds"] },
+);
+export type ReorderItems = z.input<typeof ReorderItemsSchema>;
+
+/** A shopping list together with its ordered items (response shape for GET /lists/:id). */
+export const ShoppingListWithItemsSchema = ShoppingListSchema.extend({
+  items: z.array(ShoppingListItemSchema),
+});
+export type ShoppingListWithItems = z.infer<typeof ShoppingListWithItemsSchema>;
