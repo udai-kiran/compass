@@ -22,3 +22,4 @@ export * from "./schemas/user-tasks.ts";
 export * from "./schemas/household.ts";
 export * from "./schemas/planning.ts";
 export * from "./schemas/credit.ts";
+export * from "./schemas/shopping.ts";

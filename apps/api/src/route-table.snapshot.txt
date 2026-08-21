@@ -118,6 +118,7 @@
 │       └── /installment-candidates (GET, HEAD)
 ├── /api/sharing-grants (POST, GET, HEAD)
 │   └── /:id (DELETE)
+├── /api/shopping/units (GET, HEAD)
 ├── /api/splits/:id (GET, HEAD, PATCH, DELETE)
 ├── /api/user-tasks (GET, HEAD, POST)
 │   └── /:id (GET, HEAD, PATCH, DELETE)

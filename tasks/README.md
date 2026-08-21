@@ -8,7 +8,7 @@ Tasks marked 🎨 carry `ui: true` in their frontmatter and are written to be ex
 
 **How these get built: [TDD.md](./TDD.md).** Every acceptance-criterion checkbox is a test written *before* the code that satisfies it — tick the box only once its test exists and passes. Money invariants get property tests, not example tests; refactors get characterization tests written before the move.
 
-**Currently at `v3.1.2`.** v2.x tags (v2.0.0-v2.8.17) were incremental releases during the module migration and postings work. Themed releases resume at v3.x. See [REVAMP.md](./REVAMP.md) for the architectural critique and the Shopping Intelligence pillar.
+**Currently at `v3.2.0`.** v2.x tags (v2.0.0-v2.8.17) were incremental releases during the module migration and postings work. Themed releases resume at v3.x. See [REVAMP.md](./REVAMP.md) for the architectural critique and the Shopping Intelligence pillar.
 
 ## Release roadmap
 
@@ -123,24 +123,24 @@ Phase 4 and 5 are **extensions of real working code**, not greenfield. Verified 
 | 4.7 | [Per-record sharing controls](./04.07-sharing-controls-ui.md) 🎨 | 4 — Household & Split | done |
 | 4.8 | [Split modal, balances & settle-up](./04.08-split-modal-ui.md) 🎨 | 4 — Household & Split | done |
 | — | **↓ 2.2.0** | | |
-| 5.1 | [Goal glide-path roadmap (forward path)](./05.01-goal-glide-path-roadmap.md) | 5 — Goal roadmap & instruments | todo |
-| 5.2 | [Instrument rules registry](./05.02-instrument-rules-registry.md) | 5 — Goal roadmap & instruments | todo |
-| 5.3 | [Instrument-category guidance](./05.03-instrument-guidance.md) | 5 — Goal roadmap & instruments | todo |
-| 5.4 | [AI goal roadmap narrative](./05.04-ai-roadmap-narrative.md) | 5 — Goal roadmap & instruments | todo |
-| 6.1 | [Income & investable-surplus model](./06.01-income-surplus-model.md) | 6 — Income allocation & rebalancing | todo |
-| 6.2 | [Card statement-payment & revolving-debt detection](./06.02-card-debt-detection.md) | 6 — Income allocation & rebalancing | todo |
-| 6.3 | [Data-completeness & reconciliation health](./06.03-data-completeness.md) | 6 — Income allocation & rebalancing | todo |
-| 6.4 | [Multi-goal allocation engine](./06.04-multi-goal-allocation.md) | 6 — Income allocation & rebalancing | todo |
-| 6.5 | [Income adequacy & lever advisor](./06.05-income-adequacy-advisor.md) | 6 — Income allocation & rebalancing | todo |
-| 6.6 | [Actionable rebalancing plan](./06.06-rebalancing-plan.md) | 6 — Income allocation & rebalancing | todo |
-| 6.7 | [Tax-aware rebalancing](./06.07-tax-aware-rebalancing.md) | 6 — Income allocation & rebalancing | todo |
-| 7.1 | [Goal roadmap timeline](./07.01-goal-roadmap-ui.md) 🎨 | 7 — Planning surface | todo |
-| 7.2 | [Instrument guidance panel](./07.02-instrument-guidance-ui.md) 🎨 | 7 — Planning surface | todo |
-| 7.3 | [Income allocation & lever advisor](./07.03-allocation-levers-ui.md) 🎨 | 7 — Planning surface | todo |
-| 7.4 | [Rebalancing & tax-cost panel](./07.04-rebalancing-ui.md) 🎨 | 7 — Planning surface | todo |
+| 5.1 | [Goal glide-path roadmap (forward path)](./05.01-goal-glide-path-roadmap.md) | 5 — Goal roadmap & instruments | done |
+| 5.2 | [Instrument rules registry](./05.02-instrument-rules-registry.md) | 5 — Goal roadmap & instruments | done |
+| 5.3 | [Instrument-category guidance](./05.03-instrument-guidance.md) | 5 — Goal roadmap & instruments | done |
+| 5.4 | [AI goal roadmap narrative](./05.04-ai-roadmap-narrative.md) | 5 — Goal roadmap & instruments | done |
+| 6.1 | [Income & investable-surplus model](./06.01-income-surplus-model.md) | 6 — Income allocation & rebalancing | done |
+| 6.2 | [Card statement-payment & revolving-debt detection](./06.02-card-debt-detection.md) | 6 — Income allocation & rebalancing | done |
+| 6.3 | [Data-completeness & reconciliation health](./06.03-data-completeness.md) | 6 — Income allocation & rebalancing | done |
+| 6.4 | [Multi-goal allocation engine](./06.04-multi-goal-allocation.md) | 6 — Income allocation & rebalancing | done |
+| 6.5 | [Income adequacy & lever advisor](./06.05-income-adequacy-advisor.md) | 6 — Income allocation & rebalancing | done |
+| 6.6 | [Actionable rebalancing plan](./06.06-rebalancing-plan.md) | 6 — Income allocation & rebalancing | done |
+| 6.7 | [Tax-aware rebalancing](./06.07-tax-aware-rebalancing.md) | 6 — Income allocation & rebalancing | done |
+| 7.1 | [Goal roadmap timeline](./07.01-goal-roadmap-ui.md) 🎨 | 7 — Planning surface | done |
+| 7.2 | [Instrument guidance panel](./07.02-instrument-guidance-ui.md) 🎨 | 7 — Planning surface | done |
+| 7.3 | [Income allocation & lever advisor](./07.03-allocation-levers-ui.md) 🎨 | 7 — Planning surface | done |
+| 7.4 | [Rebalancing & tax-cost panel](./07.04-rebalancing-ui.md) 🎨 | 7 — Planning surface | done |
 | — | **↓ 2.3.0** | | |
 | 8.1 | [Vision support in packages/ai](./08.01-ai-vision-support.md) | 8 — Vision | done |
-| 9.1 | [Shopping schema + shared contracts](./09.01-shopping-schema.md) | 9 — Shopping core | todo |
+| 9.1 | [Shopping schema + shared contracts](./09.01-shopping-schema.md) | 9 — Shopping core | in-progress |
 | 9.2 | [Shopping lists CRUD + API](./09.02-lists-crud.md) | 9 — Shopping core | todo |
 | 9.3 | [Catalog canonicalization + unit normalization](./09.03-catalog-canonicalization.md) | 9 — Shopping core | todo |
 | 9.4 | [Paste-text list capture](./09.04-paste-text-capture.md) | 9 — Shopping core | todo |

@@ -44,6 +44,8 @@ export const ALL_TABLES = [
   "holding_valuations", "sips", "holding_events", "net_worth_snapshots",
   "mailbox_accounts", "mailbox_credentials", "email_ingestions", "extracted_transactions",
   "statement_reconciliations", "ai_events",
+  "catalog_items", "price_sources", "shopping_lists", "shopping_list_items",
+  "price_observations", "pantry_items", "cart_drafts", "habit_profiles",
 ] as const;
 
 /** Tables that carry a user_id directly — scoped by that column in the export. */
@@ -66,6 +68,9 @@ export const USER_TABLES: Record<string, string> = {
   mailbox_accounts: "user_id", mailbox_credentials: "user_id",
   email_ingestions: "user_id", extracted_transactions: "user_id",
   statement_reconciliations: "user_id", ai_events: "user_id",
+  catalog_items: "user_id", price_sources: "user_id", shopping_lists: "user_id",
+  price_observations: "user_id", pantry_items: "user_id", cart_drafts: "user_id",
+  habit_profiles: "user_id",
 };
 
 /**
@@ -84,6 +89,7 @@ export const LINKED_TABLES: Record<string, { fk: string; parent: string; parentU
   policy_covered_persons: { fk: "policy_id", parent: "insurance_policies" },
   split_shares: { fk: "split_id", parent: "splits", parentUserCol: "created_by_user_id" },
   settlements: { fk: "household_id", parent: "households", parentUserCol: "created_by_user_id" },
+  shopping_list_items: { fk: "list_id", parent: "shopping_lists" },
 };
 
 /**
