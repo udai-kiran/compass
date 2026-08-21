@@ -314,3 +314,65 @@ export const CanonicalizeItemResponseSchema = z.object({
   match: CatalogMatchResultSchema,
 });
 export type CanonicalizeItemResponse = z.infer<typeof CanonicalizeItemResponseSchema>;
+
+// ─── Paste-text list capture contracts (task 9.4) ────────────────────────────
+
+/**
+ * One candidate item returned by the AI parse route. The client reviews these
+ * and then calls POST /lists/:id/items for each accepted item.
+ *
+ * `rawText` mirrors the item's name verbatim (1–200 chars, trimmed, non-empty).
+ * `quantityBase` / `unit` are always paired — both set or both null — matching
+ * the DB CHECK constraint and the `CreateShoppingListItemSchema` invariant.
+ */
+export const ParsedShoppingItemSchema = z
+  .object({
+    /** The item name verbatim from the model (1–200 chars, trimmed, non-empty). */
+    rawText: z
+      .string()
+      .min(1)
+      .max(200)
+      .trim()
+      .refine((v) => v.length > 0, { message: "rawText must not be blank after trimming" }),
+    /** Quantity in base units (g / ml / piece). Must be paired with unit. */
+    quantityBase: quantityField().nullable(),
+    /** Normalized unit. Must be paired with quantityBase. */
+    unit: NormalizedUnitSchema.nullable(),
+  })
+  .refine((v) => (v.quantityBase === null) === (v.unit === null), {
+    message: "quantityBase and unit must both be set or both be null",
+  });
+export type ParsedShoppingItem = z.infer<typeof ParsedShoppingItemSchema>;
+
+/**
+ * Request body for POST /api/shopping/parse-text.
+ * `sourceKind` selects the system prompt: "freetext" (default) or "recipe".
+ */
+export const ParseListTextRequestSchema = z.object({
+  /** The raw text to parse (1–4000 chars, trimmed, non-empty). */
+  text: z
+    .string()
+    .min(1)
+    .max(4000)
+    .trim()
+    .refine((v) => v.length > 0, { message: "text must not be blank after trimming" }),
+  /** Prompt variant. Default: "freetext". */
+  sourceKind: z.enum(["freetext", "recipe"]).default("freetext"),
+});
+export type ParseListTextRequest = z.input<typeof ParseListTextRequestSchema>;
+
+/**
+ * Response body for POST /api/shopping/parse-text.
+ *
+ * - `available`: false when the user has no AI provider configured.
+ * - `items`: zero or more candidate rows (empty on bad model output, never a 500).
+ * - `rawInput`: the original text echoed back for client-side replay.
+ * - `message`: human-readable explanation when `available` is false or items is empty.
+ */
+export const ParseListTextResponseSchema = z.object({
+  available: z.boolean(),
+  items: z.array(ParsedShoppingItemSchema),
+  rawInput: z.string(),
+  message: z.string().nullable(),
+});
+export type ParseListTextResponse = z.infer<typeof ParseListTextResponseSchema>;

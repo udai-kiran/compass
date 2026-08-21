@@ -21,7 +21,11 @@ import {
   UpdateCatalogItemSchema,
   CatalogMatchResultSchema,
   CanonicalizeItemResponseSchema,
+  ParsedShoppingItemSchema,
+  ParseListTextRequestSchema,
+  ParseListTextResponseSchema,
 } from "./shopping.ts";
+import { AiEventKindSchema } from "./ai-events.ts";
 
 const NOW = new Date().toISOString();
 const UUID = "00000000-0000-4000-a000-000000000001";
@@ -920,4 +924,131 @@ test("CatalogMatchResultSchema deepEqual: ambiguous round-trip", () => {
 test("CatalogMatchResultSchema deepEqual: none round-trip", () => {
   const parsed = CatalogMatchResultSchema.parse({ status: "none" });
   assert.deepEqual(parsed, { status: "none" });
+});
+
+// ── Task 9.4 — paste-text capture schemas ────────────────────────────────────
+
+test("ParsedShoppingItemSchema accepts rawText only (both quantity+unit null)", () => {
+  const r = ParsedShoppingItemSchema.safeParse({ rawText: "Milk", quantityBase: null, unit: null });
+  assert.equal(r.success, true);
+  if (r.success) {
+    assert.equal(r.data.rawText, "Milk");
+    assert.equal(r.data.quantityBase, null);
+    assert.equal(r.data.unit, null);
+  }
+});
+
+test("ParsedShoppingItemSchema accepts rawText + quantityBase + unit (all set)", () => {
+  const r = ParsedShoppingItemSchema.safeParse({ rawText: "Atta", quantityBase: 2000, unit: "g" });
+  assert.equal(r.success, true);
+});
+
+test("ParsedShoppingItemSchema rejects blank rawText", () => {
+  assert.equal(
+    ParsedShoppingItemSchema.safeParse({ rawText: "  ", quantityBase: null, unit: null }).success,
+    false,
+  );
+});
+
+test("ParsedShoppingItemSchema rejects rawText > 200 chars", () => {
+  assert.equal(
+    ParsedShoppingItemSchema.safeParse({ rawText: "a".repeat(201), quantityBase: null, unit: null }).success,
+    false,
+  );
+});
+
+test("ParsedShoppingItemSchema refine bites: quantity without unit is rejected", () => {
+  assert.equal(
+    ParsedShoppingItemSchema.safeParse({ rawText: "Rice", quantityBase: 500, unit: null }).success,
+    false,
+  );
+});
+
+test("ParsedShoppingItemSchema refine bites: unit without quantity is rejected", () => {
+  assert.equal(
+    ParsedShoppingItemSchema.safeParse({ rawText: "Rice", quantityBase: null, unit: "g" }).success,
+    false,
+  );
+});
+
+test("ParseListTextRequestSchema accepts text only (sourceKind defaults to freetext)", () => {
+  const r = ParseListTextRequestSchema.safeParse({ text: "2kg atta, milk 1L, 6 eggs" });
+  assert.equal(r.success, true);
+  if (r.success) {
+    assert.equal(r.data.text, "2kg atta, milk 1L, 6 eggs");
+    assert.equal(r.data.sourceKind, "freetext");
+  }
+});
+
+test("ParseListTextRequestSchema accepts sourceKind recipe", () => {
+  const r = ParseListTextRequestSchema.safeParse({ text: "Pasta carbonara recipe…", sourceKind: "recipe" });
+  assert.equal(r.success, true);
+  if (r.success) assert.equal(r.data.sourceKind, "recipe");
+});
+
+test("ParseListTextRequestSchema rejects blank text", () => {
+  assert.equal(ParseListTextRequestSchema.safeParse({ text: "  " }).success, false);
+});
+
+test("ParseListTextRequestSchema rejects text > 4000 chars", () => {
+  assert.equal(ParseListTextRequestSchema.safeParse({ text: "a".repeat(4001) }).success, false);
+});
+
+test("ParseListTextRequestSchema rejects unknown sourceKind", () => {
+  assert.equal(ParseListTextRequestSchema.safeParse({ text: "eggs", sourceKind: "photo" }).success, false);
+});
+
+test("ParseListTextResponseSchema deepEqual: available=true, one item, no message", () => {
+  const item = { rawText: "Milk", quantityBase: 1000, unit: "ml" as const };
+  const parsed = ParseListTextResponseSchema.parse({
+    available: true,
+    items: [item],
+    rawInput: "milk 1L",
+    message: null,
+  });
+  assert.deepEqual(parsed, {
+    available: true,
+    items: [{ rawText: "Milk", quantityBase: 1000, unit: "ml" }],
+    rawInput: "milk 1L",
+    message: null,
+  });
+});
+
+test("ParseListTextResponseSchema deepEqual: available=false, empty items, message set", () => {
+  const parsed = ParseListTextResponseSchema.parse({
+    available: false,
+    items: [],
+    rawInput: "some text",
+    message: "AI is not configured",
+  });
+  assert.deepEqual(parsed, {
+    available: false,
+    items: [],
+    rawInput: "some text",
+    message: "AI is not configured",
+  });
+});
+
+test("ParseListTextResponseSchema rejects item with quantity-without-unit", () => {
+  const r = ParseListTextResponseSchema.safeParse({
+    available: true,
+    items: [{ rawText: "Rice", quantityBase: 500, unit: null }],
+    rawInput: "rice 500g",
+    message: null,
+  });
+  assert.equal(r.success, false);
+});
+
+// ── AC5: AiEventKindSchema includes shopping_parse ────────────────────────────
+
+test("AC5: AiEventKindSchema includes 'shopping_parse' (task 9.4 enum addition)", () => {
+  const r = AiEventKindSchema.safeParse("shopping_parse");
+  assert.equal(r.success, true, "AiEventKindSchema must accept 'shopping_parse'");
+});
+
+test("AC5: AiEventKindSchema enum values include shopping_parse", () => {
+  assert.ok(
+    AiEventKindSchema.options.includes("shopping_parse"),
+    `Expected 'shopping_parse' in AiEventKindSchema.options; got: ${JSON.stringify(AiEventKindSchema.options)}`,
+  );
 });
