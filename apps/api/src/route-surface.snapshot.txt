@@ -114,6 +114,7 @@ GET /api/retirement/:accountId/details
 GET /api/search
 GET /api/search/recent
 GET /api/sharing-grants
+GET /api/shopping/units
 GET /api/sips
 GET /api/sips/:id/installment-candidates
 GET /api/splits/:id
@@ -214,6 +215,7 @@ HEAD /api/retirement/:accountId/details
 HEAD /api/search
 HEAD /api/search/recent
 HEAD /api/sharing-grants
+HEAD /api/shopping/units
 HEAD /api/sips
 HEAD /api/sips/:id/installment-candidates
 HEAD /api/splits/:id

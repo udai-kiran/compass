@@ -56,6 +56,41 @@ test("sips precedes holding_events in ALL_TABLES (holding_events.sip_id FKs sips
   assert.ok(ALL_TABLES.indexOf("sips") < ALL_TABLES.indexOf("holding_events"));
 });
 
+test("shopping table parents precede their children in ALL_TABLES (FK ordering for restore)", () => {
+  // catalog_items is the parent of shopping_list_items, price_observations,
+  // pantry_items, and habit_profiles — all four FKs to catalog_item_id.
+  assert.ok(
+    ALL_TABLES.indexOf("catalog_items") < ALL_TABLES.indexOf("shopping_list_items"),
+    "catalog_items must precede shopping_list_items (shopping_list_items.catalog_item_id FKs catalog_items)",
+  );
+  assert.ok(
+    ALL_TABLES.indexOf("catalog_items") < ALL_TABLES.indexOf("price_observations"),
+    "catalog_items must precede price_observations (price_observations.catalog_item_id FKs catalog_items)",
+  );
+  assert.ok(
+    ALL_TABLES.indexOf("catalog_items") < ALL_TABLES.indexOf("pantry_items"),
+    "catalog_items must precede pantry_items (pantry_items.catalog_item_id FKs catalog_items)",
+  );
+  assert.ok(
+    ALL_TABLES.indexOf("catalog_items") < ALL_TABLES.indexOf("habit_profiles"),
+    "catalog_items must precede habit_profiles (habit_profiles.catalog_item_id FKs catalog_items)",
+  );
+  // price_sources is the parent of price_observations and cart_drafts.
+  assert.ok(
+    ALL_TABLES.indexOf("price_sources") < ALL_TABLES.indexOf("price_observations"),
+    "price_sources must precede price_observations (price_observations.price_source_id FKs price_sources)",
+  );
+  assert.ok(
+    ALL_TABLES.indexOf("price_sources") < ALL_TABLES.indexOf("cart_drafts"),
+    "price_sources must precede cart_drafts (cart_drafts.price_source_id FKs price_sources)",
+  );
+  // shopping_lists is the parent of shopping_list_items.
+  assert.ok(
+    ALL_TABLES.indexOf("shopping_lists") < ALL_TABLES.indexOf("shopping_list_items"),
+    "shopping_lists must precede shopping_list_items (shopping_list_items.list_id FKs shopping_lists)",
+  );
+});
+
 test("the per-user export reconstructs every table (no coverage gaps)", () => {
   // Anything ALL_TABLES lists but neither USER_TABLES nor LINKED_TABLES scopes is
   // silently dropped from a user's export — exportGaps() names those. `users` is

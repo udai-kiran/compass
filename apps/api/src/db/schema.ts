@@ -5,12 +5,12 @@
  * `pgEnum()` definitions. All table/enum definitions live in one of:
  *
  *   - `./core-schema.ts`           — shared identity leaf (users)
- *   - `./shared/<layer>.ts`        — inter-module shared tables/enums (12 tables, 22 enums)
- *   - `../modules/<domain>/schema.ts` — domain-resident tables/enums (38 tables, 16 enums)
+ *   - `./shared/<layer>.ts`        — inter-module shared tables/enums (15 tables, 25 enums)
+ *   - `../modules/<domain>/schema.ts` — domain-resident tables/enums (50 tables, 22 enums)
  *
  * Drizzle Kit resolves the full schema graph from this single entry point
- * (configured in drizzle.config.ts). The export set is exactly 57 tables
- * (56 domain + users) and 42 enums, each exported exactly once.
+ * (configured in drizzle.config.ts). The export set is exactly 66 tables
+ * (65 domain + users) and 47 enums, each exported exactly once.
  */
 
 export { users } from "./core-schema.ts";
@@ -107,3 +107,19 @@ export {
   splitShares,
   settlements,
 } from "../modules/household/schema.ts";
+
+export {
+  catalogItems,
+  priceSources,
+  shoppingLists,
+  shoppingListItems,
+  priceObservations,
+  pantryItems,
+  cartDrafts,
+  habitProfiles,
+  shoppingListStatus,
+  shoppingListItemStatus,
+  normalizedUnit,
+  priceSourceKind,
+  cartDraftStatus,
+} from "../modules/shopping/schema.ts";
