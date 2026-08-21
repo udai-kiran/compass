@@ -48,6 +48,7 @@ function fakeAi(reply: string): AiProvider {
   return {
     name: "fake",
     enabled: true,
+    supportsVision: false,
     async suggestCategories() {
       return [];
     },
@@ -74,6 +75,7 @@ function recordingAi(turn: ChatTurn, name = "fake"): { ai: AiProvider; calls: Ch
     ai: {
       name,
       enabled: true,
+      supportsVision: false,
       async suggestCategories() {
         return [];
       },

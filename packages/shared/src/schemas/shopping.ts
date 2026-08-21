@@ -242,3 +242,159 @@ export const ShoppingListWithItemsSchema = ShoppingListSchema.extend({
   items: z.array(ShoppingListItemSchema),
 });
 export type ShoppingListWithItems = z.infer<typeof ShoppingListWithItemsSchema>;
+
+// ─── Catalog CRUD contracts (task 9.3) ───────────────────────────────────────
+
+/**
+ * Display units accepted by `convertToBaseQuantity` (user-facing input).
+ * Extends `NormalizedUnitSchema` with the higher-order display units `kg` and
+ * `litre` that map to base units `g` and `ml` respectively.
+ */
+export const DisplayUnitSchema = z.enum(["kg", "g", "litre", "ml", "piece"]);
+export type DisplayUnit = z.infer<typeof DisplayUnitSchema>;
+
+/** Create a new catalog item for the current user. */
+export const CreateCatalogItemSchema = z.object({
+  /** Canonical product name, 1–120 chars, trimmed. Must be unique per user (case-sensitive at DB level). */
+  canonicalName: z.string().min(1).max(120).trim().refine((v) => v.length > 0, {
+    message: "canonicalName must not be blank after trimming",
+  }),
+  /** Optional brand name, max 200 chars. */
+  brand: z.string().max(200).nullable().default(null),
+  /** Optional link to a ledger category (user-owned). Cross-owner FK is unenforced at DB level. */
+  categoryId: z.uuid().nullable().default(null),
+  /** Typical pack quantity in base units (g / ml / piece). Paired with unit. */
+  packQuantityBase: quantityField().nullable().default(null),
+  /** Normalized unit for packQuantityBase. Must be set iff packQuantityBase is set. */
+  unit: NormalizedUnitSchema.nullable().default(null),
+}).refine(
+  (v) => (v.packQuantityBase === null) === (v.unit === null),
+  { message: "packQuantityBase and unit must both be set or both be null" },
+);
+export type CreateCatalogItem = z.input<typeof CreateCatalogItemSchema>;
+
+/**
+ * PUT (full replace) update of a catalog item. Every field is REQUIRED —
+ * NO .default() — so an omitted field is a 400 (no preserve-on-omission).
+ */
+export const UpdateCatalogItemSchema = z.object({
+  canonicalName: z.string().min(1).max(120).trim().refine((v) => v.length > 0, {
+    message: "canonicalName must not be blank after trimming",
+  }),
+  brand: z.string().max(200).nullable(),
+  categoryId: z.uuid().nullable(),
+  packQuantityBase: quantityField().nullable(),
+  unit: NormalizedUnitSchema.nullable(),
+}).refine(
+  (v) => (v.packQuantityBase === null) === (v.unit === null),
+  { message: "packQuantityBase and unit must both be set or both be null" },
+);
+export type UpdateCatalogItem = z.input<typeof UpdateCatalogItemSchema>;
+
+/**
+ * Result of a catalog match attempt. Discriminated on `status`:
+ * - `matched`:   exactly one catalog item matched — auto-link is safe.
+ * - `ambiguous`: two or more items matched (case-insensitive) — never auto-resolved.
+ * - `none`:      no match — item remains a raw-text-only entry.
+ */
+export const CatalogMatchResultSchema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("matched"), catalogItemId: z.uuid() }),
+  z.object({ status: z.literal("ambiguous"), candidateIds: z.array(z.uuid()) }),
+  z.object({ status: z.literal("none") }),
+]);
+export type CatalogMatchResult = z.infer<typeof CatalogMatchResultSchema>;
+
+/**
+ * Response shape for POST /lists/:listId/items/:itemId/canonicalize.
+ * Always returns the (possibly updated) item and the match result, so callers
+ * can surface ambiguous candidates to the user without an extra GET.
+ */
+export const CanonicalizeItemResponseSchema = z.object({
+  item: ShoppingListItemSchema,
+  match: CatalogMatchResultSchema,
+});
+export type CanonicalizeItemResponse = z.infer<typeof CanonicalizeItemResponseSchema>;
+
+// ─── Paste-text list capture contracts (task 9.4) ────────────────────────────
+
+/**
+ * One candidate item returned by the AI parse route. The client reviews these
+ * and then calls POST /lists/:id/items for each accepted item.
+ *
+ * `rawText` mirrors the item's name verbatim (1–200 chars, trimmed, non-empty).
+ * `quantityBase` / `unit` are always paired — both set or both null — matching
+ * the DB CHECK constraint and the `CreateShoppingListItemSchema` invariant.
+ */
+export const ParsedShoppingItemSchema = z
+  .object({
+    /** The item name verbatim from the model (1–200 chars, trimmed, non-empty). */
+    rawText: z
+      .string()
+      .min(1)
+      .max(200)
+      .trim()
+      .refine((v) => v.length > 0, { message: "rawText must not be blank after trimming" }),
+    /** Quantity in base units (g / ml / piece). Must be paired with unit. */
+    quantityBase: quantityField().nullable(),
+    /** Normalized unit. Must be paired with quantityBase. */
+    unit: NormalizedUnitSchema.nullable(),
+  })
+  .refine((v) => (v.quantityBase === null) === (v.unit === null), {
+    message: "quantityBase and unit must both be set or both be null",
+  });
+export type ParsedShoppingItem = z.infer<typeof ParsedShoppingItemSchema>;
+
+/**
+ * Request body for POST /api/shopping/parse-text.
+ * `sourceKind` selects the system prompt: "freetext" (default) or "recipe".
+ */
+export const ParseListTextRequestSchema = z.object({
+  /** The raw text to parse (1–4000 chars, trimmed, non-empty). */
+  text: z
+    .string()
+    .min(1)
+    .max(4000)
+    .trim()
+    .refine((v) => v.length > 0, { message: "text must not be blank after trimming" }),
+  /** Prompt variant. Default: "freetext". */
+  sourceKind: z.enum(["freetext", "recipe"]).default("freetext"),
+});
+export type ParseListTextRequest = z.input<typeof ParseListTextRequestSchema>;
+
+/**
+ * Response body for POST /api/shopping/parse-text.
+ *
+ * - `available`: false when the user has no AI provider configured.
+ * - `items`: zero or more candidate rows (empty on bad model output, never a 500).
+ * - `rawInput`: the original text echoed back for client-side replay.
+ * - `message`: human-readable explanation when `available` is false or items is empty.
+ */
+export const ParseListTextResponseSchema = z.object({
+  available: z.boolean(),
+  items: z.array(ParsedShoppingItemSchema),
+  rawInput: z.string(),
+  message: z.string().nullable(),
+});
+export type ParseListTextResponse = z.infer<typeof ParseListTextResponseSchema>;
+
+// ─── Photo list capture contracts (task 9.5) ─────────────────────────────────
+
+/**
+ * Response body for POST /api/shopping/parse-image.
+ *
+ * - `available`: false when the user has no AI provider configured or the
+ *   provider does not support vision.
+ * - `items`: zero or more candidate rows (empty on bad model output or
+ *   unreadable photo — never a 500).
+ * - `message`: human-readable explanation when `available` is false or items
+ *   is empty; null when items were successfully extracted.
+ *
+ * NO `storageKey` field — the image is transient (stored briefly for the AI
+ * call then deleted), so there is nothing for the client to reference.
+ */
+export const ParseListImageResponseSchema = z.object({
+  available: z.boolean(),
+  items: z.array(ParsedShoppingItemSchema),
+  message: z.string().nullable(),
+});
+export type ParseListImageResponse = z.infer<typeof ParseListImageResponseSchema>;

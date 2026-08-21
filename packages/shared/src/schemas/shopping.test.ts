@@ -16,7 +16,17 @@ import {
   UpdateShoppingListItemSchema,
   ReorderItemsSchema,
   ShoppingListWithItemsSchema,
+  DisplayUnitSchema,
+  CreateCatalogItemSchema,
+  UpdateCatalogItemSchema,
+  CatalogMatchResultSchema,
+  CanonicalizeItemResponseSchema,
+  ParsedShoppingItemSchema,
+  ParseListTextRequestSchema,
+  ParseListTextResponseSchema,
+  ParseListImageResponseSchema,
 } from "./shopping.ts";
+import { AiEventKindSchema } from "./ai-events.ts";
 
 const NOW = new Date().toISOString();
 const UUID = "00000000-0000-4000-a000-000000000001";
@@ -695,4 +705,430 @@ test("CatalogItemSchema is composable via .extend(): a refined schema with an ex
     // internalCode omitted
   });
   assert.equal(rejectResult.success, false, "Extended schema must reject a row missing the extra field");
+});
+
+// ── Task 9.3 — catalog CRUD schemas ──────────────────────────────────────────
+
+test("DisplayUnitSchema accepts kg, g, litre, ml, piece and rejects invalid values", () => {
+  assert.equal(DisplayUnitSchema.safeParse("kg").success, true);
+  assert.equal(DisplayUnitSchema.safeParse("g").success, true);
+  assert.equal(DisplayUnitSchema.safeParse("litre").success, true);
+  assert.equal(DisplayUnitSchema.safeParse("ml").success, true);
+  assert.equal(DisplayUnitSchema.safeParse("piece").success, true);
+  assert.equal(DisplayUnitSchema.safeParse("liter").success, false);
+  assert.equal(DisplayUnitSchema.safeParse("kilogram").success, false);
+  assert.equal(DisplayUnitSchema.safeParse("").success, false);
+});
+
+test("CreateCatalogItemSchema accepts canonicalName only (all optionals default to null)", () => {
+  const r = CreateCatalogItemSchema.safeParse({ canonicalName: "Atta" });
+  assert.equal(r.success, true);
+  if (r.success) {
+    assert.equal(r.data.canonicalName, "Atta");
+    assert.equal(r.data.brand, null);
+    assert.equal(r.data.categoryId, null);
+    assert.equal(r.data.packQuantityBase, null);
+    assert.equal(r.data.unit, null);
+  }
+});
+
+test("CreateCatalogItemSchema rejects blank canonicalName", () => {
+  assert.equal(CreateCatalogItemSchema.safeParse({ canonicalName: "" }).success, false);
+  assert.equal(CreateCatalogItemSchema.safeParse({ canonicalName: "   " }).success, false);
+});
+
+test("CreateCatalogItemSchema rejects canonicalName > 120 chars", () => {
+  assert.equal(CreateCatalogItemSchema.safeParse({ canonicalName: "a".repeat(121) }).success, false);
+});
+
+test("CreateCatalogItemSchema enforces quantity/unit pairing", () => {
+  // One-sided quantity → reject.
+  assert.equal(
+    CreateCatalogItemSchema.safeParse({ canonicalName: "Rice", packQuantityBase: 5000 }).success,
+    false,
+  );
+  // One-sided unit → reject.
+  assert.equal(
+    CreateCatalogItemSchema.safeParse({ canonicalName: "Rice", unit: "g" }).success,
+    false,
+  );
+  // Both set → accept.
+  assert.equal(
+    CreateCatalogItemSchema.safeParse({ canonicalName: "Rice", packQuantityBase: 5000, unit: "g" }).success,
+    true,
+  );
+  // Both null → accept.
+  assert.equal(
+    CreateCatalogItemSchema.safeParse({ canonicalName: "Rice", packQuantityBase: null, unit: null }).success,
+    true,
+  );
+});
+
+test("UpdateCatalogItemSchema requires all five fields; omitting any is a 400", () => {
+  const full = {
+    canonicalName: "Atta",
+    brand: null as string | null,
+    categoryId: null as string | null,
+    packQuantityBase: null as number | null,
+    unit: null as string | null,
+  };
+  assert.equal(UpdateCatalogItemSchema.safeParse(full).success, true);
+  // Missing brand → reject.
+  const { brand: _b, ...noBrand } = full;
+  assert.equal(UpdateCatalogItemSchema.safeParse(noBrand).success, false);
+  // Missing categoryId → reject.
+  const { categoryId: _c, ...noCat } = full;
+  assert.equal(UpdateCatalogItemSchema.safeParse(noCat).success, false);
+  // Missing packQuantityBase → reject.
+  const { packQuantityBase: _q, ...noQty } = full;
+  assert.equal(UpdateCatalogItemSchema.safeParse(noQty).success, false);
+  // Missing unit → reject.
+  const { unit: _u, ...noUnit } = full;
+  assert.equal(UpdateCatalogItemSchema.safeParse(noUnit).success, false);
+});
+
+test("UpdateCatalogItemSchema enforces quantity/unit pairing", () => {
+  const base = { canonicalName: "Atta", brand: null, categoryId: null };
+  assert.equal(
+    UpdateCatalogItemSchema.safeParse({ ...base, packQuantityBase: 5000, unit: null }).success,
+    false,
+  );
+  assert.equal(
+    UpdateCatalogItemSchema.safeParse({ ...base, packQuantityBase: null, unit: "g" }).success,
+    false,
+  );
+  assert.equal(
+    UpdateCatalogItemSchema.safeParse({ ...base, packQuantityBase: 5000, unit: "g" }).success,
+    true,
+  );
+  assert.equal(
+    UpdateCatalogItemSchema.safeParse({ ...base, packQuantityBase: null, unit: null }).success,
+    true,
+  );
+});
+
+test("CatalogMatchResultSchema discriminated union on status", () => {
+  // matched
+  const m = CatalogMatchResultSchema.safeParse({ status: "matched", catalogItemId: UUID });
+  assert.equal(m.success, true);
+  // ambiguous
+  const a = CatalogMatchResultSchema.safeParse({ status: "ambiguous", candidateIds: [UUID, UUID2] });
+  assert.equal(a.success, true);
+  // none
+  const n = CatalogMatchResultSchema.safeParse({ status: "none" });
+  assert.equal(n.success, true);
+  // missing catalogItemId for matched → reject
+  assert.equal(CatalogMatchResultSchema.safeParse({ status: "matched" }).success, false);
+  // unknown status → reject
+  assert.equal(CatalogMatchResultSchema.safeParse({ status: "partial" }).success, false);
+});
+
+test("CanonicalizeItemResponseSchema accepts valid item + matched result", () => {
+  const item = {
+    id: UUID,
+    listId: UUID,
+    catalogItemId: UUID2,
+    rawText: "Atta 5kg",
+    quantityBase: null,
+    unit: null,
+    status: "pending" as const,
+    position: 0,
+    createdAt: NOW,
+    updatedAt: NOW,
+  };
+  const r = CanonicalizeItemResponseSchema.safeParse({
+    item,
+    match: { status: "matched", catalogItemId: UUID2 },
+  });
+  assert.equal(r.success, true);
+});
+
+test("CanonicalizeItemResponseSchema accepts item + none result", () => {
+  const item = {
+    id: UUID,
+    listId: UUID,
+    catalogItemId: null,
+    rawText: "Unknown item",
+    quantityBase: null,
+    unit: null,
+    status: "pending" as const,
+    position: 0,
+    createdAt: NOW,
+    updatedAt: NOW,
+  };
+  const r = CanonicalizeItemResponseSchema.safeParse({
+    item,
+    match: { status: "none" },
+  });
+  assert.equal(r.success, true);
+});
+
+// ── Task 9.3 deepEqual round-trips ───────────────────────────────────────────
+
+test("CreateCatalogItemSchema deepEqual: canonicalName only — all optionals null", () => {
+  const parsed = CreateCatalogItemSchema.parse({ canonicalName: "Whole Wheat Atta" });
+  assert.deepEqual(parsed, {
+    canonicalName: "Whole Wheat Atta",
+    brand: null,
+    categoryId: null,
+    packQuantityBase: null,
+    unit: null,
+  });
+});
+
+test("CreateCatalogItemSchema deepEqual: full create round-trip with quantity", () => {
+  const input = {
+    canonicalName: "Brown Rice",
+    brand: "India Gate",
+    categoryId: UUID,
+    packQuantityBase: 5000,
+    unit: "g" as const,
+  };
+  const parsed = CreateCatalogItemSchema.parse(input);
+  assert.deepEqual(parsed, input);
+});
+
+test("UpdateCatalogItemSchema deepEqual: full replace round-trip", () => {
+  const input = {
+    canonicalName: "Atta",
+    brand: null,
+    categoryId: null,
+    packQuantityBase: null,
+    unit: null,
+  };
+  const parsed = UpdateCatalogItemSchema.parse(input);
+  assert.deepEqual(parsed, input);
+});
+
+test("UpdateCatalogItemSchema deepEqual: full replace with all fields set", () => {
+  const input = {
+    canonicalName: "Sunflower Oil",
+    brand: "Saffola",
+    categoryId: UUID,
+    packQuantityBase: 1000,
+    unit: "ml" as const,
+  };
+  const parsed = UpdateCatalogItemSchema.parse(input);
+  assert.deepEqual(parsed, input);
+});
+
+test("CatalogMatchResultSchema deepEqual: matched round-trip", () => {
+  const parsed = CatalogMatchResultSchema.parse({ status: "matched", catalogItemId: UUID });
+  assert.deepEqual(parsed, { status: "matched", catalogItemId: UUID });
+});
+
+test("CatalogMatchResultSchema deepEqual: ambiguous round-trip", () => {
+  const parsed = CatalogMatchResultSchema.parse({ status: "ambiguous", candidateIds: [UUID, UUID2] });
+  assert.deepEqual(parsed, { status: "ambiguous", candidateIds: [UUID, UUID2] });
+});
+
+test("CatalogMatchResultSchema deepEqual: none round-trip", () => {
+  const parsed = CatalogMatchResultSchema.parse({ status: "none" });
+  assert.deepEqual(parsed, { status: "none" });
+});
+
+// ── Task 9.4 — paste-text capture schemas ────────────────────────────────────
+
+test("ParsedShoppingItemSchema accepts rawText only (both quantity+unit null)", () => {
+  const r = ParsedShoppingItemSchema.safeParse({ rawText: "Milk", quantityBase: null, unit: null });
+  assert.equal(r.success, true);
+  if (r.success) {
+    assert.equal(r.data.rawText, "Milk");
+    assert.equal(r.data.quantityBase, null);
+    assert.equal(r.data.unit, null);
+  }
+});
+
+test("ParsedShoppingItemSchema accepts rawText + quantityBase + unit (all set)", () => {
+  const r = ParsedShoppingItemSchema.safeParse({ rawText: "Atta", quantityBase: 2000, unit: "g" });
+  assert.equal(r.success, true);
+});
+
+test("ParsedShoppingItemSchema rejects blank rawText", () => {
+  assert.equal(
+    ParsedShoppingItemSchema.safeParse({ rawText: "  ", quantityBase: null, unit: null }).success,
+    false,
+  );
+});
+
+test("ParsedShoppingItemSchema rejects rawText > 200 chars", () => {
+  assert.equal(
+    ParsedShoppingItemSchema.safeParse({ rawText: "a".repeat(201), quantityBase: null, unit: null }).success,
+    false,
+  );
+});
+
+test("ParsedShoppingItemSchema refine bites: quantity without unit is rejected", () => {
+  assert.equal(
+    ParsedShoppingItemSchema.safeParse({ rawText: "Rice", quantityBase: 500, unit: null }).success,
+    false,
+  );
+});
+
+test("ParsedShoppingItemSchema refine bites: unit without quantity is rejected", () => {
+  assert.equal(
+    ParsedShoppingItemSchema.safeParse({ rawText: "Rice", quantityBase: null, unit: "g" }).success,
+    false,
+  );
+});
+
+test("ParseListTextRequestSchema accepts text only (sourceKind defaults to freetext)", () => {
+  const r = ParseListTextRequestSchema.safeParse({ text: "2kg atta, milk 1L, 6 eggs" });
+  assert.equal(r.success, true);
+  if (r.success) {
+    assert.equal(r.data.text, "2kg atta, milk 1L, 6 eggs");
+    assert.equal(r.data.sourceKind, "freetext");
+  }
+});
+
+test("ParseListTextRequestSchema accepts sourceKind recipe", () => {
+  const r = ParseListTextRequestSchema.safeParse({ text: "Pasta carbonara recipe…", sourceKind: "recipe" });
+  assert.equal(r.success, true);
+  if (r.success) assert.equal(r.data.sourceKind, "recipe");
+});
+
+test("ParseListTextRequestSchema rejects blank text", () => {
+  assert.equal(ParseListTextRequestSchema.safeParse({ text: "  " }).success, false);
+});
+
+test("ParseListTextRequestSchema rejects text > 4000 chars", () => {
+  assert.equal(ParseListTextRequestSchema.safeParse({ text: "a".repeat(4001) }).success, false);
+});
+
+test("ParseListTextRequestSchema rejects unknown sourceKind", () => {
+  assert.equal(ParseListTextRequestSchema.safeParse({ text: "eggs", sourceKind: "photo" }).success, false);
+});
+
+test("ParseListTextResponseSchema deepEqual: available=true, one item, no message", () => {
+  const item = { rawText: "Milk", quantityBase: 1000, unit: "ml" as const };
+  const parsed = ParseListTextResponseSchema.parse({
+    available: true,
+    items: [item],
+    rawInput: "milk 1L",
+    message: null,
+  });
+  assert.deepEqual(parsed, {
+    available: true,
+    items: [{ rawText: "Milk", quantityBase: 1000, unit: "ml" }],
+    rawInput: "milk 1L",
+    message: null,
+  });
+});
+
+test("ParseListTextResponseSchema deepEqual: available=false, empty items, message set", () => {
+  const parsed = ParseListTextResponseSchema.parse({
+    available: false,
+    items: [],
+    rawInput: "some text",
+    message: "AI is not configured",
+  });
+  assert.deepEqual(parsed, {
+    available: false,
+    items: [],
+    rawInput: "some text",
+    message: "AI is not configured",
+  });
+});
+
+test("ParseListTextResponseSchema rejects item with quantity-without-unit", () => {
+  const r = ParseListTextResponseSchema.safeParse({
+    available: true,
+    items: [{ rawText: "Rice", quantityBase: 500, unit: null }],
+    rawInput: "rice 500g",
+    message: null,
+  });
+  assert.equal(r.success, false);
+});
+
+// ── AC5: AiEventKindSchema includes shopping_parse ────────────────────────────
+
+test("AC5: AiEventKindSchema includes 'shopping_parse' (task 9.4 enum addition)", () => {
+  const r = AiEventKindSchema.safeParse("shopping_parse");
+  assert.equal(r.success, true, "AiEventKindSchema must accept 'shopping_parse'");
+});
+
+test("AC5: AiEventKindSchema enum values include shopping_parse", () => {
+  assert.ok(
+    AiEventKindSchema.options.includes("shopping_parse"),
+    `Expected 'shopping_parse' in AiEventKindSchema.options; got: ${JSON.stringify(AiEventKindSchema.options)}`,
+  );
+});
+
+// ── Task 9.5 — photo list capture schema ─────────────────────────────────────
+
+test("ParseListImageResponseSchema accepts available=true + items + message=null", () => {
+  const r = ParseListImageResponseSchema.safeParse({
+    available: true,
+    items: [{ rawText: "Atta", quantityBase: 2000, unit: "g" }],
+    message: null,
+  });
+  assert.equal(r.success, true);
+});
+
+test("ParseListImageResponseSchema accepts available=false + empty items + message string", () => {
+  const r = ParseListImageResponseSchema.safeParse({
+    available: false,
+    items: [],
+    message: "AI is not configured",
+  });
+  assert.equal(r.success, true);
+});
+
+test("ParseListImageResponseSchema rejects item with quantity-without-unit (refine propagated)", () => {
+  const r = ParseListImageResponseSchema.safeParse({
+    available: true,
+    items: [{ rawText: "Rice", quantityBase: 500, unit: null }],
+    message: null,
+  });
+  assert.equal(r.success, false);
+});
+
+test("ParseListImageResponseSchema rejects blank rawText in items", () => {
+  const r = ParseListImageResponseSchema.safeParse({
+    available: true,
+    items: [{ rawText: "", quantityBase: null, unit: null }],
+    message: null,
+  });
+  assert.equal(r.success, false);
+});
+
+test("ParseListImageResponseSchema does NOT have a storageKey field (B1 — image is transient)", () => {
+  // A response WITH storageKey must still parse (extra fields are stripped by Zod).
+  // The point is that ParseListImageResponseSchema has no storageKey field.
+  const r = ParseListImageResponseSchema.safeParse({
+    available: true,
+    items: [],
+    message: null,
+  });
+  assert.equal(r.success, true);
+  if (r.success) {
+    assert.ok(!("storageKey" in r.data), "parsed result must not contain storageKey");
+  }
+});
+
+test("ParseListImageResponseSchema deepEqual: available=true, one item, message=null", () => {
+  const item = { rawText: "Milk", quantityBase: 1000, unit: "ml" as const };
+  const parsed = ParseListImageResponseSchema.parse({
+    available: true,
+    items: [item],
+    message: null,
+  });
+  assert.deepEqual(parsed, {
+    available: true,
+    items: [{ rawText: "Milk", quantityBase: 1000, unit: "ml" }],
+    message: null,
+  });
+});
+
+test("ParseListImageResponseSchema deepEqual: available=false, empty items, message set", () => {
+  const parsed = ParseListImageResponseSchema.parse({
+    available: false,
+    items: [],
+    message: "Photo capture requires a vision-capable AI provider",
+  });
+  assert.deepEqual(parsed, {
+    available: false,
+    items: [],
+    message: "Photo capture requires a vision-capable AI provider",
+  });
 });

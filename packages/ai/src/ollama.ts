@@ -45,6 +45,7 @@ export function createOllamaProvider(config: OllamaConfig): AiProvider {
   return {
     name: "ollama",
     enabled: true,
+    supportsVision: false,
 
     async suggestCategories(input: SuggestCategoriesInput): Promise<CategorySuggestion[]> {
       if (input.transactions.length === 0) return [];

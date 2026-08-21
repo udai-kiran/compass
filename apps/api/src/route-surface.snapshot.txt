@@ -20,6 +20,7 @@ DELETE /api/merchant-rules/:id
 DELETE /api/recurring/:id
 DELETE /api/resources/:id
 DELETE /api/sharing-grants/:id
+DELETE /api/shopping/catalog/:id
 DELETE /api/shopping/lists/:id
 DELETE /api/shopping/lists/:id/items/:itemId
 DELETE /api/sips/:id
@@ -116,6 +117,9 @@ GET /api/retirement/:accountId/details
 GET /api/search
 GET /api/search/recent
 GET /api/sharing-grants
+GET /api/shopping/catalog
+GET /api/shopping/catalog/:id
+GET /api/shopping/catalog/match
 GET /api/shopping/lists
 GET /api/shopping/lists/:id
 GET /api/shopping/units
@@ -219,6 +223,9 @@ HEAD /api/retirement/:accountId/details
 HEAD /api/search
 HEAD /api/search/recent
 HEAD /api/sharing-grants
+HEAD /api/shopping/catalog
+HEAD /api/shopping/catalog/:id
+HEAD /api/shopping/catalog/match
 HEAD /api/shopping/lists
 HEAD /api/shopping/lists/:id
 HEAD /api/shopping/units
@@ -307,8 +314,12 @@ POST /api/notifications/read-all
 POST /api/recurring
 POST /api/resources
 POST /api/sharing-grants
+POST /api/shopping/catalog
 POST /api/shopping/lists
 POST /api/shopping/lists/:id/items
+POST /api/shopping/lists/:listId/items/:itemId/canonicalize
+POST /api/shopping/parse-image
+POST /api/shopping/parse-text
 POST /api/sips
 POST /api/sips/:id/installments
 POST /api/sips/:id/installments/link
@@ -340,6 +351,7 @@ PUT /api/notification-prefs
 PUT /api/profile
 PUT /api/projection-settings
 PUT /api/retirement/:accountId/details
+PUT /api/shopping/catalog/:id
 PUT /api/shopping/lists/:id
 PUT /api/shopping/lists/:id/items/:itemId
 PUT /api/shopping/lists/:id/items/reorder

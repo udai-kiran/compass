@@ -43,6 +43,13 @@
       "when": 1787264478734,
       "tag": "0005_late_centennial",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1787320776617,
+      "tag": "0006_right_rogue",
+      "breakpoints": true
     }
   ]
 }

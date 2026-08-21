@@ -1,6 +1,9 @@
 import type { FastifyInstance } from "fastify";
 import { shoppingUnitRoutes } from "./routes/units.ts";
 import { shoppingListRoutes } from "./routes/lists.ts";
+import { shoppingCatalogRoutes } from "./routes/catalog.ts";
+import { shoppingCaptureRoutes } from "./routes/capture.ts";
+import { shoppingCaptureImageRoutes } from "./routes/capture-image.ts";
 
 /**
  * `modules/shopping/` — Shopping Intelligence pillar (task 9.1). The first
@@ -16,4 +19,7 @@ import { shoppingListRoutes } from "./routes/lists.ts";
 export async function shoppingRoutes(app: FastifyInstance): Promise<void> {
   await app.register(shoppingUnitRoutes);
   await app.register(shoppingListRoutes);
+  await app.register(shoppingCatalogRoutes);
+  await app.register(shoppingCaptureRoutes);
+  await app.register(shoppingCaptureImageRoutes);
 }
