@@ -3,9 +3,16 @@
 Board task: [`tasks/09.02-lists-crud.md`](../09.02-lists-crud.md) · release 2.3.0 · depends 9.1 (`done`, merged PR #198).
 
 ## Status
-CODE COMPLETE & REVIEWED — DB-gated integration suite pending CI execution on push (not yet run;
-push not authorized). Locally-runnable gates green and seen. NOT marked fully COMPLETE because the
-integration tests execute only in CI and their output has not been observed.
+COMPLETE (2026-08-21). Merged PR #199 (`f3eb78f`); CI run `32463690075` = success. The final gate —
+DB-gated integration execution — is now OBSERVED: api test job 1241 tests / 1240 pass / 0 fail / 1
+pre-existing unrelated skip; `lists.route.test.ts` ran against real Postgres+Redis (DELETE-cascade
+test hit a live DB; zero `requireEnv` skips in the CI log). Evidence relayed from `gh run view
+32463690075 --log` (verification worker; note: worker declined to write verification-3.md, so this
+CI digest is the durable record).
+
+OPEN (release only, not a code defect): the `v3.2.0` tag points to `0398eb7` (task 9.1 merge, PR
+#198), which predates the 9.2 merge `f3eb78f`. 9.2 is on `main` and CI-green but is NOT in the
+v3.2.0 release images. Retag/rebuild is a user decision — flagged, not actioned.
 
 ### Final disposition (2026-08-21)
 - Production code: implemented; independently verified (verification-1) + Codex review-3 = correct on
