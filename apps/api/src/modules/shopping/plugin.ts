@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { shoppingUnitRoutes } from "./routes/units.ts";
+import { shoppingListRoutes } from "./routes/lists.ts";
 
 /**
  * `modules/shopping/` — Shopping Intelligence pillar (task 9.1). The first
@@ -14,4 +15,5 @@ import { shoppingUnitRoutes } from "./routes/units.ts";
  */
 export async function shoppingRoutes(app: FastifyInstance): Promise<void> {
   await app.register(shoppingUnitRoutes);
+  await app.register(shoppingListRoutes);
 }
