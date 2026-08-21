@@ -242,3 +242,75 @@ export const ShoppingListWithItemsSchema = ShoppingListSchema.extend({
   items: z.array(ShoppingListItemSchema),
 });
 export type ShoppingListWithItems = z.infer<typeof ShoppingListWithItemsSchema>;
+
+// ─── Catalog CRUD contracts (task 9.3) ───────────────────────────────────────
+
+/**
+ * Display units accepted by `convertToBaseQuantity` (user-facing input).
+ * Extends `NormalizedUnitSchema` with the higher-order display units `kg` and
+ * `litre` that map to base units `g` and `ml` respectively.
+ */
+export const DisplayUnitSchema = z.enum(["kg", "g", "litre", "ml", "piece"]);
+export type DisplayUnit = z.infer<typeof DisplayUnitSchema>;
+
+/** Create a new catalog item for the current user. */
+export const CreateCatalogItemSchema = z.object({
+  /** Canonical product name, 1–120 chars, trimmed. Must be unique per user (case-sensitive at DB level). */
+  canonicalName: z.string().min(1).max(120).trim().refine((v) => v.length > 0, {
+    message: "canonicalName must not be blank after trimming",
+  }),
+  /** Optional brand name, max 200 chars. */
+  brand: z.string().max(200).nullable().default(null),
+  /** Optional link to a ledger category (user-owned). Cross-owner FK is unenforced at DB level. */
+  categoryId: z.uuid().nullable().default(null),
+  /** Typical pack quantity in base units (g / ml / piece). Paired with unit. */
+  packQuantityBase: quantityField().nullable().default(null),
+  /** Normalized unit for packQuantityBase. Must be set iff packQuantityBase is set. */
+  unit: NormalizedUnitSchema.nullable().default(null),
+}).refine(
+  (v) => (v.packQuantityBase === null) === (v.unit === null),
+  { message: "packQuantityBase and unit must both be set or both be null" },
+);
+export type CreateCatalogItem = z.input<typeof CreateCatalogItemSchema>;
+
+/**
+ * PUT (full replace) update of a catalog item. Every field is REQUIRED —
+ * NO .default() — so an omitted field is a 400 (no preserve-on-omission).
+ */
+export const UpdateCatalogItemSchema = z.object({
+  canonicalName: z.string().min(1).max(120).trim().refine((v) => v.length > 0, {
+    message: "canonicalName must not be blank after trimming",
+  }),
+  brand: z.string().max(200).nullable(),
+  categoryId: z.uuid().nullable(),
+  packQuantityBase: quantityField().nullable(),
+  unit: NormalizedUnitSchema.nullable(),
+}).refine(
+  (v) => (v.packQuantityBase === null) === (v.unit === null),
+  { message: "packQuantityBase and unit must both be set or both be null" },
+);
+export type UpdateCatalogItem = z.input<typeof UpdateCatalogItemSchema>;
+
+/**
+ * Result of a catalog match attempt. Discriminated on `status`:
+ * - `matched`:   exactly one catalog item matched — auto-link is safe.
+ * - `ambiguous`: two or more items matched (case-insensitive) — never auto-resolved.
+ * - `none`:      no match — item remains a raw-text-only entry.
+ */
+export const CatalogMatchResultSchema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("matched"), catalogItemId: z.uuid() }),
+  z.object({ status: z.literal("ambiguous"), candidateIds: z.array(z.uuid()) }),
+  z.object({ status: z.literal("none") }),
+]);
+export type CatalogMatchResult = z.infer<typeof CatalogMatchResultSchema>;
+
+/**
+ * Response shape for POST /lists/:listId/items/:itemId/canonicalize.
+ * Always returns the (possibly updated) item and the match result, so callers
+ * can surface ambiguous candidates to the user without an extra GET.
+ */
+export const CanonicalizeItemResponseSchema = z.object({
+  item: ShoppingListItemSchema,
+  match: CatalogMatchResultSchema,
+});
+export type CanonicalizeItemResponse = z.infer<typeof CanonicalizeItemResponseSchema>;

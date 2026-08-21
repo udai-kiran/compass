@@ -16,6 +16,11 @@ import {
   UpdateShoppingListItemSchema,
   ReorderItemsSchema,
   ShoppingListWithItemsSchema,
+  DisplayUnitSchema,
+  CreateCatalogItemSchema,
+  UpdateCatalogItemSchema,
+  CatalogMatchResultSchema,
+  CanonicalizeItemResponseSchema,
 } from "./shopping.ts";
 
 const NOW = new Date().toISOString();
@@ -695,4 +700,224 @@ test("CatalogItemSchema is composable via .extend(): a refined schema with an ex
     // internalCode omitted
   });
   assert.equal(rejectResult.success, false, "Extended schema must reject a row missing the extra field");
+});
+
+// ── Task 9.3 — catalog CRUD schemas ──────────────────────────────────────────
+
+test("DisplayUnitSchema accepts kg, g, litre, ml, piece and rejects invalid values", () => {
+  assert.equal(DisplayUnitSchema.safeParse("kg").success, true);
+  assert.equal(DisplayUnitSchema.safeParse("g").success, true);
+  assert.equal(DisplayUnitSchema.safeParse("litre").success, true);
+  assert.equal(DisplayUnitSchema.safeParse("ml").success, true);
+  assert.equal(DisplayUnitSchema.safeParse("piece").success, true);
+  assert.equal(DisplayUnitSchema.safeParse("liter").success, false);
+  assert.equal(DisplayUnitSchema.safeParse("kilogram").success, false);
+  assert.equal(DisplayUnitSchema.safeParse("").success, false);
+});
+
+test("CreateCatalogItemSchema accepts canonicalName only (all optionals default to null)", () => {
+  const r = CreateCatalogItemSchema.safeParse({ canonicalName: "Atta" });
+  assert.equal(r.success, true);
+  if (r.success) {
+    assert.equal(r.data.canonicalName, "Atta");
+    assert.equal(r.data.brand, null);
+    assert.equal(r.data.categoryId, null);
+    assert.equal(r.data.packQuantityBase, null);
+    assert.equal(r.data.unit, null);
+  }
+});
+
+test("CreateCatalogItemSchema rejects blank canonicalName", () => {
+  assert.equal(CreateCatalogItemSchema.safeParse({ canonicalName: "" }).success, false);
+  assert.equal(CreateCatalogItemSchema.safeParse({ canonicalName: "   " }).success, false);
+});
+
+test("CreateCatalogItemSchema rejects canonicalName > 120 chars", () => {
+  assert.equal(CreateCatalogItemSchema.safeParse({ canonicalName: "a".repeat(121) }).success, false);
+});
+
+test("CreateCatalogItemSchema enforces quantity/unit pairing", () => {
+  // One-sided quantity → reject.
+  assert.equal(
+    CreateCatalogItemSchema.safeParse({ canonicalName: "Rice", packQuantityBase: 5000 }).success,
+    false,
+  );
+  // One-sided unit → reject.
+  assert.equal(
+    CreateCatalogItemSchema.safeParse({ canonicalName: "Rice", unit: "g" }).success,
+    false,
+  );
+  // Both set → accept.
+  assert.equal(
+    CreateCatalogItemSchema.safeParse({ canonicalName: "Rice", packQuantityBase: 5000, unit: "g" }).success,
+    true,
+  );
+  // Both null → accept.
+  assert.equal(
+    CreateCatalogItemSchema.safeParse({ canonicalName: "Rice", packQuantityBase: null, unit: null }).success,
+    true,
+  );
+});
+
+test("UpdateCatalogItemSchema requires all five fields; omitting any is a 400", () => {
+  const full = {
+    canonicalName: "Atta",
+    brand: null as string | null,
+    categoryId: null as string | null,
+    packQuantityBase: null as number | null,
+    unit: null as string | null,
+  };
+  assert.equal(UpdateCatalogItemSchema.safeParse(full).success, true);
+  // Missing brand → reject.
+  const { brand: _b, ...noBrand } = full;
+  assert.equal(UpdateCatalogItemSchema.safeParse(noBrand).success, false);
+  // Missing categoryId → reject.
+  const { categoryId: _c, ...noCat } = full;
+  assert.equal(UpdateCatalogItemSchema.safeParse(noCat).success, false);
+  // Missing packQuantityBase → reject.
+  const { packQuantityBase: _q, ...noQty } = full;
+  assert.equal(UpdateCatalogItemSchema.safeParse(noQty).success, false);
+  // Missing unit → reject.
+  const { unit: _u, ...noUnit } = full;
+  assert.equal(UpdateCatalogItemSchema.safeParse(noUnit).success, false);
+});
+
+test("UpdateCatalogItemSchema enforces quantity/unit pairing", () => {
+  const base = { canonicalName: "Atta", brand: null, categoryId: null };
+  assert.equal(
+    UpdateCatalogItemSchema.safeParse({ ...base, packQuantityBase: 5000, unit: null }).success,
+    false,
+  );
+  assert.equal(
+    UpdateCatalogItemSchema.safeParse({ ...base, packQuantityBase: null, unit: "g" }).success,
+    false,
+  );
+  assert.equal(
+    UpdateCatalogItemSchema.safeParse({ ...base, packQuantityBase: 5000, unit: "g" }).success,
+    true,
+  );
+  assert.equal(
+    UpdateCatalogItemSchema.safeParse({ ...base, packQuantityBase: null, unit: null }).success,
+    true,
+  );
+});
+
+test("CatalogMatchResultSchema discriminated union on status", () => {
+  // matched
+  const m = CatalogMatchResultSchema.safeParse({ status: "matched", catalogItemId: UUID });
+  assert.equal(m.success, true);
+  // ambiguous
+  const a = CatalogMatchResultSchema.safeParse({ status: "ambiguous", candidateIds: [UUID, UUID2] });
+  assert.equal(a.success, true);
+  // none
+  const n = CatalogMatchResultSchema.safeParse({ status: "none" });
+  assert.equal(n.success, true);
+  // missing catalogItemId for matched → reject
+  assert.equal(CatalogMatchResultSchema.safeParse({ status: "matched" }).success, false);
+  // unknown status → reject
+  assert.equal(CatalogMatchResultSchema.safeParse({ status: "partial" }).success, false);
+});
+
+test("CanonicalizeItemResponseSchema accepts valid item + matched result", () => {
+  const item = {
+    id: UUID,
+    listId: UUID,
+    catalogItemId: UUID2,
+    rawText: "Atta 5kg",
+    quantityBase: null,
+    unit: null,
+    status: "pending" as const,
+    position: 0,
+    createdAt: NOW,
+    updatedAt: NOW,
+  };
+  const r = CanonicalizeItemResponseSchema.safeParse({
+    item,
+    match: { status: "matched", catalogItemId: UUID2 },
+  });
+  assert.equal(r.success, true);
+});
+
+test("CanonicalizeItemResponseSchema accepts item + none result", () => {
+  const item = {
+    id: UUID,
+    listId: UUID,
+    catalogItemId: null,
+    rawText: "Unknown item",
+    quantityBase: null,
+    unit: null,
+    status: "pending" as const,
+    position: 0,
+    createdAt: NOW,
+    updatedAt: NOW,
+  };
+  const r = CanonicalizeItemResponseSchema.safeParse({
+    item,
+    match: { status: "none" },
+  });
+  assert.equal(r.success, true);
+});
+
+// ── Task 9.3 deepEqual round-trips ───────────────────────────────────────────
+
+test("CreateCatalogItemSchema deepEqual: canonicalName only — all optionals null", () => {
+  const parsed = CreateCatalogItemSchema.parse({ canonicalName: "Whole Wheat Atta" });
+  assert.deepEqual(parsed, {
+    canonicalName: "Whole Wheat Atta",
+    brand: null,
+    categoryId: null,
+    packQuantityBase: null,
+    unit: null,
+  });
+});
+
+test("CreateCatalogItemSchema deepEqual: full create round-trip with quantity", () => {
+  const input = {
+    canonicalName: "Brown Rice",
+    brand: "India Gate",
+    categoryId: UUID,
+    packQuantityBase: 5000,
+    unit: "g" as const,
+  };
+  const parsed = CreateCatalogItemSchema.parse(input);
+  assert.deepEqual(parsed, input);
+});
+
+test("UpdateCatalogItemSchema deepEqual: full replace round-trip", () => {
+  const input = {
+    canonicalName: "Atta",
+    brand: null,
+    categoryId: null,
+    packQuantityBase: null,
+    unit: null,
+  };
+  const parsed = UpdateCatalogItemSchema.parse(input);
+  assert.deepEqual(parsed, input);
+});
+
+test("UpdateCatalogItemSchema deepEqual: full replace with all fields set", () => {
+  const input = {
+    canonicalName: "Sunflower Oil",
+    brand: "Saffola",
+    categoryId: UUID,
+    packQuantityBase: 1000,
+    unit: "ml" as const,
+  };
+  const parsed = UpdateCatalogItemSchema.parse(input);
+  assert.deepEqual(parsed, input);
+});
+
+test("CatalogMatchResultSchema deepEqual: matched round-trip", () => {
+  const parsed = CatalogMatchResultSchema.parse({ status: "matched", catalogItemId: UUID });
+  assert.deepEqual(parsed, { status: "matched", catalogItemId: UUID });
+});
+
+test("CatalogMatchResultSchema deepEqual: ambiguous round-trip", () => {
+  const parsed = CatalogMatchResultSchema.parse({ status: "ambiguous", candidateIds: [UUID, UUID2] });
+  assert.deepEqual(parsed, { status: "ambiguous", candidateIds: [UUID, UUID2] });
+});
+
+test("CatalogMatchResultSchema deepEqual: none round-trip", () => {
+  const parsed = CatalogMatchResultSchema.parse({ status: "none" });
+  assert.deepEqual(parsed, { status: "none" });
 });
