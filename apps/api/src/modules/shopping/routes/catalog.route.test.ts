@@ -552,6 +552,13 @@ test("canonicalizeItem: unique match auto-links and bumps item+list updatedAt; a
     .items.at(-1)!;
   const beforeItem2UpdatedAt = item2.updatedAt;
 
+  // Re-capture list updatedAt AFTER addRes2 (which legitimately bumps it) and
+  // BEFORE the ambiguous canonicalize, so the assertion proves that canonicalize
+  // itself does not bump the list.
+  const listBeforeAmbig = JSON.parse(
+    (await app.inject({ method: "GET", url: `/api/shopping/lists/${list.id}`, cookies })).body,
+  ) as { updatedAt: string };
+
   // Capture catalog_items count before ambiguous canonicalize (AC4).
   const ambigCountBefore = (
     await app.db.select({ id: catalogItems.id }).from(catalogItems).where(eq(catalogItems.userId, userId))
@@ -568,11 +575,11 @@ test("canonicalizeItem: unique match auto-links and bumps item+list updatedAt; a
   assert.equal(ambigResult.item.catalogItemId, null, "catalogItemId must NOT be set on ambiguous");
   // item2 updatedAt must be unchanged on ambiguous.
   assert.equal(ambigResult.item.updatedAt, beforeItem2UpdatedAt, "item2 updatedAt unchanged on ambiguous");
-  // List updatedAt must be unchanged on ambiguous (still equal to the post-match value).
+  // List updatedAt must be unchanged on ambiguous (still equal to the pre-ambiguous value).
   const listAfterAmbig = JSON.parse(
     (await app.inject({ method: "GET", url: `/api/shopping/lists/${list.id}`, cookies })).body,
   ) as { updatedAt: string };
-  assert.equal(listAfterAmbig.updatedAt, listAfter.updatedAt, "list updatedAt unchanged on ambiguous");
+  assert.equal(listAfterAmbig.updatedAt, listBeforeAmbig.updatedAt, "list updatedAt unchanged on ambiguous");
   // AC4: count must not change on ambiguous canonicalize.
   assert.equal(
     (await app.db.select({ id: catalogItems.id }).from(catalogItems).where(eq(catalogItems.userId, userId))).length,

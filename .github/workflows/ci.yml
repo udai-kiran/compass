@@ -49,6 +49,7 @@ jobs:
           DATABASE_URL: postgres://compass:compass-ci@localhost:${{ job.services.postgres.ports['5432'] }}/compass_ci
           REDIS_URL: redis://localhost:${{ job.services.redis.ports['6379'] }}
           SESSION_SECRET: ci-only-session-secret-not-a-real-value-0123456789
+          RATE_LIMIT_DISABLED: "true"
       - run: npm run build -w apps/web
       - run: npm run build -w apps/docs
 
