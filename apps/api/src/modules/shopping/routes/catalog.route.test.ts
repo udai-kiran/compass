@@ -78,6 +78,7 @@ async function createTestUser(): Promise<string> {
 }
 
 async function cleanupUser(userId: string): Promise<void> {
+  await app.db.delete(categories).where(eq(categories.userId, userId));
   await app.db.delete(users).where(eq(users.id, userId));
 }
 
