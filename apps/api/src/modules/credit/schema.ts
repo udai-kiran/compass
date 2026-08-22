@@ -1,5 +1,5 @@
 /**
- * credit module — physically defines its 7 resident tables + 2 resident enums,
+ * credit module — physically defines its 9 resident tables + 4 resident enums,
  * re-exports shared tables/enums from the shared layers that this module's
  * services rely on, and imports the shared tables/enums its residents reference
  * via FK.
@@ -11,16 +11,21 @@
  * from `../../db/schema.ts` or from another module's schema.ts.
  */
 
+import { sql } from "drizzle-orm";
 import {
   bigint,
+  boolean,
+  check,
   date,
   index,
   integer,
+  jsonb,
   pgEnum,
   pgTable,
   primaryKey,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
 import { users } from "../../db/core-schema.ts";
@@ -275,3 +280,159 @@ export const emiDetails = pgTable("emi_details", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+export const cardOfferDiscountKind = pgEnum("card_offer_discount_kind", [
+  "flat",
+  "percentage",
+  "cashback",
+  "points",
+]);
+
+/**
+ * Credit-card offers and deals captured from emails or entered manually.
+ * `isReviewed` gates trust — only reviewed offers are returned by
+ * `getActiveOffers()`. `sourceEmailId` FK to `email_ingestions` (SET NULL on
+ * delete so the offer survives inbox cleanup). `discountRateBps` is in basis
+ * points (100 bps = 1%). `maxCapPaise` / `minSpendPaise` are nullable bigints
+ * so offers with no cap / no minimum spend threshold are represented cleanly.
+ */
+export const cardOffers = pgTable(
+  "card_offers",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    platform: text("platform").notNull(),
+    issuer: text("issuer").notNull(),
+    cardProductName: text("card_product_name"),
+    discountKind: cardOfferDiscountKind("discount_kind").notNull(),
+    discountRateBps: integer("discount_rate_bps").notNull(),
+    maxCapPaise: bigint("max_cap_paise", { mode: "number" }),
+    minSpendPaise: bigint("min_spend_paise", { mode: "number" }),
+    validFrom: timestamp("valid_from", { withTimezone: true }).notNull(),
+    validUntil: timestamp("valid_until", { withTimezone: true }).notNull(),
+    stackable: boolean("stackable").notNull().default(false),
+    isReviewed: boolean("is_reviewed").notNull().default(false),
+    sourceEmailId: uuid("source_email_id").references(() => emailIngestions.id, {
+      onDelete: "set null",
+    }),
+    raw: text("raw"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("card_offers_user_valid_idx").on(t.userId, t.validUntil),
+    check("card_offers_rate_nonneg", sql`"discount_rate_bps" >= 0`),
+    check("card_offers_cap_nonneg", sql`"max_cap_paise" IS NULL OR "max_cap_paise" >= 0`),
+    check("card_offers_min_spend_nonneg", sql`"min_spend_paise" IS NULL OR "min_spend_paise" >= 0`),
+  ],
+);
+
+// ---------------------------------------------------------------------------
+// Reward rules & point lots (task 10.5)
+// ---------------------------------------------------------------------------
+
+/**
+ * How reward points are redeemed. Determines the paise-per-point value for
+ * comparison and valuation.
+ */
+export const rewardRedemptionRoute = pgEnum("reward_redemption_route", [
+  "cashback",
+  "air_miles",
+  "catalogue",
+  "statement_credit",
+]);
+
+/**
+ * The window over which the accelerated-earn cap is cumulative.
+ */
+export const rewardCapPeriod = pgEnum("reward_cap_period", [
+  "per_transaction",
+  "monthly",
+  "statement_cycle",
+  "annual",
+]);
+
+/**
+ * Product-level earn rules for a credit card. One row per (user, cardProductName).
+ * `network` is nullable — null means "applies to any network" for that product name.
+ * `redemptionValues` is a JSONB record of { route → paisePerPoint }; routes absent
+ * from the map have no configured value (getPointValue returns null for them).
+ * The three `accel*` fields are all-or-nothing: either all set or all null.
+ * `mccExclusions` is an array of MCC codes for which earn is suppressed (returns 0).
+ */
+export const rewardRules = pgTable(
+  "reward_rules",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    cardProductName: text("card_product_name").notNull(),
+    /** null = applies to any network */
+    network: cardNetwork("network"),
+    /** base reward points earned per ₹100 (i.e. per 10000 paise) spent; 0 = no program */
+    baseEarnPer100: integer("base_earn_per_100").notNull().default(0),
+    /** MCC codes for which earn is suppressed (returns 0 points) */
+    mccExclusions: text("mcc_exclusions").array().notNull().default(sql`'{}'::text[]`),
+    /** multiplier applied to baseEarnPer100 for accelerated earn; all-or-nothing with cap fields */
+    accelEarnMultiplier: integer("accel_earn_multiplier"),
+    /** cumulative spend cap for the accelerated rate within the period, in paise */
+    accelEarnCapPaise: bigint("accel_earn_cap_paise", { mode: "number" }),
+    /** the period over which the accel cap is cumulative */
+    accelEarnCapPeriod: rewardCapPeriod("accel_earn_cap_period"),
+    /** Record<rewardRedemptionRoute, paisePerPoint> — absent key means no configured value */
+    redemptionValues: jsonb("redemption_values").notNull().default(sql`'{}'::jsonb`),
+    /** optional milestone spend threshold in paise for extra benefit */
+    milestoneSpendPaise: bigint("milestone_spend_paise", { mode: "number" }),
+    /** human-readable description of the milestone benefit */
+    milestoneBenefitDesc: text("milestone_benefit_desc"),
+    /** annual fee waiver threshold in paise; null = no waiver programme */
+    annualFeeWaiverSpendPaise: bigint("annual_fee_waiver_spend_paise", { mode: "number" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("reward_rules_user_product_idx").on(t.userId, t.cardProductName),
+    index("reward_rules_user_idx").on(t.userId),
+    check("reward_rules_base_earn_nonneg", sql`"base_earn_per_100" >= 0`),
+    // accel fields must all be set together or all null
+    check(
+      "reward_rules_accel_consistent",
+      sql`(
+        "accel_earn_multiplier" IS NULL AND "accel_earn_cap_paise" IS NULL AND "accel_earn_cap_period" IS NULL
+      ) OR (
+        "accel_earn_multiplier" IS NOT NULL AND "accel_earn_cap_paise" IS NOT NULL AND "accel_earn_cap_period" IS NOT NULL
+      )`,
+    ),
+  ],
+);
+
+/**
+ * Per-tranche expiry tracking for reward points. Additive metadata only — does
+ * NOT replace or interact with `reward_entries` (the signed point ledger).
+ * Each lot records points earned in one tranche (e.g. a signup bonus, a
+ * statement reward credit) with an optional expiry date.
+ */
+export const rewardPointLots = pgTable(
+  "reward_point_lots",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    cardDetailsAccountId: uuid("card_details_account_id")
+      .notNull()
+      .references(() => cardDetails.accountId, { onDelete: "cascade" }),
+    earnedAt: timestamp("earned_at", { withTimezone: true }).notNull(),
+    /** non-negative integer point count for this tranche */
+    points: integer("points").notNull(),
+    /** null = no expiry for this lot */
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    isRedeemed: boolean("is_redeemed").notNull().default(false),
+    description: text("description"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("reward_point_lots_user_expires_idx").on(t.userId, t.expiresAt),
+    index("reward_point_lots_user_idx").on(t.userId),
+    check("reward_point_lots_points_nonneg", sql`"points" >= 0`),
+  ],
+);

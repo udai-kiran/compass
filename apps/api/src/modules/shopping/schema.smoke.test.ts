@@ -11,16 +11,18 @@ import {
   pantryItems,
   cartDrafts,
   habitProfiles,
+  serviceabilityChecks,
   shoppingListStatus,
   shoppingListItemStatus,
   normalizedUnit,
   priceSourceKind,
   cartDraftStatus,
+  deliveryEtaBandEnum,
 } from "./schema.ts";
 
 // ── 1. Table name assertions ─────────────────────────────────────────────────
 
-test("all 8 shopping tables resolve to the expected Postgres names", () => {
+test("all 9 shopping tables resolve to the expected Postgres names", () => {
   assert.equal(getTableName(catalogItems), "catalog_items");
   assert.equal(getTableName(priceSources), "price_sources");
   assert.equal(getTableName(shoppingLists), "shopping_lists");
@@ -29,11 +31,12 @@ test("all 8 shopping tables resolve to the expected Postgres names", () => {
   assert.equal(getTableName(pantryItems), "pantry_items");
   assert.equal(getTableName(cartDrafts), "cart_drafts");
   assert.equal(getTableName(habitProfiles), "habit_profiles");
+  assert.equal(getTableName(serviceabilityChecks), "serviceability_checks");
 });
 
 // ── 2. Every _paise column has Drizzle columnType PgBigInt53 ─────────────────
 
-test("every _paise column across all 8 tables has columnType PgBigInt53", () => {
+test("every _paise column across all 9 tables has columnType PgBigInt53", () => {
   const allTables = [
     catalogItems,
     priceSources,
@@ -43,6 +46,7 @@ test("every _paise column across all 8 tables has columnType PgBigInt53", () => 
     pantryItems,
     cartDrafts,
     habitProfiles,
+    serviceabilityChecks,
   ];
 
   const paiseColumns: Array<{ table: string; col: string; type: string }> = [];
@@ -70,7 +74,7 @@ test("every _paise column across all 8 tables has columnType PgBigInt53", () => 
 
 // ── 3. shopping_list_items has no user_id; all others do ─────────────────────
 
-test("shopping_list_items has no user_id column; the other 7 tables all have user_id", () => {
+test("shopping_list_items has no user_id column; the other 8 tables all have user_id", () => {
   const listItemCols = getTableColumns(shoppingListItems);
   assert.equal(
     "userId" in listItemCols,
@@ -86,6 +90,7 @@ test("shopping_list_items has no user_id column; the other 7 tables all have use
     pantryItems,
     cartDrafts,
     habitProfiles,
+    serviceabilityChecks,
   ];
   for (const table of tablesWithUserId) {
     const cols = getTableColumns(table);
@@ -118,6 +123,10 @@ test("cartDraftStatus has exactly ['draft', 'ordered', 'abandoned']", () => {
   assert.deepEqual(cartDraftStatus.enumValues, ["draft", "ordered", "abandoned"]);
 });
 
+test("deliveryEtaBandEnum has exactly ['instant', 'same_day', 'next_day', 'scheduled']", () => {
+  assert.deepEqual(deliveryEtaBandEnum.enumValues, ["instant", "same_day", "next_day", "scheduled"]);
+});
+
 // ── 5. Every quantity-bearing table has a paired unit column ──────────────────
 
 test("habit_profiles has a unit column (no quantity-bearing table is missing its unit)", () => {
@@ -135,6 +144,7 @@ test("every table carrying a quantity or consumption column also has a unit colu
     ["pantry_items", getTableColumns(pantryItems)],
     ["cart_drafts", getTableColumns(cartDrafts)],
     ["habit_profiles", getTableColumns(habitProfiles)],
+    ["serviceability_checks", getTableColumns(serviceabilityChecks)],
   ];
 
   // A column carries a quantity if its DB name ends with _quantity_base or
@@ -208,7 +218,32 @@ test("shopping_lists has exactly zero CHECK constraints", () => {
   assert.equal(checks.length, 0, "shopping_lists must have no CHECK constraints");
 });
 
-test("price_sources has exactly zero CHECK constraints", () => {
-  const checks = getTableConfig(priceSources).checks;
-  assert.equal(checks.length, 0, "price_sources must have no CHECK constraints");
+test("price_sources has exactly the expected CHECK constraints", () => {
+  const checks = getTableConfig(priceSources).checks.map((c) => c.name).sort();
+  assert.deepEqual(checks, [
+    "price_sources_delivery_fee_nonneg",
+    "price_sources_min_cart_nonneg",
+  ]);
+});
+
+test("price_sources has deliveryFeePaise, minCartPaise, deliveryEtaBand nullable columns", () => {
+  const cols = getTableColumns(priceSources);
+  assert.ok("deliveryFeePaise" in cols, "price_sources must have deliveryFeePaise column");
+  assert.ok("minCartPaise" in cols, "price_sources must have minCartPaise column");
+  assert.ok("deliveryEtaBand" in cols, "price_sources must have deliveryEtaBand column");
+});
+
+test("serviceability_checks has exactly the expected CHECK constraints", () => {
+  const checks = getTableConfig(serviceabilityChecks).checks.map((c) => c.name).sort();
+  assert.deepEqual(checks, [
+    "serviceability_checks_pincode_nonempty",
+  ]);
+});
+
+test("serviceability_checks has isServiceable as nullable boolean column", () => {
+  const cols = getTableColumns(serviceabilityChecks);
+  assert.ok("isServiceable" in cols, "serviceability_checks must have isServiceable column");
+  assert.ok("priceSourceId" in cols, "serviceability_checks must have priceSourceId column");
+  assert.ok("pincode" in cols, "serviceability_checks must have pincode column");
+  assert.ok("observedAt" in cols, "serviceability_checks must have observedAt column");
 });

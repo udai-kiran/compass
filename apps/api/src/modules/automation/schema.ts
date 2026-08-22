@@ -66,6 +66,7 @@ export const aiEventKind = pgEnum("ai_event_kind", [
   "assistant", // an assistant chat turn
   "goal_roadmap", // goal roadmap narrative (task 5.4)
   "shopping_parse", // paste-text shopping list parse (task 9.4)
+  "offer_extract", // a card offer extracted from an email (task 10.4)
 ]);
 export const aiEventStatus = pgEnum("ai_event_status", ["ok", "error"]);
 
