@@ -41,7 +41,12 @@ export type ShoppingListStatus = z.infer<typeof ShoppingListStatusSchema>;
 export const ShoppingListItemStatusSchema = z.enum(["pending", "bought", "dropped"]);
 export type ShoppingListItemStatus = z.infer<typeof ShoppingListItemStatusSchema>;
 
-export const PriceSourceKindSchema = z.enum(["quick_commerce", "ecommerce", "local_store", "manual"]);
+export const PriceSourceKindSchema = z.enum([
+  "quick_commerce",
+  "ecommerce",
+  "local_store",
+  "manual",
+]);
 export type PriceSourceKind = z.infer<typeof PriceSourceKindSchema>;
 
 export const CartDraftStatusSchema = z.enum(["draft", "ordered", "abandoned"]);
@@ -68,19 +73,20 @@ export const ShoppingUnitsResponseSchema = z.object({
 });
 export type ShoppingUnitsResponse = z.infer<typeof ShoppingUnitsResponseSchema>;
 
-export const CatalogItemSchema = z.object({
-  id: z.uuid(),
-  canonicalName: z.string().min(1),
-  brand: z.string().nullable(),
-  categoryId: z.uuid().nullable(),
-  packQuantityBase: quantityField().nullable(),
-  unit: NormalizedUnitSchema.nullable(),
-  createdAt: z.coerce.date(),
-  updatedAt: z.coerce.date(),
-}).refine(
-  (v) => (v.packQuantityBase === null) === (v.unit === null),
-  { message: "packQuantityBase and unit must both be set or both be null" },
-);
+export const CatalogItemSchema = z
+  .object({
+    id: z.uuid(),
+    canonicalName: z.string().min(1),
+    brand: z.string().nullable(),
+    categoryId: z.uuid().nullable(),
+    packQuantityBase: quantityField().nullable(),
+    unit: NormalizedUnitSchema.nullable(),
+    createdAt: z.coerce.date(),
+    updatedAt: z.coerce.date(),
+  })
+  .refine((v) => (v.packQuantityBase === null) === (v.unit === null), {
+    message: "packQuantityBase and unit must both be set or both be null",
+  });
 export type CatalogItem = z.infer<typeof CatalogItemSchema>;
 
 export const PriceSourceSchema = z.object({
@@ -110,52 +116,55 @@ export const ShoppingListSchema = z.object({
 });
 export type ShoppingList = z.infer<typeof ShoppingListSchema>;
 
-export const ShoppingListItemSchema = z.object({
-  id: z.uuid(),
-  listId: z.uuid(),
-  catalogItemId: z.uuid().nullable(),
-  rawText: z.string().min(1),
-  quantityBase: quantityField().nullable(),
-  unit: NormalizedUnitSchema.nullable(),
-  status: ShoppingListItemStatusSchema,
-  position: z.number().int().nonnegative(),
-  createdAt: z.coerce.date(),
-  updatedAt: z.coerce.date(),
-}).refine(
-  (v) => (v.quantityBase === null) === (v.unit === null),
-  { message: "quantityBase and unit must both be set or both be null" },
-);
+export const ShoppingListItemSchema = z
+  .object({
+    id: z.uuid(),
+    listId: z.uuid(),
+    catalogItemId: z.uuid().nullable(),
+    rawText: z.string().min(1),
+    quantityBase: quantityField().nullable(),
+    unit: NormalizedUnitSchema.nullable(),
+    status: ShoppingListItemStatusSchema,
+    position: z.number().int().nonnegative(),
+    createdAt: z.coerce.date(),
+    updatedAt: z.coerce.date(),
+  })
+  .refine((v) => (v.quantityBase === null) === (v.unit === null), {
+    message: "quantityBase and unit must both be set or both be null",
+  });
 export type ShoppingListItem = z.infer<typeof ShoppingListItemSchema>;
 
-export const PriceObservationSchema = z.object({
-  id: z.uuid(),
-  catalogItemId: z.uuid(),
-  priceSourceId: z.uuid(),
-  pricePaise: nonNegativePaiseField(),
-  mrpPaise: nonNegativePaiseField().nullable(),
-  packQuantityBase: quantityField().nullable(),
-  unit: NormalizedUnitSchema.nullable(),
-  observedAt: z.coerce.date(),
-  createdAt: z.coerce.date(),
-}).refine(
-  (v) => (v.packQuantityBase === null) === (v.unit === null),
-  { message: "packQuantityBase and unit must both be set or both be null" },
-);
+export const PriceObservationSchema = z
+  .object({
+    id: z.uuid(),
+    catalogItemId: z.uuid(),
+    priceSourceId: z.uuid(),
+    pricePaise: nonNegativePaiseField(),
+    mrpPaise: nonNegativePaiseField().nullable(),
+    packQuantityBase: quantityField().nullable(),
+    unit: NormalizedUnitSchema.nullable(),
+    observedAt: z.coerce.date(),
+    createdAt: z.coerce.date(),
+  })
+  .refine((v) => (v.packQuantityBase === null) === (v.unit === null), {
+    message: "packQuantityBase and unit must both be set or both be null",
+  });
 export type PriceObservation = z.infer<typeof PriceObservationSchema>;
 
-export const PantryItemSchema = z.object({
-  id: z.uuid(),
-  catalogItemId: z.uuid(),
-  quantityBase: quantityField().nullable(),
-  unit: NormalizedUnitSchema.nullable(),
-  lastPurchasedAt: z.coerce.date().nullable(),
-  expectedDepletionAt: z.coerce.date().nullable(),
-  createdAt: z.coerce.date(),
-  updatedAt: z.coerce.date(),
-}).refine(
-  (v) => (v.quantityBase === null) === (v.unit === null),
-  { message: "quantityBase and unit must both be set or both be null" },
-);
+export const PantryItemSchema = z
+  .object({
+    id: z.uuid(),
+    catalogItemId: z.uuid(),
+    quantityBase: quantityField().nullable(),
+    unit: NormalizedUnitSchema.nullable(),
+    lastPurchasedAt: z.coerce.date().nullable(),
+    expectedDepletionAt: z.coerce.date().nullable(),
+    createdAt: z.coerce.date(),
+    updatedAt: z.coerce.date(),
+  })
+  .refine((v) => (v.quantityBase === null) === (v.unit === null), {
+    message: "quantityBase and unit must both be set or both be null",
+  });
 export type PantryItem = z.infer<typeof PantryItemSchema>;
 
 export const CartDraftSchema = z.object({
@@ -169,27 +178,140 @@ export const CartDraftSchema = z.object({
 });
 export type CartDraft = z.infer<typeof CartDraftSchema>;
 
-export const HabitProfileSchema = z.object({
-  id: z.uuid(),
-  catalogItemId: z.uuid(),
-  consumptionBasePerMonth: quantityField().nullable(),
-  unit: NormalizedUnitSchema.nullable(),
-  observationCount: z.number().int().nonnegative(),
-  lastComputedAt: z.coerce.date().nullable(),
-  createdAt: z.coerce.date(),
-  updatedAt: z.coerce.date(),
-}).refine(
-  (v) => (v.consumptionBasePerMonth === null) === (v.unit === null),
-  { message: "consumptionBasePerMonth and unit must both be set or both be null" },
-);
+export const HabitProfileSchema = z
+  .object({
+    id: z.uuid(),
+    catalogItemId: z.uuid(),
+    consumptionBasePerMonth: quantityField().nullable(),
+    unit: NormalizedUnitSchema.nullable(),
+    observationCount: z.number().int().nonnegative(),
+    lastComputedAt: z.coerce.date().nullable(),
+    createdAt: z.coerce.date(),
+    updatedAt: z.coerce.date(),
+  })
+  .refine((v) => (v.consumptionBasePerMonth === null) === (v.unit === null), {
+    message: "consumptionBasePerMonth and unit must both be set or both be null",
+  });
 export type HabitProfile = z.infer<typeof HabitProfileSchema>;
+
+// ─── Financial Guards contracts (task 11.3) ─────────────────────────────────
+
+/** One EMI offer to decompose. */
+export const EmiOfferInputSchema = z.object({
+  /** Max ₹100 crore — keeps all derived EMI values within safe-integer range. */
+  principalPaise: z.number().int().nonnegative().max(10_000_000_000),
+  tenureMonths: z.number().int().min(1).max(360),
+  annualRateBps: z.number().int().min(0).max(10000),
+  processingFeeBps: z.number().int().min(0).max(10000),
+});
+export type EmiOfferInput = z.infer<typeof EmiOfferInputSchema>;
+
+/** Domain request after coercion from GET query parameters. */
+export const FinancialGuardsRequestSchema = z.object({
+  /** Max ₹100 crore — keeps derived budget values within safe-integer range. */
+  cartTotalPaise: z.number().int().nonnegative().max(10_000_000_000),
+  categoryId: z.uuid().optional(),
+  emiOffers: z.array(EmiOfferInputSchema).max(10).optional(),
+});
+export type FinancialGuardsRequest = z.infer<typeof FinancialGuardsRequestSchema>;
+
+/** Wire schema for GET query parameters. */
+export const FinancialGuardsQuerySchema = z.object({
+  /** Max ₹100 crore — keeps derived budget values within safe-integer range. */
+  cartTotalPaise: z.coerce.number().int().nonnegative().max(10_000_000_000),
+  categoryId: z.uuid().optional(),
+  emiOffers: z
+    .string()
+    .optional()
+    .transform((s, ctx) => {
+      if (!s) return undefined;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(s);
+      } catch {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "emiOffers must be valid JSON" });
+        return z.NEVER;
+      }
+      return z.array(EmiOfferInputSchema).max(10).parse(parsed);
+    }),
+});
+
+export const BudgetGuardResultSchema = z
+  .object({
+    budgetedPaise: z.number().int().safe(),
+    carryPaise: z.number().int().safe(),
+    spentPaise: z.number().int().safe(),
+    remainingPaise: z.number().int().safe(),
+    cartTotalPaise: z.number().int().nonnegative().safe(),
+    overBudgetPaise: z.number().int().nonnegative().safe(),
+    categoryId: z.uuid().nullable(),
+  })
+  .nullable();
+export type BudgetGuardResult = z.infer<typeof BudgetGuardResultSchema>;
+
+export const GoalImpactStatusSchema = z.enum([
+  "no_impact",
+  "delayed",
+  "unreachable",
+  "undated",
+  "completed",
+  "already_behind",
+]);
+
+export const GoalImpactItemSchema = z.object({
+  goalId: z.uuid(),
+  goalName: z.string(),
+  baselineMonths: z.number().nullable(),
+  impactedMonths: z.number().nullable(),
+  delayMonths: z.number().nullable(),
+  baselineMonthlyInflowPaise: z.number().int().nonnegative().safe(),
+  impactedMonthlyInflowPaise: z.number().int().nonnegative().safe(),
+  status: GoalImpactStatusSchema,
+});
+export type GoalImpactItem = z.infer<typeof GoalImpactItemSchema>;
+
+export const GoalImpactResultSchema = z
+  .object({
+    impacts: z.array(GoalImpactItemSchema),
+  })
+  .nullable();
+export type GoalImpactResult = z.infer<typeof GoalImpactResultSchema>;
+
+export const EmiGuardItemSchema = z.object({
+  offerIndex: z.number().int().nonnegative(),
+  emiPaise: z.number().int().nonnegative().safe(),
+  totalRepaymentPaise: z.number().int().nonnegative().safe(),
+  interestPaise: z.number().int().nonnegative().safe(),
+  processingFeePaise: z.number().int().nonnegative().safe(),
+  extraCostPaise: z.number().int().nonnegative().safe(),
+});
+export type EmiGuardItem = z.infer<typeof EmiGuardItemSchema>;
+
+export const EmiGuardResultSchema = z
+  .object({
+    offers: z.array(EmiGuardItemSchema),
+  })
+  .nullable();
+export type EmiGuardResult = z.infer<typeof EmiGuardResultSchema>;
+
+export const FinancialGuardsResponseSchema = z.object({
+  budget: BudgetGuardResultSchema,
+  goals: GoalImpactResultSchema,
+  emi: EmiGuardResultSchema,
+});
+export type FinancialGuardsResponse = z.infer<typeof FinancialGuardsResponseSchema>;
 
 // ─── Shopping-list CRUD contracts (task 9.2) ─────────────────────────────────
 
 /** Create a new shopping list. */
 export const CreateShoppingListSchema = z.object({
   /** 1–120 characters, trimmed, non-empty. */
-  name: z.string().min(1).max(120).trim().refine((v) => v.length > 0, { message: "name must not be blank after trimming" }),
+  name: z
+    .string()
+    .min(1)
+    .max(120)
+    .trim()
+    .refine((v) => v.length > 0, { message: "name must not be blank after trimming" }),
   /** Optional free-text note, max 1000 characters. */
   note: z.string().max(1000).nullable().default(null),
 });
@@ -200,42 +322,59 @@ export type CreateShoppingList = z.input<typeof CreateShoppingListSchema>;
  * NO .default() — so an omitted field is a 400 (no preserve-on-omission).
  */
 export const UpdateShoppingListSchema = z.object({
-  name: z.string().min(1).max(120).trim().refine((v) => v.length > 0, { message: "name must not be blank after trimming" }),
+  name: z
+    .string()
+    .min(1)
+    .max(120)
+    .trim()
+    .refine((v) => v.length > 0, { message: "name must not be blank after trimming" }),
   note: z.string().max(1000).nullable(),
   status: ShoppingListStatusSchema,
 });
 export type UpdateShoppingList = z.input<typeof UpdateShoppingListSchema>;
 
 /** Add a new item to a shopping list. */
-export const CreateShoppingListItemSchema = z.object({
-  /** Verbatim user text, 1–200 characters, trimmed non-empty. */
-  rawText: z.string().min(1).max(200).trim().refine((v) => v.length > 0, { message: "rawText must not be blank after trimming" }),
-  /** Optional link to a catalog item the user owns. */
-  catalogItemId: z.uuid().nullable().default(null),
-  /** Quantity in base units (g / ml / piece). Must be paired with unit. */
-  quantityBase: quantityField().nullable().default(null),
-  /** Unit for the quantity. Must be paired with quantityBase. */
-  unit: NormalizedUnitSchema.nullable().default(null),
-}).refine(
-  (v) => (v.quantityBase === null) === (v.unit === null),
-  { message: "quantityBase and unit must both be set or both be null" },
-);
+export const CreateShoppingListItemSchema = z
+  .object({
+    /** Verbatim user text, 1–200 characters, trimmed non-empty. */
+    rawText: z
+      .string()
+      .min(1)
+      .max(200)
+      .trim()
+      .refine((v) => v.length > 0, { message: "rawText must not be blank after trimming" }),
+    /** Optional link to a catalog item the user owns. */
+    catalogItemId: z.uuid().nullable().default(null),
+    /** Quantity in base units (g / ml / piece). Must be paired with unit. */
+    quantityBase: quantityField().nullable().default(null),
+    /** Unit for the quantity. Must be paired with quantityBase. */
+    unit: NormalizedUnitSchema.nullable().default(null),
+  })
+  .refine((v) => (v.quantityBase === null) === (v.unit === null), {
+    message: "quantityBase and unit must both be set or both be null",
+  });
 export type CreateShoppingListItem = z.input<typeof CreateShoppingListItemSchema>;
 
 /**
  * PUT (full replace) update of a shopping list item. Every field is REQUIRED —
  * NO .default() — so an omitted field is a 400 (no preserve-on-omission).
  */
-export const UpdateShoppingListItemSchema = z.object({
-  rawText: z.string().min(1).max(200).trim().refine((v) => v.length > 0, { message: "rawText must not be blank after trimming" }),
-  catalogItemId: z.uuid().nullable(),
-  quantityBase: quantityField().nullable(),
-  unit: NormalizedUnitSchema.nullable(),
-  status: ShoppingListItemStatusSchema,
-}).refine(
-  (v) => (v.quantityBase === null) === (v.unit === null),
-  { message: "quantityBase and unit must both be set or both be null" },
-);
+export const UpdateShoppingListItemSchema = z
+  .object({
+    rawText: z
+      .string()
+      .min(1)
+      .max(200)
+      .trim()
+      .refine((v) => v.length > 0, { message: "rawText must not be blank after trimming" }),
+    catalogItemId: z.uuid().nullable(),
+    quantityBase: quantityField().nullable(),
+    unit: NormalizedUnitSchema.nullable(),
+    status: ShoppingListItemStatusSchema,
+  })
+  .refine((v) => (v.quantityBase === null) === (v.unit === null), {
+    message: "quantityBase and unit must both be set or both be null",
+  });
 export type UpdateShoppingListItem = z.input<typeof UpdateShoppingListItemSchema>;
 
 /**
@@ -243,12 +382,14 @@ export type UpdateShoppingListItem = z.input<typeof UpdateShoppingListItemSchema
  * current item ids — same cardinality, no duplicates, no foreign/missing ids.
  * Duplicate uuids are rejected at the Zod boundary.
  */
-export const ReorderItemsSchema = z.object({
-  orderedIds: z.array(z.uuid()),
-}).refine(
-  (v) => new Set(v.orderedIds).size === v.orderedIds.length,
-  { message: "orderedIds must not contain duplicate ids", path: ["orderedIds"] },
-);
+export const ReorderItemsSchema = z
+  .object({
+    orderedIds: z.array(z.uuid()),
+  })
+  .refine((v) => new Set(v.orderedIds).size === v.orderedIds.length, {
+    message: "orderedIds must not contain duplicate ids",
+    path: ["orderedIds"],
+  });
 export type ReorderItems = z.input<typeof ReorderItemsSchema>;
 
 /** A shopping list together with its ordered items (response shape for GET /lists/:id). */
@@ -268,41 +409,53 @@ export const DisplayUnitSchema = z.enum(["kg", "g", "litre", "ml", "piece"]);
 export type DisplayUnit = z.infer<typeof DisplayUnitSchema>;
 
 /** Create a new catalog item for the current user. */
-export const CreateCatalogItemSchema = z.object({
-  /** Canonical product name, 1–120 chars, trimmed. Must be unique per user (case-sensitive at DB level). */
-  canonicalName: z.string().min(1).max(120).trim().refine((v) => v.length > 0, {
-    message: "canonicalName must not be blank after trimming",
-  }),
-  /** Optional brand name, max 200 chars. */
-  brand: z.string().max(200).nullable().default(null),
-  /** Optional link to a ledger category (user-owned). Cross-owner FK is unenforced at DB level. */
-  categoryId: z.uuid().nullable().default(null),
-  /** Typical pack quantity in base units (g / ml / piece). Paired with unit. */
-  packQuantityBase: quantityField().nullable().default(null),
-  /** Normalized unit for packQuantityBase. Must be set iff packQuantityBase is set. */
-  unit: NormalizedUnitSchema.nullable().default(null),
-}).refine(
-  (v) => (v.packQuantityBase === null) === (v.unit === null),
-  { message: "packQuantityBase and unit must both be set or both be null" },
-);
+export const CreateCatalogItemSchema = z
+  .object({
+    /** Canonical product name, 1–120 chars, trimmed. Must be unique per user (case-sensitive at DB level). */
+    canonicalName: z
+      .string()
+      .min(1)
+      .max(120)
+      .trim()
+      .refine((v) => v.length > 0, {
+        message: "canonicalName must not be blank after trimming",
+      }),
+    /** Optional brand name, max 200 chars. */
+    brand: z.string().max(200).nullable().default(null),
+    /** Optional link to a ledger category (user-owned). Cross-owner FK is unenforced at DB level. */
+    categoryId: z.uuid().nullable().default(null),
+    /** Typical pack quantity in base units (g / ml / piece). Paired with unit. */
+    packQuantityBase: quantityField().nullable().default(null),
+    /** Normalized unit for packQuantityBase. Must be set iff packQuantityBase is set. */
+    unit: NormalizedUnitSchema.nullable().default(null),
+  })
+  .refine((v) => (v.packQuantityBase === null) === (v.unit === null), {
+    message: "packQuantityBase and unit must both be set or both be null",
+  });
 export type CreateCatalogItem = z.input<typeof CreateCatalogItemSchema>;
 
 /**
  * PUT (full replace) update of a catalog item. Every field is REQUIRED —
  * NO .default() — so an omitted field is a 400 (no preserve-on-omission).
  */
-export const UpdateCatalogItemSchema = z.object({
-  canonicalName: z.string().min(1).max(120).trim().refine((v) => v.length > 0, {
-    message: "canonicalName must not be blank after trimming",
-  }),
-  brand: z.string().max(200).nullable(),
-  categoryId: z.uuid().nullable(),
-  packQuantityBase: quantityField().nullable(),
-  unit: NormalizedUnitSchema.nullable(),
-}).refine(
-  (v) => (v.packQuantityBase === null) === (v.unit === null),
-  { message: "packQuantityBase and unit must both be set or both be null" },
-);
+export const UpdateCatalogItemSchema = z
+  .object({
+    canonicalName: z
+      .string()
+      .min(1)
+      .max(120)
+      .trim()
+      .refine((v) => v.length > 0, {
+        message: "canonicalName must not be blank after trimming",
+      }),
+    brand: z.string().max(200).nullable(),
+    categoryId: z.uuid().nullable(),
+    packQuantityBase: quantityField().nullable(),
+    unit: NormalizedUnitSchema.nullable(),
+  })
+  .refine((v) => (v.packQuantityBase === null) === (v.unit === null), {
+    message: "packQuantityBase and unit must both be set or both be null",
+  });
 export type UpdateCatalogItem = z.input<typeof UpdateCatalogItemSchema>;
 
 /**
@@ -396,7 +549,12 @@ export type ParseListTextResponse = z.infer<typeof ParseListTextResponseSchema>;
 /** Create a new price source for the current user. */
 export const CreatePriceSourceSchema = z.object({
   /** Platform or store name, 1–120 chars, trimmed. Must be unique per user. */
-  name: z.string().min(1).max(120).trim().refine((v) => v.length > 0, { message: "name required" }),
+  name: z
+    .string()
+    .min(1)
+    .max(120)
+    .trim()
+    .refine((v) => v.length > 0, { message: "name required" }),
   /** Source kind — quick_commerce, ecommerce, local_store, or manual. */
   kind: PriceSourceKindSchema,
   /** Optional homepage or product-URL, or null for physical stores. */
@@ -411,7 +569,12 @@ export type CreatePriceSource = z.input<typeof CreatePriceSourceSchema>;
  * NO .default() — so an omitted field is a 400 (no preserve-on-omission).
  */
 export const UpdatePriceSourceSchema = z.object({
-  name: z.string().min(1).max(120).trim().refine((v) => v.length > 0, { message: "name required" }),
+  name: z
+    .string()
+    .min(1)
+    .max(120)
+    .trim()
+    .refine((v) => v.length > 0, { message: "name required" }),
   kind: PriceSourceKindSchema,
   url: z.string().url().nullable(),
   isActive: z.boolean(),
@@ -419,25 +582,26 @@ export const UpdatePriceSourceSchema = z.object({
 export type UpdatePriceSource = z.input<typeof UpdatePriceSourceSchema>;
 
 /** Create a new price observation for a catalog item at a source. */
-export const CreatePriceObservationSchema = z.object({
-  /** Catalog item this price applies to (must be owned by the caller). */
-  catalogItemId: z.uuid(),
-  /** Price source (must be owned by the caller). */
-  priceSourceId: z.uuid(),
-  /** Observed price in integer paise. */
-  pricePaise: nonNegativePaiseField(),
-  /** Maximum retail price in integer paise, or null if unknown. */
-  mrpPaise: nonNegativePaiseField().nullable().default(null),
-  /** Pack quantity in base units this price applies to. Paired with unit. */
-  packQuantityBase: quantityField().nullable().default(null),
-  /** Normalized unit for packQuantityBase. Must be set iff packQuantityBase is set. */
-  unit: NormalizedUnitSchema.nullable().default(null),
-  /** When the price was observed. Defaults to now. */
-  observedAt: z.coerce.date().default(() => new Date()),
-}).refine(
-  (v) => (v.packQuantityBase === null) === (v.unit === null),
-  { message: "packQuantityBase and unit must both be set or both be null" },
-);
+export const CreatePriceObservationSchema = z
+  .object({
+    /** Catalog item this price applies to (must be owned by the caller). */
+    catalogItemId: z.uuid(),
+    /** Price source (must be owned by the caller). */
+    priceSourceId: z.uuid(),
+    /** Observed price in integer paise. */
+    pricePaise: nonNegativePaiseField(),
+    /** Maximum retail price in integer paise, or null if unknown. */
+    mrpPaise: nonNegativePaiseField().nullable().default(null),
+    /** Pack quantity in base units this price applies to. Paired with unit. */
+    packQuantityBase: quantityField().nullable().default(null),
+    /** Normalized unit for packQuantityBase. Must be set iff packQuantityBase is set. */
+    unit: NormalizedUnitSchema.nullable().default(null),
+    /** When the price was observed. Defaults to now. */
+    observedAt: z.coerce.date().default(() => new Date()),
+  })
+  .refine((v) => (v.packQuantityBase === null) === (v.unit === null), {
+    message: "packQuantityBase and unit must both be set or both be null",
+  });
 /** Infer the output type (observedAt is always a Date after coercion). */
 export type CreatePriceObservation = z.infer<typeof CreatePriceObservationSchema>;
 
@@ -672,3 +836,99 @@ export const CheckoutRecommendationSchema = z.object({
   notes: z.array(z.string()),
 });
 export type CheckoutRecommendation = z.infer<typeof CheckoutRecommendationSchema>;
+
+// ─── Pantry & Habit Profile contracts (task 11.1) ────────────────────────────
+
+/** Pantry item enriched with habit profile + catalog info for display. */
+export const PantryItemWithHabitSchema = z
+  .object({
+    id: z.uuid(),
+    catalogItemId: z.uuid(),
+    canonicalName: z.string(),
+    brand: z.string().nullable(),
+    quantityBase: z.number().int().nonnegative().safe().nullable(),
+    unit: NormalizedUnitSchema.nullable(),
+    lastPurchasedAt: z.coerce.date().nullable(),
+    expectedDepletionAt: z.coerce.date().nullable(),
+    consumptionBasePerMonth: z.number().int().nonnegative().safe().nullable(),
+    consumptionUnit: NormalizedUnitSchema.nullable(),
+    observationCount: z.number().int().nonnegative(),
+    lastComputedAt: z.coerce.date().nullable(),
+    createdAt: z.coerce.date(),
+    updatedAt: z.coerce.date(),
+  })
+  .refine((v) => (v.quantityBase === null) === (v.unit === null), {
+    message: "quantityBase and unit must both be set or both be null",
+  });
+export type PantryItemWithHabit = z.infer<typeof PantryItemWithHabitSchema>;
+
+export const PantryListResponseSchema = z.object({
+  items: z.array(PantryItemWithHabitSchema),
+});
+export type PantryListResponse = z.infer<typeof PantryListResponseSchema>;
+
+export const ReplenishPantrySchema = z.object({
+  quantityBase: z.number().int().nonnegative().safe(),
+  unit: NormalizedUnitSchema,
+});
+export type ReplenishPantry = z.infer<typeof ReplenishPantrySchema>;
+
+export const CorrectPantrySchema = z.object({
+  quantityBase: z.number().int().nonnegative().safe(),
+  unit: NormalizedUnitSchema,
+});
+export type CorrectPantry = z.infer<typeof CorrectPantrySchema>;
+
+export const HabitProfileListResponseSchema = z.object({
+  profiles: z.array(HabitProfileSchema),
+});
+export type HabitProfileListResponse = z.infer<typeof HabitProfileListResponseSchema>;
+
+export const RecomputeHabitResponseSchema = z.object({
+  profile: HabitProfileSchema.nullable(),
+  purchaseCount: z.number().int().nonnegative(),
+});
+export type RecomputeHabitResponse = z.infer<typeof RecomputeHabitResponseSchema>;
+
+// ─── Cart Draft Items contracts (task 11.2) ─────────────────────────────────
+
+export const CartDraftItemSchema = z.object({
+  id: z.uuid(),
+  cartDraftId: z.uuid(),
+  catalogItemId: z.uuid().nullable(),
+  quantityBase: z.number().int().nonnegative().nullable(),
+  unit: NormalizedUnitSchema.nullable(),
+  reason: z.string(),
+  suggestedPricePaise: z.number().int().nonnegative().nullable(),
+  suggestedSourceId: z.uuid().nullable(),
+  substitutionForItemId: z.uuid().nullable(),
+  priceDeltaPaise: z.number().int().nullable(),
+  isRemoved: z.boolean(),
+  createdAt: z.coerce.date(),
+}).refine(
+  (v) => (v.quantityBase === null) === (v.unit === null),
+  { message: "quantityBase and unit must both be set or both be null" },
+);
+export type CartDraftItem = z.infer<typeof CartDraftItemSchema>;
+
+export const CartDraftWithItemsSchema = CartDraftSchema.extend({
+  items: z.array(CartDraftItemSchema),
+});
+export type CartDraftWithItems = z.infer<typeof CartDraftWithItemsSchema>;
+
+export const GenerateDraftResponseSchema = z.object({
+  draft: CartDraftWithItemsSchema,
+  generated: z.number().int().nonnegative(),
+  substitutions: z.number().int().nonnegative(),
+});
+export type GenerateDraftResponse = z.infer<typeof GenerateDraftResponseSchema>;
+
+export const UpdateCartDraftItemSchema = z.object({
+  quantityBase: z.number().int().nonnegative().nullable(),
+  unit: NormalizedUnitSchema.nullable(),
+  isRemoved: z.boolean(),
+}).refine(
+  (v) => (v.quantityBase === null) === (v.unit === null),
+  { message: "quantityBase and unit must both be set or both be null" },
+);
+export type UpdateCartDraftItem = z.infer<typeof UpdateCartDraftItemSchema>;

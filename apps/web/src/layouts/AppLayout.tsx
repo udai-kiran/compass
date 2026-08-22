@@ -63,6 +63,15 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    heading: "Shopping",
+    items: [
+      { to: "/shopping/lists", label: "Lists", icon: "shopping" },
+      { to: "/shopping/cart", label: "Cart", icon: "cart" },
+      { to: "/shopping/pantry", label: "Pantry", icon: "pantry" },
+      { to: "/shopping/price-watch", label: "Price Watch", icon: "pricewatch" },
+    ],
+  },
+  {
     heading: "Setup",
     items: [
       { to: "/household", label: "Household", icon: "household" },

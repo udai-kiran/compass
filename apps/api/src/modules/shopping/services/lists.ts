@@ -33,6 +33,7 @@ import {
   assertOwnedList,
   assertOwnedListItem,
 } from "./ownership.ts";
+import { replenishPantry } from "./pantry-management.ts";
 
 type ListRow = typeof shoppingLists.$inferSelect;
 type ItemRow = typeof shoppingListItems.$inferSelect;
@@ -218,6 +219,13 @@ export async function updateItem(
   await assertOwnedListItem(db, userId, listId, itemId);
   await assertOwnedCatalogItem(db, userId, input.catalogItemId);
 
+  // Read the current status BEFORE the update so we can detect a real transition.
+  const existingItem = await db.query.shoppingListItems.findFirst({
+    where: and(eq(shoppingListItems.id, itemId), eq(shoppingListItems.listId, listId)),
+    columns: { status: true },
+  });
+  const previousStatus = existingItem?.status ?? null;
+
   const now = new Date();
   await db
     .update(shoppingListItems)
@@ -236,6 +244,20 @@ export async function updateItem(
     .update(shoppingLists)
     .set({ updatedAt: now })
     .where(and(eq(shoppingLists.id, listId), eq(shoppingLists.userId, userId)));
+
+  // Fire-and-forget pantry replenishment ONLY on a genuine bought transition
+  // (previous status was not 'bought'). Must not fail the list update.
+  if (
+    input.status === "bought" &&
+    previousStatus !== "bought" &&
+    input.catalogItemId != null &&
+    input.quantityBase != null &&
+    input.unit != null
+  ) {
+    void replenishPantry(db, userId, input.catalogItemId, input.quantityBase, input.unit).catch(
+      () => { /* fire-and-forget: pantry errors must not block list update */ },
+    );
+  }
 
   return getList(db, userId, listId);
 }

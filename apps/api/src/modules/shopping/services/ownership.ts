@@ -16,7 +16,7 @@
 
 import { and, eq } from "drizzle-orm";
 import type { DbOrTx } from "../../../db/index.ts";
-import { catalogItems, priceObservations, priceSources, shoppingListItems, shoppingLists } from "../schema.ts";
+import { cartDrafts, catalogItems, priceObservations, priceSources, shoppingListItems, shoppingLists } from "../schema.ts";
 import { HttpError } from "../../../lib/errors.ts";
 
 /**
@@ -33,6 +33,15 @@ export async function assertOwnedList(
     columns: { id: true },
   });
   if (!row) throw new HttpError(404, "Shopping list not found");
+}
+
+/** Assert that a cart draft exists and belongs to the session user. */
+export async function assertOwnedDraft(db: DbOrTx, userId: string, draftId: string): Promise<void> {
+  const row = await db.query.cartDrafts.findFirst({
+    where: and(eq(cartDrafts.id, draftId), eq(cartDrafts.userId, userId)),
+    columns: { id: true },
+  });
+  if (!row) throw new HttpError(404, "Cart draft not found");
 }
 
 /**

@@ -39,9 +39,15 @@ import { listAccounts } from "../../ledger/services/accounts.ts";
 import { getPortfolio } from "../../investments/services/holdings.ts";
 import { accountReturnBps, holdingReturnBps } from "./goal-returns.ts";
 import { projectGoal } from "./goal-projection.ts";
+import type { ProjectionAsset, ProjectionInput } from "./goal-projection.ts";
 import { buildGoalPlan } from "./goal-plan.ts";
 import { createNotification } from "../../system/services/notifications.ts";
-import { incomeExpense, periodRange, prevPeriodKey, currentPeriodKey } from "../../../lib/periods.ts";
+import {
+  incomeExpense,
+  periodRange,
+  prevPeriodKey,
+  currentPeriodKey,
+} from "../../../lib/periods.ts";
 import { prefEnabled } from "../../system/services/prefs.ts";
 import { getProjectionSettings } from "./projection-settings.ts";
 import { committedForGoal } from "../../investments/services/sip-commitments.ts";
@@ -69,7 +75,9 @@ function toGoal(g: GoalRow): Goal {
 }
 
 async function ownedGoal(db: Db, userId: string, id: string): Promise<GoalRow> {
-  const g = await db.query.goals.findFirst({ where: and(eq(goals.id, id), eq(goals.userId, userId)) });
+  const g = await db.query.goals.findFirst({
+    where: and(eq(goals.id, id), eq(goals.userId, userId)),
+  });
   if (!g) throw new HttpError(404, "Goal not found");
   return g;
 }
@@ -123,11 +131,7 @@ export async function deleteGoal(db: Db, userId: string, id: string): Promise<vo
   if (rows.length === 0) throw new HttpError(404, "Goal not found");
 }
 
-export async function reorderGoals(
-  db: Db,
-  userId: string,
-  input: ReorderGoals,
-): Promise<Goal[]> {
+export async function reorderGoals(db: Db, userId: string, input: ReorderGoals): Promise<Goal[]> {
   const { goalIds } = ReorderGoalsSchema.parse(input);
   if (new Set(goalIds).size !== goalIds.length) {
     throw new HttpError(400, "Goal order contains duplicates");
@@ -203,7 +207,10 @@ async function mappedContributionRate(
       join accounts a on a.id = p.account_id
       join transactions t on t.id = p.transaction_id
       where t.user_id = ${userId}
-        and a.id in (${sql.join(accountIds.map((id) => sql`${id}`), sql`, `)})
+        and a.id in (${sql.join(
+          accountIds.map((id) => sql`${id}`),
+          sql`, `,
+        )})
         and p.amount_paise > 0
         and a.system_kind is null
         and t.deleted_at is null
@@ -213,7 +220,10 @@ async function mappedContributionRate(
     const row = (res.rows as Array<{ total: string }>)[0];
     const branchTotal = Number(row?.total ?? "0");
     if (!Number.isSafeInteger(branchTotal)) {
-      throw new HttpError(500, "Contribution aggregate exceeded a safe integer — refusing to lose paise");
+      throw new HttpError(
+        500,
+        "Contribution aggregate exceeded a safe integer — refusing to lose paise",
+      );
     }
     total += branchTotal;
   }
@@ -272,6 +282,67 @@ function monthsBetween(from: Date, to: Date): number {
   return (to.getTime() - from.getTime()) / (30.44 * 24 * 3600 * 1000);
 }
 
+/**
+ * Loads the DB-backed inputs needed by the pure goal projection without
+ * emitting milestone notifications. Consumers which only need an advisory
+ * projection must use this instead of getGoalProgress().
+ */
+export async function getGoalProjectionInputs(
+  db: Db,
+  userId: string,
+  id: string,
+): Promise<ProjectionInput> {
+  const g = await ownedGoal(db, userId, id);
+  const [accountList, portfolio, target, projectionSettings] = await Promise.all([
+    listAccounts(db, userId),
+    getPortfolio(db, userId),
+    effectiveTarget(db, userId, g),
+    getProjectionSettings(db, userId),
+  ]);
+  const mappedAccounts = accountList.filter((a) => a.goalId === g.id && a.archivedAt === null);
+  const mappedHoldings = portfolio.positions.filter((p) => p.goalId === g.id && !p.archived);
+  const retirementIds = mappedAccounts.filter((a) => isRetirementAccount(a.type)).map((a) => a.id);
+  const rateRows = retirementIds.length
+    ? await db
+        .select({ accountId: retirementDetails.accountId, bps: retirementDetails.annualRateBps })
+        .from(retirementDetails)
+        .where(inArray(retirementDetails.accountId, retirementIds))
+    : [];
+  const rateByAccount = new Map(rateRows.map((r) => [r.accountId, r.bps]));
+  const assets: ProjectionAsset[] = [
+    ...mappedAccounts.map((a) => ({
+      valuePaise: a.balancePaise,
+      annualReturnBps: accountReturnBps(
+        a.type,
+        rateByAccount.get(a.id) ?? null,
+        projectionSettings.equityReturnBps,
+      ),
+    })),
+    ...mappedHoldings.map((p) => ({
+      valuePaise: p.currentValuePaise,
+      annualReturnBps: holdingReturnBps(
+        p.assetClass,
+        p.gainsTaxClass,
+        projectionSettings.equityReturnBps,
+      ),
+    })),
+  ];
+  const monthlyInflowPaise = await mappedContributionRate(
+    db,
+    userId,
+    mappedAccounts.map((a) => a.id),
+    mappedHoldings.map((p) => p.id),
+  );
+  return {
+    assets,
+    targetPaise: target,
+    monthsToTarget: g.targetDate
+      ? Math.max(0, monthsBetween(new Date(), new Date(`${g.targetDate}T00:00:00Z`)))
+      : null,
+    monthlyInflowPaise,
+  };
+}
+
 export async function getGoalProgress(db: Db, userId: string, id: string): Promise<GoalProgress> {
   const g = await ownedGoal(db, userId, id);
 
@@ -297,32 +368,32 @@ export async function getGoalProgress(db: Db, userId: string, id: string): Promi
   const rateByAccount = new Map(rateRows.map((r) => [r.accountId, r.bps]));
 
   const assets: GoalAssetProgress[] = sortAssetsByAllocation([
-    ...mappedAccounts.map(
-      (a): GoalAssetProgress => ({
-        kind: "account",
-        id: a.id,
-        name: a.name,
-        subtitle: a.accountLast4 ? `•••• ${a.accountLast4}` : a.type,
-        valuePaise: a.balancePaise,
-        annualReturnBps: accountReturnBps(
-          a.type,
-          rateByAccount.get(a.id) ?? null,
-          projectionSettings.equityReturnBps,
-        ),
-        allocationClass: accountAllocationClass(a.type),
-      }),
-    ),
-    ...mappedHoldings.map(
-      (p): GoalAssetProgress => ({
-        kind: "holding",
-        id: p.id,
-        name: p.name,
-        subtitle: p.folioNumber ? `Folio ${p.folioNumber}` : p.assetClass,
-        valuePaise: p.currentValuePaise,
-        annualReturnBps: holdingReturnBps(p.assetClass, p.gainsTaxClass, projectionSettings.equityReturnBps),
-        allocationClass: holdingAllocationClass(p.assetClass, p.gainsTaxClass),
-      }),
-    ),
+    ...mappedAccounts.map((a): GoalAssetProgress => ({
+      kind: "account",
+      id: a.id,
+      name: a.name,
+      subtitle: a.accountLast4 ? `•••• ${a.accountLast4}` : a.type,
+      valuePaise: a.balancePaise,
+      annualReturnBps: accountReturnBps(
+        a.type,
+        rateByAccount.get(a.id) ?? null,
+        projectionSettings.equityReturnBps,
+      ),
+      allocationClass: accountAllocationClass(a.type),
+    })),
+    ...mappedHoldings.map((p): GoalAssetProgress => ({
+      kind: "holding",
+      id: p.id,
+      name: p.name,
+      subtitle: p.folioNumber ? `Folio ${p.folioNumber}` : p.assetClass,
+      valuePaise: p.currentValuePaise,
+      annualReturnBps: holdingReturnBps(
+        p.assetClass,
+        p.gainsTaxClass,
+        projectionSettings.equityReturnBps,
+      ),
+      allocationClass: holdingAllocationClass(p.assetClass, p.gainsTaxClass),
+    })),
   ]);
 
   const monthlyInflowPaise = await mappedContributionRate(
@@ -380,7 +451,8 @@ export async function getGoalProgress(db: Db, userId: string, id: string): Promi
     monthlyInflowPaise,
     projectedValuePaise: proj.projectedValuePaise,
     shortfallPaise: proj.shortfallPaise,
-    projectedMonths: proj.projectedMonths === null ? null : Math.round(proj.projectedMonths * 10) / 10,
+    projectedMonths:
+      proj.projectedMonths === null ? null : Math.round(proj.projectedMonths * 10) / 10,
     projectedDate,
     requiredMonthlyPaise: proj.requiredMonthlyPaise,
     onTrack: proj.onTrack,
