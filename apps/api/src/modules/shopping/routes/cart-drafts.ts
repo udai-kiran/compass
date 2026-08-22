@@ -61,6 +61,30 @@ export async function shoppingCartDraftRoutes(app: FastifyInstance): Promise<voi
     },
   );
 
+  r.post(
+    "/drafts/:id/accept",
+    { schema: { params: DraftParams, response: { 200: CartDraftWithItemsSchema } } },
+    async (req) => {
+      const userId = req.session!.userId;
+      await assertOwnedDraft(app.db, userId, req.params.id);
+      const result = await app.db
+        .update(cartDrafts)
+        .set({ status: "ordered", updatedAt: new Date() })
+        .where(
+          and(
+            eq(cartDrafts.id, req.params.id),
+            eq(cartDrafts.userId, userId),
+            eq(cartDrafts.status, "draft"),
+          ),
+        )
+        .returning({ id: cartDrafts.id });
+      if (result.length === 0) {
+        throw new HttpError(409, "Only draft-status carts can be accepted");
+      }
+      return (await getDraftWithItems(app.db, req.params.id))!;
+    },
+  );
+
   r.put(
     "/drafts/:id/items/:itemId",
     {
@@ -74,6 +98,22 @@ export async function shoppingCartDraftRoutes(app: FastifyInstance): Promise<voi
       const userId = req.session!.userId;
       return app.db.transaction(async (tx) => {
         await assertOwnedDraft(tx, userId, req.params.id);
+        // Claim and lock the row while it is still editable. This prevents an accept
+        // transition from committing between a status read and the item update.
+        const claimed = await tx
+          .update(cartDrafts)
+          .set({ updatedAt: new Date() })
+          .where(
+            and(
+              eq(cartDrafts.id, req.params.id),
+              eq(cartDrafts.userId, userId),
+              eq(cartDrafts.status, "draft"),
+            ),
+          )
+          .returning({ id: cartDrafts.id });
+        if (claimed.length === 0) {
+          throw new HttpError(400, "Only draft-status carts can be edited");
+        }
         const item = await tx.query.cartDraftItems.findFirst({
           where: and(eq(cartDraftItems.id, req.params.itemId), eq(cartDraftItems.cartDraftId, req.params.id)),
         });
@@ -119,11 +159,22 @@ export async function shoppingCartDraftRoutes(app: FastifyInstance): Promise<voi
     "/drafts/:id",
     { schema: { params: DraftParams, response: { 204: z.void() } } },
     async (req, reply) => {
-      await assertOwnedDraft(app.db, req.session!.userId, req.params.id);
-      await app.db
+      const userId = req.session!.userId;
+      await assertOwnedDraft(app.db, userId, req.params.id);
+      const result = await app.db
         .update(cartDrafts)
         .set({ status: "abandoned", updatedAt: new Date() })
-        .where(and(eq(cartDrafts.id, req.params.id), eq(cartDrafts.userId, req.session!.userId)));
+        .where(
+          and(
+            eq(cartDrafts.id, req.params.id),
+            eq(cartDrafts.userId, userId),
+            eq(cartDrafts.status, "draft"),
+          ),
+        )
+        .returning({ id: cartDrafts.id });
+      if (result.length === 0) {
+        throw new HttpError(409, "Only draft-status carts can be abandoned");
+      }
       return reply.code(204).send();
     },
   );

@@ -932,3 +932,151 @@ export const UpdateCartDraftItemSchema = z.object({
   { message: "quantityBase and unit must both be set or both be null" },
 );
 export type UpdateCartDraftItem = z.infer<typeof UpdateCartDraftItemSchema>;
+
+// ─── Receipt OCR → Cart Reconcile → Ledger (task 11.4) ──────────────────────
+
+export const ReceiptStatusSchema = z.enum(["parsed", "reconciled", "confirmed"]);
+export type ReceiptStatus = z.infer<typeof ReceiptStatusSchema>;
+
+export const ReceiptLineMatchStatusSchema = z.enum([
+  "unmatched",
+  "matched",
+  "extra",
+  "missing",
+  "price_diff",
+  "ambiguous",
+]);
+export type ReceiptLineMatchStatus = z.infer<typeof ReceiptLineMatchStatusSchema>;
+
+/**
+ * One line item on a receipt. `quantityBase` and `unit` are always paired.
+ * `pricePaise` is the line total (qty × unit price).
+ */
+export const ReceiptLineSchema = z
+  .object({
+    id: z.uuid(),
+    receiptId: z.uuid(),
+    position: z.number().int().nonnegative(),
+    rawText: z.string(),
+    normalizedName: z.string().nullable(),
+    catalogItemId: z.uuid().nullable(),
+    quantityBase: z.number().int().nonnegative().nullable(),
+    unit: NormalizedUnitSchema.nullable(),
+    pricePaise: z.number().int().nonnegative().nullable(),
+    matchedDraftItemId: z.uuid().nullable(),
+    matchStatus: ReceiptLineMatchStatusSchema,
+    createdAt: z.coerce.date(),
+  })
+  .refine((v) => (v.quantityBase === null) === (v.unit === null), {
+    message: "quantityBase and unit must both be set or both be null",
+  });
+export type ReceiptLine = z.infer<typeof ReceiptLineSchema>;
+
+export const ReceiptSchema = z.object({
+  id: z.uuid(),
+  cartDraftId: z.uuid().nullable(),
+  shoppingListId: z.uuid().nullable(),
+  status: ReceiptStatusSchema,
+  merchantName: z.string().nullable(),
+  purchaseDate: z.string().nullable(),
+  totalPaise: z.number().int().nonnegative().nullable(),
+  storedPath: z.string(),
+  mimeType: z.string(),
+  parsedAt: z.coerce.date().nullable(),
+  reconciledAt: z.coerce.date().nullable(),
+  confirmedAt: z.coerce.date().nullable(),
+  createdAt: z.coerce.date(),
+});
+export type Receipt = z.infer<typeof ReceiptSchema>;
+
+export const ReceiptWithLinesSchema = ReceiptSchema.extend({
+  lines: z.array(ReceiptLineSchema),
+});
+export type ReceiptWithLines = z.infer<typeof ReceiptWithLinesSchema>;
+
+export const ParseReceiptResponseSchema = z.object({
+  available: z.boolean(),
+  receipt: ReceiptWithLinesSchema.nullable(),
+  message: z.string().nullable(),
+});
+export type ParseReceiptResponse = z.infer<typeof ParseReceiptResponseSchema>;
+
+/** Matched pair: receipt line with the draft item it matched. */
+export const MatchedPairSchema = z.object({
+  receiptLineId: z.uuid(),
+  draftItemId: z.uuid(),
+  priceDiffPaise: z.number().int().nullable(),
+});
+export type MatchedPair = z.infer<typeof MatchedPairSchema>;
+
+/** Reconciliation report returned to the client after POST /receipts/:id/reconcile. */
+export const ReconciliationReportSchema = z.object({
+  matched: z.array(MatchedPairSchema),
+  extra: z.array(z.uuid()),
+  missing: z.array(z.uuid()),
+  priceDiffs: z.array(MatchedPairSchema),
+  ambiguous: z.array(z.uuid()),
+  receipt: ReceiptWithLinesSchema,
+});
+export type ReconciliationReport = z.infer<typeof ReconciliationReportSchema>;
+
+/** Body for POST /receipts/:id/confirm. */
+export const ConfirmReceiptBodySchema = z.object({
+  /** IDs of receipt lines to include in the ledger transaction. */
+  confirmedLineIds: z.array(z.uuid()).min(1),
+  /** User's account to debit. */
+  accountId: z.uuid(),
+  /** Expense category (required — no auto-categorization). */
+  categoryId: z.uuid(),
+  /** Purchase date (YYYY-MM-DD). */
+  date: z.iso.date(),
+});
+export type ConfirmReceiptBody = z.infer<typeof ConfirmReceiptBodySchema>;
+
+/** Body for POST /receipts/:id/lines (manual line add). */
+export const CreateReceiptLineSchema = z
+  .object({
+    rawText: z.string().min(1).max(500),
+    normalizedName: z.string().max(500).nullable().default(null),
+    catalogItemId: z.uuid().nullable().default(null),
+    quantityBase: z.number().int().nonnegative().nullable().default(null),
+    unit: NormalizedUnitSchema.nullable().default(null),
+    pricePaise: z.number().int().nonnegative().nullable().default(null),
+  })
+  .refine((v) => (v.quantityBase === null) === (v.unit === null), {
+    message: "quantityBase and unit must both be set or both be null",
+  });
+export type CreateReceiptLine = z.input<typeof CreateReceiptLineSchema>;
+
+/** Body for PUT /receipts/:id/lines/:lineId (manual line edit). */
+export const UpdateReceiptLineSchema = z
+  .object({
+    rawText: z.string().min(1).max(500).optional(),
+    normalizedName: z.string().max(500).nullable().optional(),
+    catalogItemId: z.uuid().nullable().optional(),
+    quantityBase: z.number().int().nonnegative().nullable().optional(),
+    unit: NormalizedUnitSchema.nullable().optional(),
+    pricePaise: z.number().int().nonnegative().nullable().optional(),
+  })
+  .refine(
+    (d) => {
+      // Both absent: ok (partial update touching neither field).
+      if (d.quantityBase === undefined && d.unit === undefined) return true;
+      // Both present: must be both null or both non-null (mirrors DB CHECK constraint).
+      if (d.quantityBase !== undefined && d.unit !== undefined) {
+        return (d.quantityBase === null) === (d.unit === null);
+      }
+      // Exactly one present, other absent: invalid.
+      return false;
+    },
+    {
+      message:
+        "quantityBase and unit must be provided together, and must be both null or both non-null",
+    },
+  );
+export type UpdateReceiptLine = z.infer<typeof UpdateReceiptLineSchema>;
+
+export const ReceiptListResponseSchema = z.object({
+  receipts: z.array(ReceiptWithLinesSchema),
+});
+export type ReceiptListResponse = z.infer<typeof ReceiptListResponseSchema>;

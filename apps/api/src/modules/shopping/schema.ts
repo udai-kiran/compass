@@ -1,5 +1,5 @@
 /**
- * shopping module — 9 resident tables + 6 resident enums for the Shopping
+ * shopping module — 12 resident tables + 8 resident enums for the Shopping
  * Intelligence pillar (task 9.1). The first domain built natively on the
  * Phase-1 module pattern rather than migrated onto it.
  *
@@ -43,6 +43,7 @@ import {
   bigint,
   boolean,
   check,
+  date,
   index,
   integer,
   pgEnum,
@@ -338,6 +339,111 @@ export const habitProfiles = pgTable(
     check("habit_profiles_consumption_nonneg", sql`"consumption_base_per_month" IS NULL OR "consumption_base_per_month" >= 0`),
     check("habit_profiles_consumption_unit_paired", sql`("consumption_base_per_month" IS NULL) = ("unit" IS NULL)`),
     check("habit_profiles_observation_count_nonneg", sql`"observation_count" >= 0`),
+  ],
+);
+
+/**
+ * Receipt lifecycle status. Transitions: parsed → reconciled → confirmed.
+ * A confirmed receipt has produced a ledger transaction and cannot be re-reconciled.
+ */
+export const receiptStatus = pgEnum("receipt_status", ["parsed", "reconciled", "confirmed"]);
+
+/**
+ * How a receipt line matched against the cart draft items (task 11.4).
+ * unmatched: default before reconciliation.
+ * matched:   exact catalogItemId or fuzzy name match with a clear winner.
+ * extra:     on receipt but not in draft.
+ * missing:   in draft but not on receipt (stored on synthetic extra line).
+ * price_diff: matched but |priceDiff| > 0.
+ * ambiguous: fuzzy match exists but no clear winner.
+ */
+export const receiptLineMatchStatus = pgEnum("receipt_line_match_status", [
+  "unmatched",
+  "matched",
+  "extra",
+  "missing",
+  "price_diff",
+  "ambiguous",
+]);
+
+/**
+ * One physical receipt per shopping trip. Image stored durably via the Storage
+ * abstraction (storedPath + mimeType). OCR produces receipt_lines. Confirmed
+ * receipts produce a ledger transaction directly (not via the email inbox).
+ *
+ * `stored_path` — matches backup drift test's `stored_path` / `document_path`
+ * convention for FILE_COLUMNS registration.
+ */
+export const receipts = pgTable(
+  "receipts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** Nullable FK to the cart draft this receipt is reconciled against. */
+    cartDraftId: uuid("cart_draft_id").references(() => cartDrafts.id, { onDelete: "set null" }),
+    /** Nullable FK to the synthetic shopping list created on confirm (for rate learning). */
+    shoppingListId: uuid("shopping_list_id").references(() => shoppingLists.id, {
+      onDelete: "set null",
+    }),
+    /** Opaque storage key for the receipt image — named stored_path for backup drift test. */
+    storedPath: text("stored_path").notNull(),
+    /** MIME type of the stored image (image/jpeg, image/png, image/webp). */
+    mimeType: text("mime_type").notNull(),
+    status: receiptStatus("status").notNull().default("parsed"),
+    merchantName: text("merchant_name"),
+    purchaseDate: date("purchase_date"),
+    /** Sum of all line pricePaise — computed from lines before ledger posting. Null until lines exist. */
+    totalPaise: bigint("total_paise", { mode: "number" }),
+    parsedAt: timestamp("parsed_at", { withTimezone: true }),
+    reconciledAt: timestamp("reconciled_at", { withTimezone: true }),
+    confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("receipts_user_idx").on(t.userId),
+    check("receipts_total_nonneg", sql`"total_paise" IS NULL OR "total_paise" >= 0`),
+  ],
+);
+
+/**
+ * One line item on a receipt. Linked to receipt via `receipt_id` (cascade delete).
+ * No `user_id` of its own — scoped through `receipt_id` (see backup.ts LINKED_TABLES).
+ */
+export const receiptLines = pgTable(
+  "receipt_lines",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    receiptId: uuid("receipt_id")
+      .notNull()
+      .references(() => receipts.id, { onDelete: "cascade" }),
+    /** Display order (0-indexed from OCR output or manual position). */
+    position: integer("position").notNull().default(0),
+    /** Raw text from OCR or manual input. */
+    rawText: text("raw_text").notNull(),
+    /** Normalized item name after lowercasing and whitespace collapse. */
+    normalizedName: text("normalized_name"),
+    /** Resolved catalog item (nullable — not all lines match the catalog). */
+    catalogItemId: uuid("catalog_item_id").references(() => catalogItems.id, {
+      onDelete: "set null",
+    }),
+    /** Quantity in base units (g / ml / piece). Always paired with unit. */
+    quantityBase: bigint("quantity_base", { mode: "number" }),
+    unit: normalizedUnit("unit"),
+    /** Line total in integer paise (qty × unit price). */
+    pricePaise: bigint("price_paise", { mode: "number" }),
+    /** Draft item matched against this line (set during reconciliation). */
+    matchedDraftItemId: uuid("matched_draft_item_id"),
+    matchStatus: receiptLineMatchStatus("match_status").notNull().default("unmatched"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("receipt_lines_receipt_idx").on(t.receiptId),
+    check("receipt_lines_quantity_nonneg", sql`"quantity_base" IS NULL OR "quantity_base" >= 0`),
+    check("receipt_lines_quantity_unit_paired", sql`("quantity_base" IS NULL) = ("unit" IS NULL)`),
+    check("receipt_lines_price_nonneg", sql`"price_paise" IS NULL OR "price_paise" >= 0`),
+    check("receipt_lines_position_nonneg", sql`"position" >= 0`),
   ],
 );
 

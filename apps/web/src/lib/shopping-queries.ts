@@ -2,7 +2,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CanonicalizeItemResponseSchema,
   BuyNowVsWaitSchema,
+  CartDraftWithItemsSchema,
   CatalogItemSchema,
+  FinancialGuardsResponseSchema,
+  GenerateDraftResponseSchema,
   HabitProfileListResponseSchema,
   ParseListImageResponseSchema,
   ParseListTextResponseSchema,
@@ -19,6 +22,7 @@ import {
   type ParseListTextRequest,
   type ReplenishPantry,
   type ReorderItems,
+  type UpdateCartDraftItem,
   type UpdateShoppingList,
   type UpdateShoppingListItem,
 } from "@compass/shared";
@@ -347,5 +351,131 @@ export function useHonestyCheck(itemId: string | null, claimedMrpPaise: number, 
         PriceHonestyResultSchema,
       ),
     enabled: !!itemId && claimedMrpPaise > 0,
+  });
+}
+
+// ─── Cart Draft queries (task 12.2) ──────────────────────────────────────────
+
+/** Local response schema for draft list (not in shared). */
+const CartDraftListResponseSchema = z.object({ drafts: z.array(CartDraftWithItemsSchema) });
+
+/** Fetch all cart drafts for the current user. */
+export function useCartDrafts() {
+  return useQuery({
+    queryKey: ["cart-drafts"] as const,
+    queryFn: () => apiGet("/api/shopping/drafts", CartDraftListResponseSchema),
+  });
+}
+
+/** Fetch a single cart draft by id. Only fires when id is truthy. */
+export function useCartDraft(id: string | null) {
+  return useQuery({
+    queryKey: ["cart-draft", id] as const,
+    queryFn: () => apiGet(`/api/shopping/drafts/${id!}`, CartDraftWithItemsSchema),
+    enabled: !!id,
+  });
+}
+
+/**
+ * Fetch financial guards for a cart total.
+ * Only fires when cartTotalPaise > 0.
+ * NOTE: EMI offers are not passed — the guard hook has no EMI offer input source.
+ * EMI section is therefore always null. Documented limitation.
+ */
+export function useFinancialGuards(cartTotalPaise: number) {
+  return useQuery({
+    queryKey: ["shopping", "guards", cartTotalPaise] as const,
+    queryFn: () =>
+      apiGet(
+        `/api/shopping/guards/check?cartTotalPaise=${cartTotalPaise}`,
+        FinancialGuardsResponseSchema,
+      ),
+    enabled: cartTotalPaise > 0,
+  });
+}
+
+/** Cart draft mutations: generate, updateItem, abandon, accept. */
+export function useCartDraftMutations() {
+  const qc = useQueryClient();
+
+  function invalidateDrafts() {
+    return qc.invalidateQueries({ queryKey: ["cart-drafts"] });
+  }
+
+  function invalidateDraft(id: string) {
+    return qc.invalidateQueries({ queryKey: ["cart-draft", id] });
+  }
+
+  /** Generate (or return today's existing) draft. */
+  const generate = useMutation({
+    mutationFn: () => apiPost("/api/shopping/drafts/generate", GenerateDraftResponseSchema),
+    onSuccess: () => invalidateDrafts(),
+  });
+
+  /** Edit quantity/unit/isRemoved on a draft item. */
+  const updateItem = useMutation({
+    mutationFn: ({
+      draftId,
+      itemId,
+      body,
+    }: {
+      draftId: string;
+      itemId: string;
+      body: UpdateCartDraftItem;
+    }) =>
+      apiPut(
+        `/api/shopping/drafts/${draftId}/items/${itemId}`,
+        CartDraftWithItemsSchema,
+        body,
+      ),
+    onSuccess: (_, { draftId }) => {
+      void invalidateDrafts();
+      void invalidateDraft(draftId);
+    },
+  });
+
+  /**
+   * Abandon a draft (set status='abandoned').
+   * Uses raw fetch because the route returns 204 with no body; apiDelete parses JSON.
+   */
+  const abandon = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await fetch(`/api/shopping/drafts/${id}`, { method: "DELETE" });
+      if (!res.ok) {
+        let message = res.statusText;
+        try {
+          const body: unknown = await res.json();
+          if (typeof body === "object" && body !== null && "message" in body) {
+            message = String((body as { message: unknown }).message);
+          }
+        } catch {
+          // non-JSON error body
+        }
+        throw new ApiError(res.status, message);
+      }
+    },
+    onSuccess: () => invalidateDrafts(),
+  });
+
+  /** Accept a draft (set status='ordered'). Returns the updated draft. */
+  const accept = useMutation({
+    mutationFn: (id: string) =>
+      apiPost(`/api/shopping/drafts/${id}/accept`, CartDraftWithItemsSchema),
+    onSuccess: () => invalidateDrafts(),
+  });
+
+  return { generate, updateItem, abandon, accept };
+}
+
+/**
+ * Derived count of status='draft' carts, refetched every 60 s for the badge.
+ * Returns the query result (data is the number or undefined while loading).
+ */
+export function useDraftCount() {
+  return useQuery({
+    queryKey: ["cart-drafts"] as const,
+    queryFn: () => apiGet("/api/shopping/drafts", CartDraftListResponseSchema),
+    select: (data) => data.drafts.filter((d) => d.status === "draft").length,
+    refetchInterval: 60_000,
   });
 }
