@@ -24,6 +24,10 @@ const PAGES: Array<{ label: string; to: string }> = [
   { label: "Notifications", to: "/notifications" },
   { label: "Household", to: "/household" },
   { label: "Settings", to: "/settings" },
+  { label: "Shopping Lists", to: "/shopping/lists" },
+  { label: "Shopping Cart", to: "/shopping/cart" },
+  { label: "Pantry", to: "/shopping/pantry" },
+  { label: "Price Watch", to: "/shopping/price-watch" },
 ];
 
 type Item = { key: string; group: string; label: string; hint?: string; to: string };

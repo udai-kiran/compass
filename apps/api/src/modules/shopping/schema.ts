@@ -277,6 +277,37 @@ export const cartDrafts = pgTable(
   ],
 );
 
+/** A proposed line in a predicted cart. Drafts are advisory and never orders. */
+export const cartDraftItems = pgTable(
+  "cart_draft_items",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    cartDraftId: uuid("cart_draft_id")
+      .notNull()
+      .references(() => cartDrafts.id, { onDelete: "cascade" }),
+    catalogItemId: uuid("catalog_item_id").references(() => catalogItems.id, {
+      onDelete: "set null",
+    }),
+    quantityBase: bigint("quantity_base", { mode: "number" }),
+    unit: normalizedUnit("unit"),
+    reason: text("reason").notNull(),
+    suggestedPricePaise: bigint("suggested_price_paise", { mode: "number" }),
+    suggestedSourceId: uuid("suggested_source_id").references(() => priceSources.id, {
+      onDelete: "set null",
+    }),
+    substitutionForItemId: uuid("substitution_for_item_id"),
+    priceDeltaPaise: bigint("price_delta_paise", { mode: "number" }),
+    isRemoved: boolean("is_removed").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("cart_draft_items_draft_idx").on(t.cartDraftId),
+    check("cart_draft_items_quantity_nonneg", sql`"quantity_base" IS NULL OR "quantity_base" >= 0`),
+    check("cart_draft_items_quantity_unit_paired", sql`("quantity_base" IS NULL) = ("unit" IS NULL)`),
+    check("cart_draft_items_price_nonneg", sql`"suggested_price_paise" IS NULL OR "suggested_price_paise" >= 0`),
+  ],
+);
+
 /**
  * Learned consumption rate per catalog item (task 11.1 computes it).
  * `consumptionBasePerMonth` is an integer count of base units per 30-day month

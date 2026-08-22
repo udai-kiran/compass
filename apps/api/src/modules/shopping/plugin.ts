@@ -10,6 +10,10 @@ import { shoppingServiceabilityRoutes } from "./routes/serviceability.ts";
 import { shoppingArbitrageRoutes } from "./routes/arbitrage.ts";
 import { shoppingPriceHistoryRoutes } from "./routes/price-history.ts";
 import { checkoutRecommendationRoutes } from "./routes/checkout-recommendation.ts";
+import { shoppingPantryRoutes } from "./routes/pantry.ts";
+import { shoppingHabitProfileRoutes } from "./routes/habit-profiles.ts";
+import { financialGuardRoutes } from "./routes/financial-guards.ts";
+import { shoppingCartDraftRoutes } from "./routes/cart-drafts.ts";
 
 /**
  * `modules/shopping/` — Shopping Intelligence pillar (task 9.1). The first
@@ -34,4 +38,8 @@ export async function shoppingRoutes(app: FastifyInstance): Promise<void> {
   await app.register(shoppingPriceHistoryRoutes);
   await app.register(shoppingArbitrageRoutes);
   await app.register(checkoutRecommendationRoutes);
+  await app.register(shoppingPantryRoutes);
+  await app.register(shoppingHabitProfileRoutes);
+  await app.register(financialGuardRoutes);
+  await app.register(shoppingCartDraftRoutes);
 }

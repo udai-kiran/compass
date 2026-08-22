@@ -45,7 +45,7 @@ export const ALL_TABLES = [
   "mailbox_accounts", "mailbox_credentials", "email_ingestions", "card_offers", "extracted_transactions",
   "statement_reconciliations", "ai_events",
   "catalog_items", "price_sources", "serviceability_checks", "shopping_lists", "shopping_list_items",
-  "price_observations", "pantry_items", "cart_drafts", "habit_profiles",
+  "price_observations", "pantry_items", "cart_drafts", "cart_draft_items", "habit_profiles",
 ] as const;
 
 /** Tables that carry a user_id directly — scoped by that column in the export. */
@@ -91,6 +91,7 @@ export const LINKED_TABLES: Record<string, { fk: string; parent: string; parentU
   split_shares: { fk: "split_id", parent: "splits", parentUserCol: "created_by_user_id" },
   settlements: { fk: "household_id", parent: "households", parentUserCol: "created_by_user_id" },
   shopping_list_items: { fk: "list_id", parent: "shopping_lists" },
+  cart_draft_items: { fk: "cart_draft_id", parent: "cart_drafts" },
 };
 
 /**

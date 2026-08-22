@@ -104,7 +104,7 @@ const householdResidents = new Set([
 
 const shoppingResidents = new Set([
   "catalogItems", "priceSources", "shoppingLists", "shoppingListItems", "priceObservations",
-  "pantryItems", "cartDrafts", "habitProfiles", "serviceabilityChecks",
+  "pantryItems", "cartDrafts", "cartDraftItems", "habitProfiles", "serviceabilityChecks",
   "shoppingListStatus", "shoppingListItemStatus", "normalizedUnit", "priceSourceKind",
   "cartDraftStatus", "deliveryEtaBandEnum",
 ]);
@@ -113,8 +113,8 @@ const shoppingResidents = new Set([
 
 describe("db/schema.ts decomposition", () => {
 
-  // T3c: barrel exports exactly 69 tables + 51 enums + users, no duplicates
-  it("exports exactly 69 tables + 51 enums + users with no duplicates", () => {
+  // T3c: barrel exports exactly 70 tables + 51 enums + users, no duplicates
+  it("exports exactly 70 tables + 51 enums + users with no duplicates", () => {
     const tables: string[] = [];
     const enums: string[] = [];
     // Postgres-level object names — JS export keys are unique by construction,
@@ -146,7 +146,7 @@ describe("db/schema.ts decomposition", () => {
       `duplicate enum DB names: ${enumDbNames.filter((n, i) => enumDbNames.indexOf(n) !== i)}`,
     );
 
-    assert.equal(tables.length, 69, `expected 69 tables, got ${tables.length}: ${tables.join(", ")}`);
+    assert.equal(tables.length, 70, `expected 70 tables, got ${tables.length}: ${tables.join(", ")}`);
     assert.equal(enums.length, 51, `expected 51 enums, got ${enums.length}: ${enums.join(", ")}`);
 
     // users is also in the barrel

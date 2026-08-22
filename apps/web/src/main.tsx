@@ -111,6 +111,18 @@ const EventLogPage = lazy(() =>
 const HouseholdPage = lazy(() =>
   import("./routes/household/HouseholdPage.tsx").then((m) => ({ default: m.HouseholdPage })),
 );
+const ShoppingListsPage = lazy(() =>
+  import("./routes/shopping/ListsPage.tsx").then((m) => ({ default: m.ListsPage })),
+);
+const ShoppingCartPage = lazy(() =>
+  import("./routes/shopping/CartPage.tsx").then((m) => ({ default: m.CartPage })),
+);
+const ShoppingPantryPage = lazy(() =>
+  import("./routes/shopping/PantryPage.tsx").then((m) => ({ default: m.PantryPage })),
+);
+const ShoppingPriceWatchPage = lazy(() =>
+  import("./routes/shopping/PriceWatchPage.tsx").then((m) => ({ default: m.PriceWatchPage })),
+);
 
 function onApiError(err: unknown) {
   // 401s are handled by redirecting to /login — don't toast them.
@@ -164,6 +176,10 @@ const router = createBrowserRouter([
       { path: "settings/accounts/:id", element: <AccountDetailPage /> },
       { path: "events", element: <EventLogPage /> },
       { path: "status", element: <StatusPage /> },
+      { path: "shopping/lists", element: <ShoppingListsPage /> },
+      { path: "shopping/cart", element: <ShoppingCartPage /> },
+      { path: "shopping/pantry", element: <ShoppingPantryPage /> },
+      { path: "shopping/price-watch", element: <ShoppingPriceWatchPage /> },
       { path: "*", element: <NotFound /> },
     ],
   },
