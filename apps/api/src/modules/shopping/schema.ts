@@ -1,5 +1,5 @@
 /**
- * shopping module — 8 resident tables + 5 resident enums for the Shopping
+ * shopping module — 9 resident tables + 6 resident enums for the Shopping
  * Intelligence pillar (task 9.1). The first domain built natively on the
  * Phase-1 module pattern rather than migrated onto it.
  *
@@ -76,6 +76,17 @@ export const priceSourceKind = pgEnum("price_source_kind", [
 export const cartDraftStatus = pgEnum("cart_draft_status", ["draft", "ordered", "abandoned"]);
 
 /**
+ * Delivery speed band for a price source. `null` means unknown — there is no
+ * "unknown" enum value to avoid two representations of the same state.
+ */
+export const deliveryEtaBandEnum = pgEnum("delivery_eta_band", [
+  "instant",
+  "same_day",
+  "next_day",
+  "scheduled",
+]);
+
+/**
  * Canonical purchasable item, per user. Deliberately user-scoped rather than a
  * global curated catalog: Compass has no admin/owner-privileged data path (see
  * CLAUDE.md), and a per-user catalog keeps the per-user backup a complete
@@ -116,10 +127,20 @@ export const priceSources = pgTable(
     kind: priceSourceKind("kind").notNull(),
     url: text("url"),
     isActive: boolean("is_active").notNull().default(true),
+    /** Delivery fee in integer paise — null means not applicable or unknown. */
+    deliveryFeePaise: bigint("delivery_fee_paise", { mode: "number" }),
+    /** Minimum cart value for free delivery / order eligibility in integer paise — null means unknown. */
+    minCartPaise: bigint("min_cart_paise", { mode: "number" }),
+    /** Delivery speed band — null means unknown. No "unknown" enum value (see deliveryEtaBandEnum). */
+    deliveryEtaBand: deliveryEtaBandEnum("delivery_eta_band"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [uniqueIndex("price_sources_user_name_idx").on(t.userId, t.name)],
+  (t) => [
+    uniqueIndex("price_sources_user_name_idx").on(t.userId, t.name),
+    check("price_sources_delivery_fee_nonneg", sql`"delivery_fee_paise" IS NULL OR "delivery_fee_paise" >= 0`),
+    check("price_sources_min_cart_nonneg", sql`"min_cart_paise" IS NULL OR "min_cart_paise" >= 0`),
+  ],
 );
 
 export const shoppingLists = pgTable(
@@ -286,5 +307,38 @@ export const habitProfiles = pgTable(
     check("habit_profiles_consumption_nonneg", sql`"consumption_base_per_month" IS NULL OR "consumption_base_per_month" >= 0`),
     check("habit_profiles_consumption_unit_paired", sql`("consumption_base_per_month" IS NULL) = ("unit" IS NULL)`),
     check("habit_profiles_observation_count_nonneg", sql`"observation_count" >= 0`),
+  ],
+);
+
+/**
+ * Records whether a price source delivers to a given pincode (task 10.2).
+ *
+ * Unique per (priceSourceId, pincode) — upsert updates the existing row.
+ * `isServiceable` is a 3-valued flag: true=yes, false=no, null=unknown.
+ * null is NEVER assumed to mean "available" — absence of data is explicit.
+ *
+ * Pincode is stored locally only and MUST NEVER be sent to AI providers or
+ * any external service. Delivery address privacy is a hard requirement.
+ */
+export const serviceabilityChecks = pgTable(
+  "serviceability_checks",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    priceSourceId: uuid("price_source_id")
+      .notNull()
+      .references(() => priceSources.id, { onDelete: "cascade" }),
+    pincode: text("pincode").notNull(),
+    /** null = unknown; true = serviceable; false = not serviceable. Never assumed true. */
+    isServiceable: boolean("is_serviceable"),
+    observedAt: timestamp("observed_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("serviceability_checks_source_pincode_idx").on(t.priceSourceId, t.pincode),
+    index("serviceability_checks_user_idx").on(t.userId),
+    check("serviceability_checks_pincode_nonempty", sql`length("pincode") > 0`),
   ],
 );

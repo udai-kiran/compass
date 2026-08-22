@@ -16,7 +16,7 @@
 
 import { and, eq } from "drizzle-orm";
 import type { DbOrTx } from "../../../db/index.ts";
-import { catalogItems, shoppingListItems, shoppingLists } from "../schema.ts";
+import { catalogItems, priceObservations, priceSources, shoppingListItems, shoppingLists } from "../schema.ts";
 import { HttpError } from "../../../lib/errors.ts";
 
 /**
@@ -50,6 +50,38 @@ export async function assertOwnedCatalogItem(
     columns: { id: true },
   });
   if (!row) throw new HttpError(404, "Catalog item not found");
+}
+
+/**
+ * Assert that `sourceId` exists and belongs to `userId`.
+ * Cross-owner or non-existent → `HttpError(404)`.
+ */
+export async function assertOwnedPriceSource(
+  db: DbOrTx,
+  userId: string,
+  sourceId: string,
+): Promise<void> {
+  const row = await db.query.priceSources.findFirst({
+    where: and(eq(priceSources.id, sourceId), eq(priceSources.userId, userId)),
+    columns: { id: true },
+  });
+  if (!row) throw new HttpError(404, "Price source not found");
+}
+
+/**
+ * Assert that `obsId` exists and belongs to `userId`.
+ * Cross-owner or non-existent → `HttpError(404)`.
+ */
+export async function assertOwnedPriceObservation(
+  db: DbOrTx,
+  userId: string,
+  obsId: string,
+): Promise<void> {
+  const row = await db.query.priceObservations.findFirst({
+    where: and(eq(priceObservations.id, obsId), eq(priceObservations.userId, userId)),
+    columns: { id: true },
+  });
+  if (!row) throw new HttpError(404, "Price observation not found");
 }
 
 /**

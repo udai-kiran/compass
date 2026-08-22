@@ -6,11 +6,11 @@
  *
  *   - `./core-schema.ts`           — shared identity leaf (users)
  *   - `./shared/<layer>.ts`        — inter-module shared tables/enums (15 tables, 25 enums)
- *   - `../modules/<domain>/schema.ts` — domain-resident tables/enums (50 tables, 22 enums)
+ *   - `../modules/<domain>/schema.ts` — domain-resident tables/enums (54 tables, 26 enums)
  *
  * Drizzle Kit resolves the full schema graph from this single entry point
- * (configured in drizzle.config.ts). The export set is exactly 66 tables
- * (65 domain + users) and 47 enums, each exported exactly once.
+ * (configured in drizzle.config.ts). The export set is exactly 70 tables
+ * (69 domain + users) and 51 enums, each exported exactly once.
  */
 
 export { users } from "./core-schema.ts";
@@ -44,8 +44,14 @@ export {
   overdraftDetails,
   rewardEntries,
   emiDetails,
+  cardOffers,
+  rewardRules,
+  rewardPointLots,
   cardNetwork,
   bankAccountSubtype,
+  cardOfferDiscountKind,
+  rewardRedemptionRoute,
+  rewardCapPeriod,
 } from "../modules/credit/schema.ts";
 
 export {
@@ -117,9 +123,11 @@ export {
   pantryItems,
   cartDrafts,
   habitProfiles,
+  serviceabilityChecks,
   shoppingListStatus,
   shoppingListItemStatus,
   normalizedUnit,
   priceSourceKind,
   cartDraftStatus,
+  deliveryEtaBandEnum,
 } from "../modules/shopping/schema.ts";

@@ -25,6 +25,11 @@ import {
   ParseListTextRequestSchema,
   ParseListTextResponseSchema,
   ParseListImageResponseSchema,
+  CreatePriceSourceSchema,
+  UpdatePriceSourceSchema,
+  CreatePriceObservationSchema,
+  PriceObservationWithSourceSchema,
+  PriceObservationsResponseSchema,
 } from "./shopping.ts";
 import { AiEventKindSchema } from "./ai-events.ts";
 
@@ -1131,4 +1136,215 @@ test("ParseListImageResponseSchema deepEqual: available=false, empty items, mess
     items: [],
     message: "Photo capture requires a vision-capable AI provider",
   });
+});
+
+// ── Task 10.1 — Price Sources & Observations schemas ─────────────────────────
+
+test("CreatePriceSourceSchema accepts name+kind (url defaults to null, isActive defaults to true)", () => {
+  const r = CreatePriceSourceSchema.safeParse({ name: "Blinkit", kind: "quick_commerce" });
+  assert.equal(r.success, true, `Expected success but got: ${JSON.stringify(r)}`);
+  if (r.success) {
+    assert.equal(r.data.name, "Blinkit");
+    assert.equal(r.data.kind, "quick_commerce");
+    assert.equal(r.data.url, null);
+    assert.equal(r.data.isActive, true);
+  }
+});
+
+test("CreatePriceSourceSchema accepts a valid URL", () => {
+  const r = CreatePriceSourceSchema.safeParse({
+    name: "Blinkit",
+    kind: "quick_commerce",
+    url: "https://blinkit.com",
+    isActive: true,
+  });
+  assert.equal(r.success, true);
+});
+
+test("CreatePriceSourceSchema rejects blank name", () => {
+  assert.equal(CreatePriceSourceSchema.safeParse({ name: "", kind: "ecommerce" }).success, false);
+  assert.equal(CreatePriceSourceSchema.safeParse({ name: "   ", kind: "ecommerce" }).success, false);
+});
+
+test("CreatePriceSourceSchema rejects name > 120 chars", () => {
+  assert.equal(
+    CreatePriceSourceSchema.safeParse({ name: "a".repeat(121), kind: "ecommerce" }).success,
+    false,
+  );
+});
+
+test("CreatePriceSourceSchema rejects an invalid URL", () => {
+  assert.equal(
+    CreatePriceSourceSchema.safeParse({ name: "Blinkit", kind: "quick_commerce", url: "not-a-url" }).success,
+    false,
+  );
+});
+
+test("UpdatePriceSourceSchema requires all four fields; omitting any is a 400", () => {
+  const full = {
+    name: "Blinkit",
+    kind: "quick_commerce" as const,
+    url: "https://blinkit.com",
+    isActive: true,
+  };
+  assert.equal(UpdatePriceSourceSchema.safeParse(full).success, true);
+  // Missing isActive → reject.
+  const { isActive: _a, ...noActive } = full;
+  assert.equal(UpdatePriceSourceSchema.safeParse(noActive).success, false);
+  // Missing url → reject.
+  const { url: _u, ...noUrl } = full;
+  assert.equal(UpdatePriceSourceSchema.safeParse(noUrl).success, false);
+  // Missing kind → reject.
+  const { kind: _k, ...noKind } = full;
+  assert.equal(UpdatePriceSourceSchema.safeParse(noKind).success, false);
+  // Missing name → reject.
+  const { name: _n, ...noName } = full;
+  assert.equal(UpdatePriceSourceSchema.safeParse(noName).success, false);
+});
+
+test("UpdatePriceSourceSchema accepts url=null", () => {
+  const r = UpdatePriceSourceSchema.safeParse({
+    name: "Local Kirana",
+    kind: "local_store",
+    url: null,
+    isActive: true,
+  });
+  assert.equal(r.success, true);
+});
+
+test("CreatePriceObservationSchema accepts catalogItemId + priceSourceId + pricePaise (all optionals default)", () => {
+  const r = CreatePriceObservationSchema.safeParse({
+    catalogItemId: UUID,
+    priceSourceId: UUID2,
+    pricePaise: 14900,
+  });
+  assert.equal(r.success, true, `Expected success: ${JSON.stringify(r)}`);
+  if (r.success) {
+    assert.equal(r.data.pricePaise, 14900);
+    assert.equal(r.data.mrpPaise, null);
+    assert.equal(r.data.packQuantityBase, null);
+    assert.equal(r.data.unit, null);
+    assert.ok(r.data.observedAt instanceof Date, "observedAt should be a Date");
+  }
+});
+
+test("CreatePriceObservationSchema enforces quantity/unit pairing", () => {
+  const base = { catalogItemId: UUID, priceSourceId: UUID2, pricePaise: 14900 };
+  // packQuantityBase without unit → reject.
+  assert.equal(
+    CreatePriceObservationSchema.safeParse({ ...base, packQuantityBase: 500 }).success,
+    false,
+  );
+  // unit without packQuantityBase → reject.
+  assert.equal(
+    CreatePriceObservationSchema.safeParse({ ...base, unit: "g" }).success,
+    false,
+  );
+  // both set → accept.
+  assert.equal(
+    CreatePriceObservationSchema.safeParse({ ...base, packQuantityBase: 500, unit: "g" }).success,
+    true,
+  );
+  // both null → accept.
+  assert.equal(
+    CreatePriceObservationSchema.safeParse({ ...base, packQuantityBase: null, unit: null }).success,
+    true,
+  );
+});
+
+test("CreatePriceObservationSchema rejects negative pricePaise", () => {
+  assert.equal(
+    CreatePriceObservationSchema.safeParse({
+      catalogItemId: UUID,
+      priceSourceId: UUID2,
+      pricePaise: -1,
+    }).success,
+    false,
+  );
+});
+
+test("CreatePriceObservationSchema coerces observedAt string to Date", () => {
+  const r = CreatePriceObservationSchema.safeParse({
+    catalogItemId: UUID,
+    priceSourceId: UUID2,
+    pricePaise: 14900,
+    observedAt: NOW,
+  });
+  assert.equal(r.success, true);
+  if (r.success) {
+    assert.ok(r.data.observedAt instanceof Date, "observedAt must be coerced to Date");
+  }
+});
+
+test("PriceObservationWithSourceSchema accepts a valid observation extended with sourceName, sourceKind, isStale", () => {
+  const r = PriceObservationWithSourceSchema.safeParse({
+    id: UUID,
+    catalogItemId: UUID,
+    priceSourceId: UUID2,
+    pricePaise: 14900,
+    mrpPaise: null,
+    packQuantityBase: null,
+    unit: null,
+    observedAt: NOW,
+    createdAt: NOW,
+    sourceName: "Blinkit",
+    sourceKind: "quick_commerce",
+    isStale: false,
+  });
+  assert.equal(r.success, true, `Expected success: ${JSON.stringify(r)}`);
+});
+
+test("PriceObservationWithSourceSchema rejects missing isStale", () => {
+  const r = PriceObservationWithSourceSchema.safeParse({
+    id: UUID,
+    catalogItemId: UUID,
+    priceSourceId: UUID2,
+    pricePaise: 14900,
+    mrpPaise: null,
+    packQuantityBase: null,
+    unit: null,
+    observedAt: NOW,
+    createdAt: NOW,
+    sourceName: "Blinkit",
+    sourceKind: "quick_commerce",
+    // isStale omitted
+  });
+  assert.equal(r.success, false);
+});
+
+test("PriceObservationsResponseSchema accepts an empty observations array", () => {
+  const r = PriceObservationsResponseSchema.safeParse({ observations: [] });
+  assert.equal(r.success, true);
+});
+
+test("PriceObservationsResponseSchema deepEqual: one observation round-trip", () => {
+  const obs = {
+    id: UUID,
+    catalogItemId: UUID,
+    priceSourceId: UUID2,
+    pricePaise: 14900,
+    mrpPaise: null,
+    packQuantityBase: null,
+    unit: null,
+    observedAt: NOW,
+    createdAt: NOW,
+    sourceName: "Blinkit",
+    sourceKind: "quick_commerce" as const,
+    isStale: false,
+  };
+  const parsed = PriceObservationsResponseSchema.parse({ observations: [obs] });
+  assert.equal(parsed.observations.length, 1);
+  assert.equal(parsed.observations[0]!.sourceName, "Blinkit");
+  assert.equal(parsed.observations[0]!.isStale, false);
+});
+
+test("CreatePriceSourceSchema deepEqual: name only — url null, isActive true", () => {
+  const parsed = CreatePriceSourceSchema.parse({ name: "Zepto", kind: "quick_commerce" });
+  assert.deepEqual(parsed, { name: "Zepto", kind: "quick_commerce", url: null, isActive: true });
+});
+
+test("UpdatePriceSourceSchema deepEqual: full replace round-trip", () => {
+  const input = { name: "BigBasket", kind: "ecommerce" as const, url: "https://www.bigbasket.com", isActive: false };
+  const parsed = UpdatePriceSourceSchema.parse(input);
+  assert.deepEqual(parsed, input);
 });

@@ -69,7 +69,8 @@ const ledgerResidents = new Set([
 
 const creditResidents = new Set([
   "cardDetails", "cardIssuerSettings", "cardStatements", "bankDetails", "overdraftDetails",
-  "rewardEntries", "emiDetails", "cardNetwork", "bankAccountSubtype",
+  "rewardEntries", "emiDetails", "cardOffers", "rewardRules", "rewardPointLots",
+  "cardNetwork", "bankAccountSubtype", "cardOfferDiscountKind", "rewardRedemptionRoute", "rewardCapPeriod",
 ]);
 
 const investmentsResidents = new Set([
@@ -103,17 +104,17 @@ const householdResidents = new Set([
 
 const shoppingResidents = new Set([
   "catalogItems", "priceSources", "shoppingLists", "shoppingListItems", "priceObservations",
-  "pantryItems", "cartDrafts", "habitProfiles",
+  "pantryItems", "cartDrafts", "habitProfiles", "serviceabilityChecks",
   "shoppingListStatus", "shoppingListItemStatus", "normalizedUnit", "priceSourceKind",
-  "cartDraftStatus",
+  "cartDraftStatus", "deliveryEtaBandEnum",
 ]);
 
 // ── Tests ──────────────────────────────────────────────────────────────────
 
 describe("db/schema.ts decomposition", () => {
 
-  // T3c: barrel exports exactly 65 tables + 47 enums + users, no duplicates
-  it("exports exactly 65 tables + 47 enums + users with no duplicates", () => {
+  // T3c: barrel exports exactly 69 tables + 51 enums + users, no duplicates
+  it("exports exactly 69 tables + 51 enums + users with no duplicates", () => {
     const tables: string[] = [];
     const enums: string[] = [];
     // Postgres-level object names — JS export keys are unique by construction,
@@ -145,8 +146,8 @@ describe("db/schema.ts decomposition", () => {
       `duplicate enum DB names: ${enumDbNames.filter((n, i) => enumDbNames.indexOf(n) !== i)}`,
     );
 
-    assert.equal(tables.length, 65, `expected 65 tables, got ${tables.length}: ${tables.join(", ")}`);
-    assert.equal(enums.length, 47, `expected 47 enums, got ${enums.length}: ${enums.join(", ")}`);
+    assert.equal(tables.length, 69, `expected 69 tables, got ${tables.length}: ${tables.join(", ")}`);
+    assert.equal(enums.length, 51, `expected 51 enums, got ${enums.length}: ${enums.join(", ")}`);
 
     // users is also in the barrel
     assert.ok(isPgTable(barrel.users), "users should be a pgTable in the barrel");
@@ -248,7 +249,7 @@ describe("db/schema.ts decomposition", () => {
     }
 
     // Module resident enums
-    for (const k of ["cardNetwork", "bankAccountSubtype"]) {
+    for (const k of ["cardNetwork", "bankAccountSubtype", "cardOfferDiscountKind", "rewardRedemptionRoute", "rewardCapPeriod"]) {
       enumMap[k] = { module: credit as unknown as Record<string, unknown>, key: k };
     }
     for (const k of ["npsTier", "goldForm", "holdingEventType", "holdingEventSource"]) {
@@ -263,7 +264,7 @@ describe("db/schema.ts decomposition", () => {
     for (const k of ["aiProvider", "aiEventKind", "aiEventStatus"]) {
       enumMap[k] = { module: automation as unknown as Record<string, unknown>, key: k };
     }
-    for (const k of ["shoppingListStatus", "shoppingListItemStatus", "normalizedUnit", "priceSourceKind", "cartDraftStatus"]) {
+    for (const k of ["shoppingListStatus", "shoppingListItemStatus", "normalizedUnit", "priceSourceKind", "cartDraftStatus", "deliveryEtaBandEnum"]) {
       enumMap[k] = { module: shopping as unknown as Record<string, unknown>, key: k };
     }
 
