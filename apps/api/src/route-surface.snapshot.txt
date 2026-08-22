@@ -27,6 +27,8 @@ DELETE /api/shopping/drafts/:id
 DELETE /api/shopping/lists/:id
 DELETE /api/shopping/lists/:id/items/:itemId
 DELETE /api/shopping/observations/:id
+DELETE /api/shopping/receipts/:id
+DELETE /api/shopping/receipts/:id/lines/:lineId
 DELETE /api/shopping/sources/:id
 DELETE /api/sips/:id
 DELETE /api/sips/:id/installments/link/:transactionId
@@ -139,6 +141,8 @@ GET /api/shopping/lists
 GET /api/shopping/lists/:id
 GET /api/shopping/observations
 GET /api/shopping/pantry
+GET /api/shopping/receipts
+GET /api/shopping/receipts/:id
 GET /api/shopping/sources
 GET /api/shopping/sources/:sourceId/serviceability
 GET /api/shopping/units
@@ -259,6 +263,8 @@ HEAD /api/shopping/lists
 HEAD /api/shopping/lists/:id
 HEAD /api/shopping/observations
 HEAD /api/shopping/pantry
+HEAD /api/shopping/receipts
+HEAD /api/shopping/receipts/:id
 HEAD /api/shopping/sources
 HEAD /api/shopping/sources/:sourceId/serviceability
 HEAD /api/shopping/units
@@ -353,6 +359,7 @@ POST /api/recurring
 POST /api/resources
 POST /api/sharing-grants
 POST /api/shopping/catalog
+POST /api/shopping/drafts/:id/accept
 POST /api/shopping/drafts/generate
 POST /api/shopping/habits/:catalogItemId/recompute
 POST /api/shopping/lists
@@ -365,6 +372,10 @@ POST /api/shopping/pantry/:catalogItemId/replenish
 POST /api/shopping/pantry/decay
 POST /api/shopping/parse-image
 POST /api/shopping/parse-text
+POST /api/shopping/receipts/:id/confirm
+POST /api/shopping/receipts/:id/lines
+POST /api/shopping/receipts/:id/reconcile
+POST /api/shopping/receipts/parse
 POST /api/shopping/recommend
 POST /api/shopping/sources
 POST /api/sips
@@ -404,6 +415,7 @@ PUT /api/shopping/drafts/:id/items/:itemId
 PUT /api/shopping/lists/:id
 PUT /api/shopping/lists/:id/items/:itemId
 PUT /api/shopping/lists/:id/items/reorder
+PUT /api/shopping/receipts/:id/lines/:lineId
 PUT /api/shopping/sources/:id
 PUT /api/shopping/sources/:sourceId/serviceability/:pincode
 PUT /api/transactions/:id/splits

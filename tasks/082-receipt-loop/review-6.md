@@ -1,0 +1,44 @@
+## High
+
+- The parse route cannot link a receipt to a cart draft, breaking the central receipt → cart workflow and making AC9 unreachable through the API. Multipart is registered without `attachFieldsToBody`, but the route reads `cartDraftId` from `req.body`; multipart fields are instead available through `file.fields`. Consequently `cartDraftId` is always undefined in normal use. It is also neither UUID-validated nor ownership-checked before insertion. See [receipts.ts](/work/personal/compass/apps/api/src/modules/shopping/routes/receipts.ts:189), [app.ts](/work/personal/compass/apps/api/src/app.ts:256), and [receipt-parse.ts](/work/personal/compass/apps/api/src/modules/shopping/services/receipt-parse.ts:210).
+
+- Reconciliation’s confirmed-status guard is vulnerable to a race that can permit duplicate confirmation. `reconcileReceipt()` reads the status, performs several independent writes, then unconditionally sets the receipt to `reconciled`. If confirmation commits after the initial read but before that final update, reconciliation changes a confirmed receipt back to reconciled, allowing another confirmation and ledger transaction. Line edit/delete guards have the same check-then-write race and can mutate lines after confirmation. The persistence needs a transaction or conditional writes that still exclude `confirmed`. See [receipt-reconcile.ts](/work/personal/compass/apps/api/src/modules/shopping/services/receipt-reconcile.ts:237), [receipt-reconcile.ts](/work/personal/compass/apps/api/src/modules/shopping/services/receipt-reconcile.ts:337), and [receipts.ts](/work/personal/compass/apps/api/src/modules/shopping/routes/receipts.ts:366).
+
+- Manual line creation and editing accept any existing `catalogItemId` without checking that it belongs to the receipt owner. This violates the explicit M7 ownership requirement and the repository’s user-scoping rule. It can create cross-user foreign-key references and make a user backup unrestorable because the referenced catalog row will not be exported. See [receipts.ts](/work/personal/compass/apps/api/src/modules/shopping/routes/receipts.ts:338) and [receipts.ts](/work/personal/compass/apps/api/src/modules/shopping/routes/receipts.ts:393).
+
+## Medium
+
+- P7 is largely unimplemented. [receipt-confirm.test.ts](/work/personal/compass/apps/api/src/modules/shopping/services/receipt-confirm.test.ts:16) never imports or calls `confirmReceipt`; it reimplements fragments of production logic locally. It therefore does not test the atomic claim, account/category ownership, synthetic list writes, pantry replenishment, ledger transaction, cart transition, rollback, or stored total. The required `receipt-lines.test.ts` does not exist, so manual CRUD totals, confirmed guards, pairing, and cross-user rejection are untested. There are also no receipt parse/storage/provider tests or receipt Zod contract tests. This conflicts with P7 and the task’s TDD requirement.
+
+- The receipt tool schema is not the approved schema. `lineTotal` is optional because only `name` is required, so a structurally valid OCR result may contain no prices and be unconfirmable. It also asks the model for `merchantName` and `purchaseDate`, contrary to M9’s requirement that tool output extract only item/quantity/unit/price/discount fields. `purchaseDate` is accepted as an arbitrary string, so malformed model output can insert lines and then fail the receipt update at the database. See [receipt-parse.ts](/work/personal/compass/apps/api/src/modules/shopping/services/receipt-parse.ts:55), [receipt-parse.ts](/work/personal/compass/apps/api/src/modules/shopping/services/receipt-parse.ts:97), and [receipt-parse.ts](/work/personal/compass/apps/api/src/modules/shopping/services/receipt-parse.ts:133).
+
+- P2’s response contract is inconsistent with the approved plan. `ReceiptSchema` exposes `storedPath`, while P2 specifies `storageKey`; all route/service responses follow the divergent name. The confirm route also returns only `{ receiptId, transactionId, totalPaise }`, whereas P6 calls for `200 + receipt`. See [shopping.ts](/work/personal/compass/packages/shared/src/schemas/shopping.ts:975) and [receipts.ts](/work/personal/compass/apps/api/src/modules/shopping/routes/receipts.ts:70).
+
+- `UpdateReceiptLineSchema` does not actually guarantee quantity/unit pairing for partial updates. It permits either field by itself whenever the other is omitted. Clearing only one field then reaches the database CHECK constraint and becomes a server error; changing one field can also be validated only accidentally by existing state. The route loads only the line ID, so it never validates the merged row before updating. See [shopping.ts](/work/personal/compass/packages/shared/src/schemas/shopping.ts:1052) and [receipts.ts](/work/personal/compass/apps/api/src/modules/shopping/routes/receipts.ts:375).
+
+- Confirmation aggregates quantities solely by `catalogItemId` without ensuring every contributing line has the same unit. A receipt containing the same catalog item once in grams and once in millilitres is summed numerically and labeled with the first unit. `replenishPantry()` only sees the already-corrupted aggregate, so this can corrupt pantry stock even when the catalog’s declared unit happens to match the first line. See [receipt-confirm.ts](/work/personal/compass/apps/api/src/modules/shopping/services/receipt-confirm.ts:142).
+
+- Confirmed receipts can be deleted without a status guard. This removes the receipt and durable image after the ledger/pantry effects remain, destroying the audit link while leaving the derived financial records. The user’s requested confirmed-receipt delete guard is therefore absent. See [receipts.ts](/work/personal/compass/apps/api/src/modules/shopping/routes/receipts.ts:278).
+
+- AC11 is not verified. API/shared typecheck and lint pass; the 24 focused receipt tests and all 351 shared tests pass. The full API command ended with 1,022 passing and 33 failing because `DATABASE_URL`/Redis configuration was unavailable, so the required API and backup integration gates have not been demonstrated green.
+
+## Low
+
+- The shopping schema header still says “11 resident tables + 8 resident enums,” not the explicitly required “12 tables + 10 enums.” The file currently contains 12 `pgTable` definitions but only 8 `pgEnum` definitions, so both the comment and requested enum count need reconciliation. See [schema.ts](/work/personal/compass/apps/api/src/modules/shopping/schema.ts:1).
+
+- Synthetic `shopping_list_items.rawText` is populated from the receipt’s normalized/raw OCR text, not the catalog item’s canonical name required by P5. This does not currently stop rate learning, which keys on `catalogItemId`, but loses the planned canonical purchase observation. See [receipt-confirm.ts](/work/personal/compass/apps/api/src/modules/shopping/services/receipt-confirm.ts:149).
+
+- Reconciliation tests demonstrate only a positive price delta. P7 calls for signed-delta coverage, but there is no case proving that a cheaper receipt line yields a negative `priceDiffPaise`. See [receipt-reconcile.test.ts](/work/personal/compass/apps/api/src/modules/shopping/services/receipt-reconcile.test.ts:69).
+
+## Plan and acceptance summary
+
+- P1: Partial — tables, enums, migration, barrel exports, and all four receipt-line CHECK constraints are present; header count is wrong.
+- P2: Partial — all named schemas exist, but `storedPath`/`storageKey`, confirm response, partial pairing, and schema-test coverage are incorrect.
+- P3: Partial — durable storage order, compensation call, vision request, provider propagation, and unit map exist; draft linkage/ownership and tool schema are defective.
+- P4: Partial — normalization, threshold, margin, one-to-one matching, classifications, and signed calculation exist; the status guard is race-prone.
+- P5: Partial — atomic claim, server-side total, ledger write, pantry replenishment, aggregation, and draft update exist; unit-safe aggregation and canonical observation text are missing.
+- P6: Partial — all nine routes, auth scoping, MIME/magic-byte/size checks, and storage deletion are present; draft field handling, ownership checks, atomic guards, and confirmed receipt deletion are deficient.
+- P7: Failed — most required service/integration and all manual-line tests are missing.
+- P8: Pass — plugin registration, route snapshots, barrel exports, backup tables, linked-table scope, and `FILE_COLUMNS` are present and ordered correctly.
+
+AC3, AC6, AC7, and AC8 are implemented. AC1, AC2, AC4, AC5, AC9, and AC10 are only partially satisfied because of the issues above. AC11 remains unverified.

@@ -10,7 +10,7 @@
  *
  * Drizzle Kit resolves the full schema graph from this single entry point
  * (configured in drizzle.config.ts). The export set is exactly 71 tables
- * (70 domain + users) and 51 enums, each exported exactly once.
+ * (72 domain + users) and 53 enums, each exported exactly once.
  */
 
 export { users } from "./core-schema.ts";
@@ -125,10 +125,14 @@ export {
   cartDraftItems,
   habitProfiles,
   serviceabilityChecks,
+  receipts,
+  receiptLines,
   shoppingListStatus,
   shoppingListItemStatus,
   normalizedUnit,
   priceSourceKind,
   cartDraftStatus,
   deliveryEtaBandEnum,
+  receiptStatus,
+  receiptLineMatchStatus,
 } from "../modules/shopping/schema.ts";

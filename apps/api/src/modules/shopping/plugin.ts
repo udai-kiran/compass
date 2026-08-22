@@ -14,6 +14,7 @@ import { shoppingPantryRoutes } from "./routes/pantry.ts";
 import { shoppingHabitProfileRoutes } from "./routes/habit-profiles.ts";
 import { financialGuardRoutes } from "./routes/financial-guards.ts";
 import { shoppingCartDraftRoutes } from "./routes/cart-drafts.ts";
+import { receiptRoutes } from "./routes/receipts.ts";
 
 /**
  * `modules/shopping/` — Shopping Intelligence pillar (task 9.1). The first
@@ -42,4 +43,5 @@ export async function shoppingRoutes(app: FastifyInstance): Promise<void> {
   await app.register(shoppingHabitProfileRoutes);
   await app.register(financialGuardRoutes);
   await app.register(shoppingCartDraftRoutes);
+  await app.register(receiptRoutes);
 }

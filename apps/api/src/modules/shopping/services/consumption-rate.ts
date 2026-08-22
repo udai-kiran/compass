@@ -10,13 +10,31 @@
 
 import { and, eq } from "drizzle-orm";
 import type { DbOrTx } from "../../../db/index.ts";
-import { catalogItems, habitProfiles, shoppingListItems, shoppingLists } from "../schema.ts";
+import { catalogItems, habitProfiles, pantryItems, shoppingListItems, shoppingLists } from "../schema.ts";
 
 // ─── Named constants ──────────────────────────────────────────────────────────
 
 export const MIN_PURCHASES = 2;
 export const OUTLIER_MULTIPLIER = 3;
 export const MS_PER_DAY = 86_400_000;
+
+// ─── Target-unit resolver (P5) ────────────────────────────────────────────────
+
+/**
+ * Resolve the learning target unit with precedence: catalog unit → pantry unit → null.
+ *
+ * Null means "use most-frequent observation unit" (existing computeConsumptionRate
+ * behaviour). This prevents mixed-unit receipts from choosing the wrong habit unit
+ * when the catalog item has no declared unit but the pantry row does.
+ */
+export function resolveLearningUnit(
+  catalogUnit: string | null,
+  pantryUnit: string | null,
+): string | null {
+  if (catalogUnit !== null) return catalogUnit;
+  if (pantryUnit !== null) return pantryUnit;
+  return null;
+}
 
 // ─── Pure helpers ─────────────────────────────────────────────────────────────
 
@@ -144,7 +162,20 @@ export async function learnConsumptionRate(
     where: and(eq(catalogItems.id, catalogItemId), eq(catalogItems.userId, userId)),
     columns: { unit: true },
   });
-  const targetUnit = catalogRow?.unit ?? null;
+  const catalogUnit = catalogRow?.unit ?? null;
+
+  // P5: If catalog unit is null, fall back to the user's pantry row unit so that
+  // mixed-unit receipts do not cause the learner to pick the wrong habit unit.
+  let pantryUnit: string | null = null;
+  if (catalogUnit === null) {
+    const pantryRow = await db.query.pantryItems.findFirst({
+      where: and(eq(pantryItems.catalogItemId, catalogItemId), eq(pantryItems.userId, userId)),
+      columns: { unit: true },
+    });
+    pantryUnit = pantryRow?.unit ?? null;
+  }
+
+  const targetUnit = resolveLearningUnit(catalogUnit, pantryUnit);
 
   // Query all bought items for this catalog item through the user's lists.
   // Use updatedAt as the best available proxy for boughtAt (no boughtAt column).

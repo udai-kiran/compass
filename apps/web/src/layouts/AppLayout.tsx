@@ -6,6 +6,7 @@ import { apiPost } from "../lib/api.ts";
 import { buildInfo, relativeBuildTime, shortSha } from "../lib/build-info.ts";
 import { useMe } from "../lib/auth.ts";
 import { useInboxCount } from "../lib/inbox-queries.ts";
+import { useDraftCount } from "../lib/shopping-queries.ts";
 import { NotificationBell } from "../components/NotificationBell.tsx";
 import { CommandPalette } from "../components/CommandPalette.tsx";
 import { Assistant } from "../components/Assistant.tsx";
@@ -116,7 +117,17 @@ function VersionFooter({ onNavigate }: { onNavigate?: () => void }) {
   );
 }
 
-function NavRow({ item, pending, onNavigate }: { item: NavItem; pending: number; onNavigate?: () => void }) {
+function NavRow({
+  item,
+  pending,
+  draftCount,
+  onNavigate,
+}: {
+  item: NavItem;
+  pending: number;
+  draftCount: number;
+  onNavigate?: () => void;
+}) {
   return (
     <NavLink
       to={item.to}
@@ -143,6 +154,9 @@ function NavRow({ item, pending, onNavigate }: { item: NavItem; pending: number;
           {item.to === "/inbox" && pending > 0 && (
             <span className="badge bg-rose-600 text-white">{pending}</span>
           )}
+          {item.to === "/shopping/cart" && draftCount > 0 && (
+            <span className="badge bg-brand-600 text-white">{draftCount}</span>
+          )}
         </>
       )}
     </NavLink>
@@ -152,6 +166,7 @@ function NavRow({ item, pending, onNavigate }: { item: NavItem; pending: number;
 function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
   const { data: inbox } = useInboxCount();
   const pending = inbox?.pending ?? 0;
+  const draftCount = useDraftCount().data ?? 0;
   return (
     <nav aria-label="Primary" className="flex-1 space-y-5 overflow-y-auto p-3">
       {NAV_GROUPS.map((group) => (
@@ -160,7 +175,13 @@ function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
             {group.heading}
           </p>
           {group.items.map((item) => (
-            <NavRow key={item.to} item={item} pending={pending} onNavigate={onNavigate} />
+            <NavRow
+              key={item.to}
+              item={item}
+              pending={pending}
+              draftCount={draftCount}
+              onNavigate={onNavigate}
+            />
           ))}
         </div>
       ))}

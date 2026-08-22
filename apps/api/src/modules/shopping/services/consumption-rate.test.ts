@@ -6,7 +6,7 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { computeConsumptionRate, MS_PER_DAY, MIN_PURCHASES } from "./consumption-rate.ts";
+import { computeConsumptionRate, resolveLearningUnit, MS_PER_DAY, MIN_PURCHASES } from "./consumption-rate.ts";
 
 // Helper to build a Date offset by `days` from a base date.
 function daysFrom(base: Date, days: number): Date {
@@ -129,5 +129,21 @@ describe("computeConsumptionRate", () => {
     assert.notEqual(result, null);
     // Rate: 1000g per 30-day median interval = 1000g/month.
     assert.equal(result!.consumptionBasePerMonth, 1000);
+  });
+});
+
+// ─── resolveLearningUnit — TASK.md P6 cases ───────────────────────────────────
+
+describe("resolveLearningUnit", () => {
+  it("catalog g, pantry ml → g (catalog takes precedence)", () => {
+    assert.equal(resolveLearningUnit("g", "ml"), "g");
+  });
+
+  it("catalog null, pantry g → g (falls back to pantry)", () => {
+    assert.equal(resolveLearningUnit(null, "g"), "g");
+  });
+
+  it("both null → null (most-frequent-observation path)", () => {
+    assert.equal(resolveLearningUnit(null, null), null);
   });
 });
