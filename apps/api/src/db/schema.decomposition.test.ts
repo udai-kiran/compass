@@ -2,7 +2,7 @@
  * Decomposition test — verifies that the `db/schema.ts` barrel is a pure
  * re-export barrel with no inline definitions, that every table/enum is
  * `Object.is`-identical to its defining file, and that the export set is
- * exactly 72 tables + 53 enums (plus `users` from core) with no duplicates.
+ * exactly 74 tables + 57 enums (plus `users` from core) with no duplicates.
  *
  * Importing the barrel, all shared layers, and all module schemas also
  * exercises runtime module initialisation (ESM graph resolution, TDZ checks).
@@ -31,6 +31,7 @@ import * as ingest from "../modules/ingest/schema.ts";
 import * as automation from "../modules/automation/schema.ts";
 import * as household from "../modules/household/schema.ts";
 import * as shopping from "../modules/shopping/schema.ts";
+import * as tax from "../modules/tax/schema.ts";
 
 // The barrel itself
 import * as barrel from "../db/schema.ts";
@@ -75,7 +76,13 @@ const creditResidents = new Set([
 
 const investmentsResidents = new Set([
   "accountNpsDetails", "npsDetails", "goldDetails", "holdingValuations", "holdingEvents",
-  "netWorthSnapshots", "npsTier", "goldForm", "holdingEventType", "holdingEventSource",
+  "netWorthSnapshots", "depositDetails",
+  "npsTier", "goldForm", "holdingEventType", "holdingEventSource",
+  "depositKind", "compoundingFrequency", "interestDisposition",
+]);
+
+const taxResidents = new Set([
+  "taxRegimePreferences", "taxRegimeEnum", "regimeSourceEnum",
 ]);
 
 const protectionResidents = new Set([
@@ -114,8 +121,8 @@ const shoppingResidents = new Set([
 
 describe("db/schema.ts decomposition", () => {
 
-  // T3c: barrel exports exactly 72 tables + 53 enums + users, no duplicates
-  it("exports exactly 72 tables + 53 enums + users with no duplicates", () => {
+  // T3c: barrel exports exactly 74 tables + 57 enums + users, no duplicates
+  it("exports exactly 74 tables + 58 enums + users with no duplicates", () => {
     const tables: string[] = [];
     const enums: string[] = [];
     // Postgres-level object names — JS export keys are unique by construction,
@@ -147,8 +154,8 @@ describe("db/schema.ts decomposition", () => {
       `duplicate enum DB names: ${enumDbNames.filter((n, i) => enumDbNames.indexOf(n) !== i)}`,
     );
 
-    assert.equal(tables.length, 72, `expected 72 tables, got ${tables.length}: ${tables.join(", ")}`);
-    assert.equal(enums.length, 53, `expected 53 enums, got ${enums.length}: ${enums.join(", ")}`);
+    assert.equal(tables.length, 74, `expected 74 tables, got ${tables.length}: ${tables.join(", ")}`);
+    assert.equal(enums.length, 58, `expected 58 enums, got ${enums.length}: ${enums.join(", ")}`);
 
     // users is also in the barrel
     assert.ok(isPgTable(barrel.users), "users should be a pgTable in the barrel");
@@ -198,6 +205,10 @@ describe("db/schema.ts decomposition", () => {
     // Shopping residents
     for (const k of shoppingResidents) {
       identityMap[k] = { module: shopping as unknown as Record<string, unknown>, key: k };
+    }
+    // Tax residents
+    for (const k of taxResidents) {
+      identityMap[k] = { module: tax as unknown as Record<string, unknown>, key: k };
     }
 
     // Shared tables in shared layers
@@ -253,8 +264,11 @@ describe("db/schema.ts decomposition", () => {
     for (const k of ["cardNetwork", "bankAccountSubtype", "cardOfferDiscountKind", "rewardRedemptionRoute", "rewardCapPeriod"]) {
       enumMap[k] = { module: credit as unknown as Record<string, unknown>, key: k };
     }
-    for (const k of ["npsTier", "goldForm", "holdingEventType", "holdingEventSource"]) {
+    for (const k of ["npsTier", "goldForm", "holdingEventType", "holdingEventSource", "depositKind", "compoundingFrequency", "interestDisposition"]) {
       enumMap[k] = { module: investments as unknown as Record<string, unknown>, key: k };
+    }
+    for (const k of ["taxRegimeEnum", "regimeSourceEnum"]) {
+      enumMap[k] = { module: tax as unknown as Record<string, unknown>, key: k };
     }
     for (const k of ["budgetPeriod"]) {
       enumMap[k] = { module: planning as unknown as Record<string, unknown>, key: k };

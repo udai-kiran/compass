@@ -3,24 +3,9 @@ import type { CapitalGainsSlice, CapitalGainsStatement } from "@compass/shared";
 import type { Db } from "../../../db/index.ts";
 import { holdingEvents, holdings } from "../schema.ts";
 import { realizeGains } from "./tax-lots.ts";
+import { fyOf, fyRange, currentFy } from "../../../lib/financial-year.ts";
 
-/** Indian financial year label for a date, e.g. 2025-06-01 → "2025-26". */
-export function fyOf(date: string): string {
-  const [y, m] = date.split("-").map(Number) as [number, number];
-  const startYear = m >= 4 ? y : y - 1;
-  return `${startYear}-${String((startYear + 1) % 100).padStart(2, "0")}`;
-}
-
-/** [startInclusive, endInclusive] ISO dates for an FY label like "2025-26". */
-export function fyRange(fy: string): [string, string] {
-  const startYear = Number(fy.slice(0, 4));
-  return [`${startYear}-04-01`, `${startYear + 1}-03-31`];
-}
-
-/** Current FY label from today's date. */
-function currentFy(): string {
-  return fyOf(new Date().toISOString().slice(0, 10));
-}
+export { fyOf, fyRange } from "../../../lib/financial-year.ts";
 
 /**
  * FIFO capital-gains statement for one financial year. Every active or archived

@@ -23,3 +23,4 @@ export * from "./schemas/household.ts";
 export * from "./schemas/planning.ts";
 export * from "./schemas/credit.ts";
 export * from "./schemas/shopping.ts";
+export * from "./schemas/tax.ts";
