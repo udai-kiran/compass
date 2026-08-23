@@ -84,6 +84,8 @@ GET /api/goals/:goalId/roadmap-narrative
 GET /api/goals/:goalId/tax-aware-rebalancing
 GET /api/goals/:id/progress
 GET /api/goals/:id/sips
+GET /api/holdings/:id/deposit
+GET /api/holdings/:id/deposit/schedule
 GET /api/holdings/:id/gold
 GET /api/holdings/:id/nps
 GET /api/holdings/capital-gains
@@ -150,6 +152,7 @@ GET /api/sips
 GET /api/sips/:id/installment-candidates
 GET /api/splits/:id
 GET /api/subscriptions/suggestions
+GET /api/tax/regime-preference
 GET /api/transactions
 GET /api/transactions/:id
 GET /api/transactions/:id/attachments
@@ -206,6 +209,8 @@ HEAD /api/goals/:goalId/roadmap-narrative
 HEAD /api/goals/:goalId/tax-aware-rebalancing
 HEAD /api/goals/:id/progress
 HEAD /api/goals/:id/sips
+HEAD /api/holdings/:id/deposit
+HEAD /api/holdings/:id/deposit/schedule
 HEAD /api/holdings/:id/gold
 HEAD /api/holdings/:id/nps
 HEAD /api/holdings/capital-gains
@@ -272,6 +277,7 @@ HEAD /api/sips
 HEAD /api/sips/:id/installment-candidates
 HEAD /api/splits/:id
 HEAD /api/subscriptions/suggestions
+HEAD /api/tax/regime-preference
 HEAD /api/transactions
 HEAD /api/transactions/:id
 HEAD /api/transactions/:id/attachments
@@ -401,6 +407,7 @@ PUT /api/cards/:accountId/details
 PUT /api/cards/:accountId/statement-password
 PUT /api/credit/reward-rules/:id
 PUT /api/goals/order
+PUT /api/holdings/:id/deposit
 PUT /api/holdings/:id/gold
 PUT /api/holdings/:id/nps
 PUT /api/holdings/:id/valuation
@@ -418,4 +425,5 @@ PUT /api/shopping/lists/:id/items/reorder
 PUT /api/shopping/receipts/:id/lines/:lineId
 PUT /api/shopping/sources/:id
 PUT /api/shopping/sources/:sourceId/serviceability/:pincode
+PUT /api/tax/regime-preference
 PUT /api/transactions/:id/splits

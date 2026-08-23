@@ -829,3 +829,100 @@ export const NetWorthByGoalSchema = z.object({
   groups: z.array(GoalGroupSchema),
 });
 export type NetWorthByGoal = z.infer<typeof NetWorthByGoalSchema>;
+
+// ---------- Deposit details (FD / RD / NSC / Tax-saver FD) ----------
+
+export const DepositKindSchema = z.enum(["fd", "rd", "nsc", "tax_saver_fd"]);
+export type DepositKind = z.infer<typeof DepositKindSchema>;
+
+export const CompoundingFrequencySchema = z.enum([
+  "monthly",
+  "quarterly",
+  "half_yearly",
+  "annually",
+]);
+export type CompoundingFrequency = z.infer<typeof CompoundingFrequencySchema>;
+
+export const InterestDispositionSchema = z.enum(["reinvest", "payout"]);
+export type InterestDisposition = z.infer<typeof InterestDispositionSchema>;
+
+/** Read-model for a deposit_details row returned by the API. */
+export const DepositDetailsSchema = z.object({
+  holdingId: z.uuid(),
+  userId: z.uuid(),
+  depositKind: DepositKindSchema,
+  /** FD/NSC/tax_saver_fd: lump-sum amount in paise. Null for RD. */
+  principalPaise: z.number().int().positive().nullable(),
+  /** RD: per-installment amount in paise. Null for FD/NSC. */
+  installmentPaise: z.number().int().positive().nullable(),
+  /** RD: total number of monthly installments. Null for FD/NSC. */
+  totalInstallments: z.number().int().positive().nullable(),
+  /** Annual interest rate in basis points: 7.10 % = 710. */
+  annualRateBps: z.number().int().min(0),
+  compoundingFrequency: CompoundingFrequencySchema,
+  interestDisposition: InterestDispositionSchema,
+  /** Non-null only when interestDisposition = 'payout'. */
+  payoutFrequency: CompoundingFrequencySchema.nullable(),
+  startDate: z.iso.date(),
+  maturityDate: z.iso.date(),
+  autoRenewal: z.boolean(),
+  prematureClosurePenaltyBps: z.number().int().min(0).nullable(),
+  jointHolderName: z.string().nullable(),
+  /** Advisory 194A flag. Actual TDS recording deferred to task 13.4/13.10. */
+  tdsSectionApplicable: z.boolean(),
+});
+export type DepositDetails = z.infer<typeof DepositDetailsSchema>;
+
+/**
+ * Maximum number of monthly RD installments accepted in a request body.
+ * Ceiling for a 50-year monthly RD (600 months). Prevents excessive allocation
+ * in the accrual schedule computation (O(totalInstallments) per period).
+ */
+export const MAX_RD_INSTALLMENTS = 600;
+
+/** Request body for PUT /api/holdings/:id/deposit. */
+export const UpsertDepositDetailsSchema = z
+  .object({
+    depositKind: DepositKindSchema,
+    principalPaise: z.number().int().positive().nullable().default(null),
+    installmentPaise: z.number().int().positive().nullable().default(null),
+    totalInstallments: z.number().int().min(1).max(MAX_RD_INSTALLMENTS).nullable().default(null),
+    /** Basis points: 7.10 % = 710; max 25 % (2500 bps). */
+    annualRateBps: z.number().int().min(0).max(2500),
+    compoundingFrequency: CompoundingFrequencySchema,
+    interestDisposition: InterestDispositionSchema.default("reinvest"),
+    payoutFrequency: CompoundingFrequencySchema.nullable().default(null),
+    startDate: z.iso.date(),
+    maturityDate: z.iso.date(),
+    autoRenewal: z.boolean().default(false),
+    prematureClosurePenaltyBps: z.number().int().min(0).nullable().default(null),
+    jointHolderName: z.string().max(200).nullable().default(null),
+    tdsSectionApplicable: z.boolean().default(true),
+  });
+export type UpsertDepositDetails = z.input<typeof UpsertDepositDetailsSchema>;
+
+// ---------- Accrual schedule ----------
+
+/** One compounding period within an accrual schedule. */
+export const AccrualPeriodSchema = z.object({
+  periodStart: z.iso.date(),
+  periodEnd: z.iso.date(),
+  openingPaise: z.number().int(),
+  depositPaise: z.number().int(),
+  interestPaise: z.number().int(),
+  payoutPaise: z.number().int(),
+  closingPaise: z.number().int(),
+  /** Taxable interest for income declaration (equals interestPaise for all current instruments). */
+  taxableInterestPaise: z.number().int(),
+});
+export type AccrualPeriod = z.infer<typeof AccrualPeriodSchema>;
+
+/** Response for GET /api/holdings/:id/deposit/schedule. */
+export const AccrualScheduleResponseSchema = z.object({
+  holdingId: z.uuid(),
+  periods: z.array(AccrualPeriodSchema),
+  totalInterestPaise: z.number().int(),
+  totalDepositPaise: z.number().int(),
+  maturityValuePaise: z.number().int(),
+});
+export type AccrualScheduleResponse = z.infer<typeof AccrualScheduleResponseSchema>;

@@ -26,6 +26,7 @@ import { automationRoutes } from "./modules/automation/plugin.ts";
 import { planningRoutes } from "./modules/planning/plugin.ts";
 import { householdRoutes } from "./modules/household/plugin.ts";
 import { shoppingRoutes } from "./modules/shopping/plugin.ts";
+import { taxRoutes } from "./modules/tax/plugin.ts";
 import { invalidateUserCache } from "./lib/cache.ts";
 import { enqueueBudgetEvaluation } from "./jobs/index.ts";
 import { createStorage, type Storage } from "./lib/storage.ts";
@@ -151,6 +152,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   await app.register(householdRoutes);
   // First module registered with a Fastify prefix — see modules/shopping/plugin.ts.
   await app.register(shoppingRoutes, { prefix: "/api/shopping" });
+  await app.register(taxRoutes, { prefix: "/api/tax" });
 }
 
 export async function buildApp(config: Config): Promise<FastifyInstance> {
