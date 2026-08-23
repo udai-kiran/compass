@@ -2,7 +2,7 @@
  * Decomposition test — verifies that the `db/schema.ts` barrel is a pure
  * re-export barrel with no inline definitions, that every table/enum is
  * `Object.is`-identical to its defining file, and that the export set is
- * exactly 74 tables + 57 enums (plus `users` from core) with no duplicates.
+ * exactly 78 tables + 61 enums (plus `users` from core) with no duplicates.
  *
  * Importing the barrel, all shared layers, and all module schemas also
  * exercises runtime module initialisation (ESM graph resolution, TDZ checks).
@@ -83,6 +83,9 @@ const investmentsResidents = new Set([
 
 const taxResidents = new Set([
   "taxRegimePreferences", "taxRegimeEnum", "regimeSourceEnum",
+  "payslips", "payslipComponents",
+  "incomeEvents", "incomeEventStatus", "incomeKind", "incomeSourceKind",
+  "epfContributions",
 ]);
 
 const protectionResidents = new Set([
@@ -121,8 +124,8 @@ const shoppingResidents = new Set([
 
 describe("db/schema.ts decomposition", () => {
 
-  // T3c: barrel exports exactly 74 tables + 57 enums + users, no duplicates
-  it("exports exactly 74 tables + 58 enums + users with no duplicates", () => {
+  // T3c: barrel exports exactly 78 tables + 61 enums + users, no duplicates
+  it("exports exactly 78 tables + 61 enums + users with no duplicates", () => {
     const tables: string[] = [];
     const enums: string[] = [];
     // Postgres-level object names — JS export keys are unique by construction,
@@ -154,8 +157,8 @@ describe("db/schema.ts decomposition", () => {
       `duplicate enum DB names: ${enumDbNames.filter((n, i) => enumDbNames.indexOf(n) !== i)}`,
     );
 
-    assert.equal(tables.length, 74, `expected 74 tables, got ${tables.length}: ${tables.join(", ")}`);
-    assert.equal(enums.length, 58, `expected 58 enums, got ${enums.length}: ${enums.join(", ")}`);
+    assert.equal(tables.length, 78, `expected 78 tables, got ${tables.length}: ${tables.join(", ")}`);
+    assert.equal(enums.length, 61, `expected 61 enums, got ${enums.length}: ${enums.join(", ")}`);
 
     // users is also in the barrel
     assert.ok(isPgTable(barrel.users), "users should be a pgTable in the barrel");
@@ -267,7 +270,7 @@ describe("db/schema.ts decomposition", () => {
     for (const k of ["npsTier", "goldForm", "holdingEventType", "holdingEventSource", "depositKind", "compoundingFrequency", "interestDisposition"]) {
       enumMap[k] = { module: investments as unknown as Record<string, unknown>, key: k };
     }
-    for (const k of ["taxRegimeEnum", "regimeSourceEnum"]) {
+    for (const k of ["taxRegimeEnum", "regimeSourceEnum", "incomeEventStatus", "incomeKind", "incomeSourceKind"]) {
       enumMap[k] = { module: tax as unknown as Record<string, unknown>, key: k };
     }
     for (const k of ["budgetPeriod"]) {

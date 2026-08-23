@@ -1,19 +1,32 @@
 /**
- * tax module schema — resident tables + enums for the tax domain (task 13.1).
+ * tax module schema — resident tables + enums for the tax domain (tasks 13.1, 13.2, 13.4, 13.5).
  *
  * Resident tables:
- *   - tax_regime_preferences — per-user, per-FY income-tax regime preference
+ *   - tax_regime_preferences — per-user, per-FY income-tax regime preference (13.1)
+ *   - payslips              — payslip headers: status, totals, document key (13.2)
+ *   - payslip_components    — per-component line items (13.2)
+ *   - income_events         — structured taxable-income ledger (13.4)
+ *   - epf_contributions     — EPF passbook reconciliation (13.5)
  *
  * Cross-domain FK target: users (from db/core-schema.ts).
  * No imports from other module schema.ts files.
  */
 
+import { sql } from "drizzle-orm";
 import {
+  bigint,
+  check,
+  date,
+  index,
+  integer,
+  jsonb,
   pgEnum,
   pgTable,
   primaryKey,
+  real,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
 import { users } from "../../db/core-schema.ts";
@@ -55,4 +68,293 @@ export const taxRegimePreferences = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [primaryKey({ columns: [t.userId, t.fy] })],
+);
+
+// ─── Payslips (task 13.2) ─────────────────────────────────────────────────────
+
+/**
+ * Payslip header: one row per uploaded/entered payslip.
+ *
+ * State machine: pending → accepted | rejected (D3).
+ * Only accepted rows feed downstream FY TDS computation (D4).
+ *
+ * tds_current_paise: TDS deducted this month — summed for FY TDS.
+ * tds_ytd_paise: cumulative YTD printed on the payslip — never summed (D4).
+ * document_key: opaque storage key for the uploaded document.
+ */
+export const payslips = pgTable(
+  "payslips",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** Canonical FY label: "YYYY-YY" (e.g. "2025-26"). */
+    fy: text("fy").notNull(),
+    /** Pay month in "YYYY-MM" format (e.g. "2025-06"). */
+    payMonth: text("pay_month").notNull(),
+    /** Employer legal name as printed on the payslip. */
+    employerName: text("employer_name"),
+    /** Opaque storage key for the uploaded payslip document. */
+    documentKey: text("document_key"),
+    /**
+     * Review status. Pending = awaiting user review; accepted = confirmed and
+     * eligible for FY TDS aggregation; rejected = dismissed.
+     */
+    status: text("status").notNull().default("pending"),
+    /** Gross salary (CTC monthly) in paise. */
+    grossPaise: bigint("gross_paise", { mode: "number" }),
+    /** Net take-home in paise. */
+    netPaise: bigint("net_paise", { mode: "number" }),
+    /** TDS deducted this month in paise (used for FY aggregate). */
+    tdsCurrentPaise: bigint("tds_current_paise", { mode: "number" }),
+    /** TDS year-to-date as printed — reconciliation only, never summed. */
+    tdsYtdPaise: bigint("tds_ytd_paise", { mode: "number" }),
+    /** When the reviewer accepted this payslip. */
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("payslips_user_fy_status_idx").on(t.userId, t.fy, t.status),
+    uniqueIndex("payslips_user_month_employer_idx").on(t.userId, t.payMonth, t.employerName),
+  ],
+);
+
+/**
+ * Per-component rows for each payslip.
+ *
+ * No user_id — scoped via payslip_id → payslips.user_id.
+ *
+ * canonical_kind values: basic | hra | special_allowance | other_earning |
+ *   employee_epf | employer_epf | eps | professional_tax | other_deduction |
+ *   employer_contribution.
+ * category values: earning | deduction | employer_contribution.
+ */
+export const payslipComponents = pgTable(
+  "payslip_components",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    payslipId: uuid("payslip_id")
+      .notNull()
+      .references(() => payslips.id, { onDelete: "cascade" }),
+    /** Label exactly as printed on the payslip. */
+    rawLabel: text("raw_label").notNull(),
+    /** Canonical classification: basic, hra, employee_epf, etc. */
+    canonicalKind: text("canonical_kind").notNull(),
+    /** Broad bucket: earning, deduction, or employer_contribution. */
+    category: text("category").notNull(),
+    /** Current-month amount in paise. */
+    currentPaise: bigint("current_paise", { mode: "number" }).notNull(),
+    /** Year-to-date amount in paise, if printed. */
+    ytdPaise: bigint("ytd_paise", { mode: "number" }),
+    /** Verbatim text from the document that justified this component. */
+    sourceQuote: text("source_quote"),
+    /** Model confidence score 0–1. */
+    confidence: real("confidence"),
+    /** Position in the payslip layout (for UI ordering). */
+    displayOrder: integer("display_order").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("payslip_components_payslip_idx").on(t.payslipId)],
+);
+
+// ─── Income Events (task 13.4) ────────────────────────────────────────────────
+
+/**
+ * Income event lifecycle state.
+ * Transitions: pending → accepted | rejected only.
+ */
+export const incomeEventStatus = pgEnum("income_event_status", ["pending", "accepted", "rejected"]);
+
+/**
+ * Broad income classification.
+ * salary: employment income (typically from payslips)
+ * interest: FD/RD/NSC interest income (typically from deposit events)
+ * dividend: MF/stock dividend (from holding events with type=dividend)
+ * rent: rental income
+ * other: any other taxable income
+ */
+export const incomeKind = pgEnum("income_kind", [
+  "salary",
+  "interest",
+  "dividend",
+  "rent",
+  "other",
+]);
+
+/**
+ * What sourced this income event.
+ * payslip: auto-derived from an accepted payslip (13.2)
+ * holding_event: auto-derived from a holding event (dividend, task 13.4)
+ * manual: user-entered directly
+ * ais: imported from the Annual Information Statement
+ */
+export const incomeSourceKind = pgEnum("income_source_kind", [
+  "payslip",
+  "holding_event",
+  "manual",
+  "ais",
+]);
+
+/**
+ * Structured taxable-income ledger (task 13.4).
+ *
+ * One row per recognizable income occurrence. Status machine:
+ *   pending → accepted | rejected (guarded atomic UPDATE WHERE status='pending').
+ *
+ * fy is always server-computed from accrualDate via fyOf(); clients never supply it.
+ * source_id is null for manual/ais entries, non-null for auto-derived ones.
+ * Partial unique index prevents duplicate derivations from the same source entity.
+ *
+ * gross_paise and tds_paise check constraints:
+ *   - gross_paise >= 0 (non-negative income)
+ *   - tds_paise >= 0 and tds_paise <= gross_paise
+ *
+ * original_values stores the pre-accept state for audit trail when corrections are applied.
+ */
+export const incomeEvents = pgTable(
+  "income_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** ISO date "YYYY-MM-DD" — the date the income accrued/was earned. */
+    accrualDate: date("accrual_date").notNull(),
+    /** Canonical FY label: "YYYY-YY" — always server-computed via fyOf(accrualDate). */
+    fy: text("fy").notNull(),
+    /** Broad income classification. */
+    incomeKind: incomeKind("income_kind").notNull(),
+    /**
+     * Deduction/TDS section this income falls under: '192' (salary), '194A'
+     * (interest), '194K' (MF income), '194-I' (rent). Null = unknown / not applicable.
+     */
+    section: text("section"),
+    /** What sourced this event. */
+    sourceKind: incomeSourceKind("source_kind").notNull(),
+    /** ID of the source entity (payslip.id, holdingEvent.id, etc.). Null for manual/ais. */
+    sourceId: uuid("source_id"),
+    /**
+     * Precedence when two sources describe the same underlying income
+     * (higher wins). Reconciliation itself is out of scope for 13.4.
+     */
+    sourcePriority: integer("source_priority").notNull().default(0),
+    /** Payer legal name (employer, bank, company, etc.). */
+    payerName: text("payer_name"),
+    /** Payer PAN — normalized to uppercase. */
+    payerPan: text("payer_pan"),
+    /** Payer TAN (for TDS deductions) — normalized to uppercase. */
+    payerTan: text("payer_tan"),
+    /** Gross income amount in paise. Must be >= 0. */
+    grossPaise: bigint("gross_paise", { mode: "number" }).notNull(),
+    /** TDS deducted in paise. Must be >= 0 and <= gross_paise. */
+    tdsPaise: bigint("tds_paise", { mode: "number" }).notNull().default(0),
+    /** User notes. */
+    notes: text("notes"),
+    /** Review status. Default pending until user accepts or rejects. */
+    status: incomeEventStatus("status").notNull().default("pending"),
+    /** When the user accepted this income event. */
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+    /**
+     * Pre-accept state snapshot when corrections were applied at acceptance.
+     * Null if accepted without corrections.
+     */
+    originalValues: jsonb("original_values"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    check("income_events_gross_paise_non_negative", sql`${t.grossPaise} >= 0`),
+    check("income_events_tds_paise_non_negative", sql`${t.tdsPaise} >= 0`),
+    check("income_events_tds_le_gross", sql`${t.tdsPaise} <= ${t.grossPaise}`),
+    /** Partial unique index: prevent duplicate derivations from the same source entity. */
+    uniqueIndex("income_events_source_unique_idx")
+      .on(t.userId, t.sourceKind, t.sourceId)
+      .where(sql`source_id is not null`),
+    index("income_events_user_fy_idx").on(t.userId, t.fy),
+  ],
+);
+
+// ─── EPF Contributions (task 13.5) ───────────────────────────────────────────
+
+/**
+ * EPF passbook reconciliation — dual expected/actual columns.
+ * One row per (user_id, wage_month, epfo_member_id).
+ *
+ * expected_* columns: populated from payslip import or manual entry.
+ * actual_* columns: populated when user confirms values from EPFO passbook.
+ *
+ * employer_epf_paise = credited to member's PF corpus (AFTER EPS diversion).
+ * employer_epf + eps = gross employer share. Never double-count.
+ * expected_vpf_paise defaults to 0 (NOT NULL).
+ *
+ * reconciliation_status is computed by computeStatus() and persisted after confirmActual.
+ */
+export const epfContributions = pgTable(
+  "epf_contributions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** Pay month in "YYYY-MM" format (e.g. "2025-06"). */
+    wageMonth: text("wage_month").notNull(),
+    /** Employer display name (from payslip or manual entry). */
+    employerName: text("employer_name"),
+    /**
+     * EPFO Member ID — establishment-specific identifier. REQUIRED.
+     * Format varies: e.g. "MH/BAN/0012345/000/0001234".
+     */
+    epfoMemberId: text("epfo_member_id").notNull(),
+
+    // Expected columns (from payslip import or manual entry)
+    /** Employee EPF deduction in paise (→ 80C eligible). */
+    expectedEmployeePaise: bigint("expected_employee_paise", { mode: "number" }),
+    /**
+     * Employer EPF credited to PF corpus in paise — AFTER EPS diversion.
+     * This is what actually lands in the member's PF corpus.
+     * employer_epf + eps = gross employer share (12% of basic).
+     */
+    expectedEmployerPaise: bigint("expected_employer_paise", { mode: "number" }),
+    /** EPS amount diverted to pension fund in paise (NOT credited to PF corpus). */
+    expectedEpsPaise: bigint("expected_eps_paise", { mode: "number" }),
+    /** Voluntary Provident Fund contribution in paise (→ 80C eligible). */
+    expectedVpfPaise: bigint("expected_vpf_paise", { mode: "number" }).notNull().default(0),
+    /** Source payslip; null for manual entries. */
+    payslipId: uuid("payslip_id").references(() => payslips.id),
+
+    // Actual columns (from EPFO passbook confirmation)
+    /** Actual employee EPF credited as per passbook in paise. */
+    actualEmployeePaise: bigint("actual_employee_paise", { mode: "number" }),
+    /** Actual employer EPF credited to PF corpus as per passbook in paise. */
+    actualEmployerPaise: bigint("actual_employer_paise", { mode: "number" }),
+    /** Actual EPS as per passbook in paise. */
+    actualEpsPaise: bigint("actual_eps_paise", { mode: "number" }),
+    /** Actual VPF as per passbook in paise. */
+    actualVpfPaise: bigint("actual_vpf_paise", { mode: "number" }),
+
+    /**
+     * Reconciliation status — computed by computeStatus() and persisted after confirmActual.
+     * Values: 'pending' | 'matched' | 'mismatch' | 'confirmed'.
+     * gap status is NOT persisted — the gaps endpoint is read-only.
+     */
+    reconciliationStatus: text("reconciliation_status").notNull().default("pending"),
+    /** User-supplied reason for a gap or mismatch. */
+    gapReason: text("gap_reason"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("epf_contributions_user_month_member_idx").on(
+      t.userId,
+      t.wageMonth,
+      t.epfoMemberId,
+    ),
+    /** Partial index for fast idempotent import lookup by payslip_id. */
+    index("epf_contributions_payslip_idx")
+      .on(t.payslipId)
+      .where(sql`payslip_id IS NOT NULL`),
+    index("epf_contributions_user_month_idx").on(t.userId, t.wageMonth),
+  ],
 );

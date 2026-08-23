@@ -48,6 +48,9 @@ export const ALL_TABLES = [
   "price_observations", "pantry_items", "cart_drafts", "cart_draft_items", "habit_profiles",
   "receipts", "receipt_lines",
   "tax_regime_preferences",
+  "payslips", "payslip_components",
+  "income_events",
+  "epf_contributions",
 ] as const;
 
 /** Tables that carry a user_id directly — scoped by that column in the export. */
@@ -76,6 +79,9 @@ export const USER_TABLES: Record<string, string> = {
   habit_profiles: "user_id",
   receipts: "user_id",
   tax_regime_preferences: "user_id",
+  payslips: "user_id",
+  income_events: "user_id",
+  epf_contributions: "user_id",
 };
 
 /**
@@ -97,6 +103,7 @@ export const LINKED_TABLES: Record<string, { fk: string; parent: string; parentU
   shopping_list_items: { fk: "list_id", parent: "shopping_lists" },
   cart_draft_items: { fk: "cart_draft_id", parent: "cart_drafts" },
   receipt_lines: { fk: "receipt_id", parent: "receipts" },
+  payslip_components: { fk: "payslip_id", parent: "payslips" },
 };
 
 /**
@@ -227,6 +234,7 @@ export const FILE_COLUMNS: ReadonlyArray<{ table: string; column: string }> = [
   { table: "insurance_health_cards", column: "stored_path" },
   { table: "card_statements", column: "stored_path" },
   { table: "receipts", column: "stored_path" },
+  { table: "payslips", column: "document_key" },
 ];
 
 /** File references found in an exported per-user dump, in FILE_COLUMNS order. */

@@ -1,0 +1,1 @@
+ALTER TABLE "accounts" ADD COLUMN "scheme_opened_date" date;

@@ -1,0 +1,23 @@
+## High
+
+- **GET query values cannot be parsed by the proposed request schema.** The route receives `cartTotalPaise` and `emiOffers` as strings, while `FinancialGuardsRequestSchema` expects a number and an array ([TASK.md](/work/personal/compass/tasks/081-financial-guards/TASK.md:58), [TASK.md](/work/personal/compass/tasks/081-financial-guards/TASK.md:85)). Existing GET routes use `z.coerce.number()` for numeric query values. Define a wire/query schema that coerces `cartTotalPaise` and safely JSON-parses `emiOffers`, then transforms into the shared domain request; otherwise valid requests will return 400.
+
+- **The EMI repayment calculation remains internally contradictory.** `emiPaise * tenureMonths` does not perform a last-installment adjustment ([TASK.md](/work/personal/compass/tasks/081-financial-guards/TASK.md:80)). For example, a one-paise, zero-rate principal over two months produces a nominal EMI of one paisa but should repay one paisa total, not two. `amortize` returns total interest, not an adjusted repayment amount ([emis.ts](/work/personal/compass/apps/api/src/modules/credit/services/emis.ts:38)); calculate `totalRepaymentPaise = principalPaise + totalInterestPaise` from its result and test indivisible zero-rate principals explicitly.
+
+- **The goal counterfactual can introduce fractional or negative paise and applies the complete cart cost independently to every goal.** `amountPaise / projectedMonths` is generally fractional, and subtracting it can make `monthlyInflowPaise` negative despite `projectGoal` requiring a non-negative monthly amount ([TASK.md](/work/personal/compass/tasks/081-financial-guards/TASK.md:74), [goal-projection.ts](/work/personal/compass/apps/api/src/modules/planning/services/goal-projection.ts:25)). The plan must specify integer rounding/clamping and whether results mean “the full purchase was funded from this goal” or allocate the purchase once across goals. As written, multiple goals each absorb the full purchase.
+
+- **There is no exposed side-effect-free loader for the inputs needed by `projectGoal`.** Target resolution, mapped contribution rate, mapped assets, retirement rates, and projection settings are assembled inside `getGoalProgress`; key helpers such as `effectiveTarget` and `mappedContributionRate` are private ([goals.ts](/work/personal/compass/apps/api/src/modules/planning/services/goals.ts:160), [goals.ts](/work/personal/compass/apps/api/src/modules/planning/services/goals.ts:187), [goals.ts](/work/personal/compass/apps/api/src/modules/planning/services/goals.ts:275)). “Load projection inputs directly” is therefore not implementable without duplicating substantial financial logic. The plan and modified-file list should include extracting an exported side-effect-free projection-input/progress function that both callers reuse.
+
+## Medium
+
+- **The goal response has one `assumedMonthlyInflowPaise`, although inflow is calculated separately for each goal.** Each goal’s mapped assets have their own contribution rate ([goals.ts](/work/personal/compass/apps/api/src/modules/planning/services/goals.ts:328)). Move baseline and impacted monthly inflows onto each `GoalImpactItem`, or define precisely what the single result-level value represents.
+
+- **There is no status for a reachable goal with zero displayed delay.** A zero cart total, or a delay that rounds to `0.0` months, fits none of `delayed`, `unreachable`, `undated`, `completed`, or `already_behind` ([TASK.md](/work/personal/compass/tasks/081-financial-guards/TASK.md:60)). Add an `unchanged`/`no_impact` status or define `delayed` to include zero, which would be misleading.
+
+- **Safe input validation does not make the EMI calculations safe.** `principalPaise * processingFeeBps`, `emiPaise * tenureMonths`, and subsequent additions can exceed JavaScript’s safe-integer range before division or response validation ([TASK.md](/work/personal/compass/tasks/081-financial-guards/TASK.md:80)). Use checked `BigInt` arithmetic or reject inputs whose derived results cannot remain safe integers.
+
+- **`offerIndex` is not constrained enough to identify offers reliably.** It is only described as an integer, allowing negative and duplicate indexes ([TASK.md](/work/personal/compass/tasks/081-financial-guards/TASK.md:58)). Require a non-negative safe integer and uniqueness across the maximum-ten-element array, or derive the index from array position server-side.
+
+## Low
+
+None.

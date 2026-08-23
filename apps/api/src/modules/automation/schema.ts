@@ -67,6 +67,7 @@ export const aiEventKind = pgEnum("ai_event_kind", [
   "goal_roadmap", // goal roadmap narrative (task 5.4)
   "shopping_parse", // paste-text shopping list parse (task 9.4)
   "offer_extract", // a card offer extracted from an email (task 10.4)
+  "payslip_parse", // a payslip parsed to extract CTC, TDS & EPF components (task 13.2)
 ]);
 export const aiEventStatus = pgEnum("ai_event_status", ["ok", "error"]);
 

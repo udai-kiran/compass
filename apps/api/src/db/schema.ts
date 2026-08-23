@@ -145,4 +145,11 @@ export {
   taxRegimePreferences,
   taxRegimeEnum,
   regimeSourceEnum,
+  payslips,
+  payslipComponents,
+  incomeEvents,
+  incomeEventStatus,
+  incomeKind,
+  incomeSourceKind,
+  epfContributions,
 } from "../modules/tax/schema.ts";

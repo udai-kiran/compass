@@ -111,7 +111,11 @@ test("every storage-key column in the schema is covered by FILE_COLUMNS", () => 
     if (!is(value, Table)) continue;
     const table = getTableName(value);
     for (const column of Object.values(getTableColumns(value))) {
-      if (column.name === "stored_path" || column.name === "document_path") {
+      if (
+        column.name === "stored_path" ||
+        column.name === "document_path" ||
+        column.name === "document_key"
+      ) {
         inSchema.push(`${table}.${column.name}`);
       }
     }

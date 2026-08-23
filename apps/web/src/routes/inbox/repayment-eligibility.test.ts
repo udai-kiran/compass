@@ -16,6 +16,7 @@ const account = (overrides: Partial<Account> = {}): Account => ({
   openingBalancePaise: 0,
   goalId: null,
   linkedAccountId: null,
+  schemeOpenedDate: null,
   sortOrder: 0,
   archivedAt: null,
   ...overrides,
