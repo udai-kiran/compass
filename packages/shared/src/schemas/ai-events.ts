@@ -11,6 +11,7 @@ export const AiEventKindSchema = z.enum([
   "goal_roadmap",
   "shopping_parse",
   "offer_extract",
+  "payslip_parse",
 ]);
 export type AiEventKind = z.infer<typeof AiEventKindSchema>;
 

@@ -147,6 +147,7 @@ function toAccount(row: AccountRow): Account {
     openingBalancePaise: row.openingBalancePaise,
     goalId: row.goalId,
     linkedAccountId: row.linkedAccountId ?? null,
+    schemeOpenedDate: row.schemeOpenedDate ?? null,
     sortOrder: row.sortOrder,
     archivedAt: row.archivedAt?.toISOString() ?? null,
   };

@@ -1,0 +1,56 @@
+## High
+
+- **Capital-gains tax cannot be computed correctly from the proposed input or existing statement contract.** The plan applies equity STCG at 15% and LTCG at 10% above ₹1 lakh ([TASK.md:34](/work/personal/compass/tasks/094-regime-comparison/TASK.md:34)), but FY 2024-25 contains a mid-year change: transfers on/after 23 July 2024 use 20% under §111A and 12.5% under §112A, with the §112A exemption increased to ₹1.25 lakh. The older rates apply before that date. [Finance (No. 2) Act 2024](https://incometaxindia.gov.in/news/finance-no.2-act-2024.pdf) and the [Income Tax Department capital-gains guide](https://wmstatic-prd.incometaxindia.gov.in/documents/20117/42998/Capital-Gain_2026-03-19_04-23-21_6cf0a8_en.pdf/e618991c-ac51-4d19-fbbc-bb18013f948d?t=1773980990558&version=1.0) confirm this.
+
+  More fundamentally, `capitalGainsAfterSetOff` or aggregate STCG/LTCG totals are insufficient. Tax depends on `sellDate`, `gainsTaxClass`, and sometimes acquisition date. The source model distinguishes equity, other, specified funds, MLDs, unlisted bonds, and exempt assets ([tax-lots.ts:35](/work/personal/compass/apps/api/src/modules/investments/services/tax-lots.ts:35)), but `CapitalGainsSliceSchema` drops `gainsTaxClass` ([wealth.ts:612](/work/personal/compass/packages/shared/src/schemas/wealth.ts:612)), while `getCapitalGains()` aggregates all short and long gains together ([capital-gains.ts:135](/work/personal/compass/apps/api/src/modules/investments/services/capital-gains.ts:135)). `assetClass` cannot substitute because a mutual fund may be equity, debt, or §50AA. A placeholder non-equity rate is not safe in a service that recommends a regime.
+
+  The plan should depend on 13.11 and consume tax-rate buckets preserving at least tax class, transfer-date band, and term. Capital-gains rates/exemptions also need FY/effective-date rule data; they do not currently exist in `tax-rules.ts`.
+
+- **The new-regime path incorrectly omits 80CCD(2).** It currently says “standard deduction only” ([TASK.md:36](/work/personal/compass/tasks/094-regime-comparison/TASK.md:36)). Employer NPS under §80CCD(2) is available under both regimes; the official [old-vs-new regime FAQ](https://www.incometax.gov.in/iec/foportal/help/new-tax-vs-old-tax-regime-faqs?mobile-app=1) explicitly lists it as an exception to the new-regime Chapter VI-A prohibition. The repository already models both-regime entries, including 14% for all employer types under the new regime from FY 2024-25 ([tax-rules.ts:460](/work/personal/compass/apps/api/src/lib/tax-rules.ts:460)).
+
+  Both computations must deduct the regime-specific allowed 80CCD(2) amount. The crossover variable must represent only old-regime-exclusive deductions; 80CCD(2) belongs in the fixed baseline for each regime.
+
+- **The proposed crossover algorithm has the wrong target and incomplete result states.** Searching for exact equality ([TASK.md:41](/work/personal/compass/tasks/094-regime-comparison/TASK.md:41)) is unreliable because integer rounding, 87A rebate discontinuities, and tax plateaus mean equality may span an interval or never occur at an exact paise. Search instead for the minimum attainable old-only deduction `D` satisfying `oldTotalTax(D) <= newTotalTax`, with the full tax calculation rerun at every probe.
+
+  Required edge cases are:
+
+  - If old is already no worse at `D=0`, return a zero-required/`already_old_better` state—not a negative crossover.
+  - If the predicate is false at the maximum legally attainable old-only deduction, return `null`/`unattainable`; do not report a hypothetical deduction exceeding statutory caps or eligible ordinary income.
+  - At the boundary, use `>=` for “old is no worse,” not the plan’s strict `>` rule ([TASK.md:44](/work/personal/compass/tasks/094-regime-comparison/TASK.md:44)).
+  - Compare actual computed totals for the recommendation rather than inferring it solely from `actualDeductionsPaise`, because deduction composition matters.
+  - Surcharge must be recalculated during the search because deductions can move total income across ₹50 lakh/₹1 crore/etc. thresholds. Special-rate gains also have a 15% enhanced-surcharge cap, which is not represented by the single generic surcharge table. The Income Tax Department documents that cap for §§111A, 112 and 112A [here](https://www.incometax.gov.in/iec/foportal/help/individual/return-applicable-3).
+
+- **87A rebate and marginal relief are not sufficiently described or represented.** `tax-rules.ts` has rebate thresholds and maxima, but eligibility is not simply “taxable income below threshold.” Section 87A is for resident individuals; residency is absent from the proposed inputs. Tax on §112A gains cannot be rebated, and special-rate income requires component-level handling. See [§112A(6)](https://wmstatic-prd.incometaxindia.gov.in/web/guest/w/section-112a-60) and the Finance Ministry’s [2025 memorandum](https://www.incometaxindia.gov.in/documents/20117/6476586/memo-2025.pdf/f92f27e1-aa07-d24c-8776-2884c9bbac1c?t=1762782732359).
+
+  There are also two distinct reliefs:
+
+  - New-regime §87A marginal relief just above the ₹7 lakh or ₹12 lakh threshold.
+  - Surcharge marginal relief at ₹50 lakh and higher thresholds.
+
+  The current `marginalRelief: boolean` only describes surcharge relief ([tax-rules.ts:74](/work/personal/compass/apps/api/src/lib/tax-rules.ts:74)); it contains neither §87A marginal-relief parameters nor the algorithm. The plan’s single “marginal relief” test ([TASK.md:94](/work/personal/compass/tasks/094-regime-comparison/TASK.md:94)) is therefore inadequate. Add separate rule metadata and tests for both relief types, boundary-plus-one cases, resident eligibility, special-rate income, and cess being applied only after tax plus surcharge and relief.
+
+## Medium
+
+- **The NPS 80CCD(1) cap uses the wrong salary base and the deduction path is ambiguous.** The plan uses 10% of `grossSalary` ([TASK.md:47](/work/personal/compass/tasks/094-regime-comparison/TASK.md:47)); the relevant salary base is Basic+DA, not total gross salary. Income events expose only gross salary, so the service needs Basic+DA from accepted payslip components or an explicit manual salary-base input. Also, 80CCD(1) shares the aggregate ₹1.5 lakh limit with 80C, as the existing rule notes ([tax-rules.ts:442](/work/personal/compass/apps/api/src/lib/tax-rules.ts:442)); the old-regime formula lists 80C and 80CCD(1B) but never clearly says where the capped 80CCD(1) remainder is deducted.
+
+- **The input set is not actually a complete identical-income comparison.** `getSummary()` produces salary, interest, dividend, rent, and other buckets from accepted events ([income-events.ts:263](/work/personal/compass/apps/api/src/modules/tax/services/income-events.ts:263)), but the plan consumes only salary, interest, and rent ([TASK.md:17](/work/personal/compass/tasks/094-regime-comparison/TASK.md:17)). Dividend and other ordinary income would be omitted. The plan should consume the complete accepted-income summary and explicitly classify every bucket. Pending-event counts should feed the estimate assumptions.
+
+- **The HRA non-goal is appropriate only for automatic computation.** Automatically deriving HRA would require Basic/DA, HRA received, rent paid, and metro status, so deferring that is reasonable. Completely skipping HRA, however, systematically biases the recommendation toward the new regime and inflates the claimed crossover. The estimate endpoint should accept a manually determined HRA exemption, while the sourced GET should report a prominent “HRA not included” assumption when unavailable. The current “manual input or skipped” old path ([TASK.md:32](/work/personal/compass/tasks/094-regime-comparison/TASK.md:32)) has no corresponding input field.
+
+- **13.11 is effectively a correctness prerequisite, not an optional alternative.** The plan says gains may come from 13.11 “or directly” from `capital-gains.ts` ([TASK.md:20](/work/personal/compass/tasks/094-regime-comparison/TASK.md:20)), but the current statement deliberately does not apply capital-loss set-off, and task 13.11 is still `PLANNING`. Direct consumption can overstate tax. Likewise, 13.7 remains `PLAN_REVIEW`, so 13.8 cannot yet source its declared deduction basket. These dependencies should be made explicit blocking dependencies before implementation.
+
+- **Taxpayer classification is missing.** `tax-rules.ts` has distinct old-regime slabs for ordinary, senior, and super-senior taxpayers and maps only the new regime to ordinary ([tax-rules.ts:614](/work/personal/compass/apps/api/src/lib/tax-rules.ts:614)). The proposed inputs and response do not carry `taxpayerType`, so a default ordinary calculation would be wrong for older users.
+
+## Low
+
+- **Calling the income-events service is feasible and does not currently create a circular dependency.** `income-events.ts` imports DB/schema/shared utilities but no regime-comparison code ([income-events.ts:23](/work/personal/compass/apps/api/src/modules/tax/services/income-events.ts:23)); `plugin.ts` merely registers sibling route plugins ([plugin.ts:8](/work/personal/compass/apps/api/src/modules/tax/plugin.ts:8)). A one-way regime-comparison orchestration service calling `getSummary()` is safe.
+
+  Keep the tax calculator and crossover function pure, however. A clean split is `compareRegimes(inputs)` for computation and `getRegimeComparison(db, userId, fy)` for calls to income events, deductions, and gains. Importing investments’ capital-gains/loss service from tax is currently acyclic, but it establishes a cross-module dependency that should remain one-way or be injected through the orchestration layer.
+
+- **The requested rule-data verification largely passes.** `tax-rules.ts` covers FY 2023-24 through FY 2026-27 for both regimes, with old-regime age variants. Every `RegimeRules` entry includes slabs, a rebate threshold/maximum, surcharge slabs, 4% cess, and a marginal-relief flag ([tax-rules.ts:50](/work/personal/compass/apps/api/src/lib/tax-rules.ts:50)). Surcharge arrays are shared constants rather than independently keyed tables, but they are attached to every FY/regime entry. This is sufficient for the currently identical annual schedules, though not for the special-income surcharge cap or §87A marginal relief discussed above.
+
+- **The standard deduction does differ by regime, but only from FY 2024-25 onward.** FY 2023-24 has ₹50,000 for both old and new ([tax-rules.ts:175](/work/personal/compass/apps/api/src/lib/tax-rules.ts:175), [tax-rules.ts:223](/work/personal/compass/apps/api/src/lib/tax-rules.ts:223)). FY 2024-25 onward has ₹50,000 old and ₹75,000 new ([tax-rules.ts:240](/work/personal/compass/apps/api/src/lib/tax-rules.ts:240), [tax-rules.ts:286](/work/personal/compass/apps/api/src/lib/tax-rules.ts:286)). The task’s FY 2024-25+ wording is correct.
+
+- **The response hardcodes the name `cess4Pct` despite AC4 requiring FY-versioned rules.** It should be `cessPaise`, optionally accompanied by `cessRateBps`; otherwise the contract will become misleading if the rule data changes. Similarly, `rebate87A`, `surcharge`, and `nps80CCD1CapApplied` should use the consistent `Paise` suffix.
+
+No files were changed and no tests were run; this was a read-only planning review.

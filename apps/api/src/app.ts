@@ -31,7 +31,11 @@ import { invalidateUserCache } from "./lib/cache.ts";
 import { enqueueBudgetEvaluation } from "./jobs/index.ts";
 import { createStorage, type Storage } from "./lib/storage.ts";
 import { EventBus } from "./lib/event-bus.ts";
-import { assertNoLegacyShapes, findInconsistentPostings } from "./modules/ledger/services/reconcile-postings.ts";
+import {
+  assertNoLegacyShapes,
+  findInconsistentPostings,
+} from "./modules/ledger/services/reconcile-postings.ts";
+import { sanitizeErrorForLog } from "./lib/error-logging.ts";
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -242,7 +246,10 @@ export async function buildApp(config: Config): Promise<FastifyInstance> {
     // HttpError carries a curated, safe message (e.g. AI provider outages) — pass
     // it through even at 5xx. Unexpected 5xx errors are logged and masked.
     if (status >= 500 && err.name !== "HttpError") {
-      req.log.error(err);
+      // sanitizeErrorForLog omits .message for DrizzleQueryError-shaped errors
+      // (which bake bound query params — potentially PAN/TAN — directly into
+      // .message). All other error shapes pass through unchanged (AC7 / task 13.4).
+      req.log.error(sanitizeErrorForLog(err));
       return reply.code(status).send({
         error: "Internal Server Error",
         message: "Something went wrong",
@@ -252,7 +259,9 @@ export async function buildApp(config: Config): Promise<FastifyInstance> {
   });
 
   app.setNotFoundHandler((req, reply) =>
-    reply.code(404).send({ error: "Not Found", message: `Route ${req.method} ${req.url} not found` }),
+    reply
+      .code(404)
+      .send({ error: "Not Found", message: `Route ${req.method} ${req.url} not found` }),
   );
 
   await app.register(multipart);
