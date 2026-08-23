@@ -10,6 +10,8 @@ import {
   UpsertNpsDetailsSchema,
   UpsertAccountNpsDetailsSchema,
   UpsertRetirementDetailsSchema,
+  UpsertDepositDetailsSchema,
+  MAX_RD_INSTALLMENTS,
 } from "./wealth.ts";
 
 test("the event body accepts units or none — the asset class decides, not the schema", () => {
@@ -203,4 +205,41 @@ test("StatementReconciliationSchema rejects a response missing ledgerDuePaise/du
   const { ledgerDuePaise: _ledgerDuePaise, dueDriftPaise: _dueDriftPaise, ...withoutNewFields } =
     reconciliationFixture();
   assert.equal(StatementReconciliationSchema.safeParse(withoutNewFields).success, false);
+});
+
+// ── R2 (review-3 M-NEW2): RD totalInstallments capped at MAX_RD_INSTALLMENTS ─
+
+test("UpsertDepositDetailsSchema rejects totalInstallments above MAX_RD_INSTALLMENTS", () => {
+  const base = {
+    depositKind: "rd" as const,
+    installmentPaise: 1_000_000,
+    totalInstallments: MAX_RD_INSTALLMENTS,
+    annualRateBps: 700,
+    compoundingFrequency: "quarterly" as const,
+    interestDisposition: "reinvest" as const,
+    startDate: "2024-01-01",
+    maturityDate: "2025-01-01",
+    autoRenewal: false,
+    tdsSectionApplicable: true,
+  };
+  // At the cap: accepted.
+  assert.equal(UpsertDepositDetailsSchema.safeParse(base).success, true);
+  // One over the cap: rejected.
+  assert.equal(
+    UpsertDepositDetailsSchema.safeParse({ ...base, totalInstallments: MAX_RD_INSTALLMENTS + 1 }).success,
+    false,
+    "totalInstallments > MAX_RD_INSTALLMENTS must be rejected",
+  );
+  // Unreasonably large value: rejected.
+  assert.equal(
+    UpsertDepositDetailsSchema.safeParse({ ...base, totalInstallments: 10_000 }).success,
+    false,
+    "totalInstallments = 10_000 must be rejected",
+  );
+  // Zero: rejected (min(1) still applies).
+  assert.equal(
+    UpsertDepositDetailsSchema.safeParse({ ...base, totalInstallments: 0 }).success,
+    false,
+    "totalInstallments = 0 must be rejected",
+  );
 });
