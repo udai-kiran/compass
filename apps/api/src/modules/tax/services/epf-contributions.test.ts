@@ -22,6 +22,7 @@ import {
   computeEpfProjection,
   buildEpfContributionDto,
 } from "./epf-contributions.ts";
+import { HttpError } from "../../../lib/errors.ts";
 
 // ─── computeStatus ────────────────────────────────────────────────────────────
 // New H4 rule: stays 'pending' while ANY component with a positive expected value
@@ -122,16 +123,49 @@ describe("computeStatus", () => {
     assert.equal(status, "matched");
   });
 
-  it("treats a zero expected column as not a pending trigger (avoids requiring confirmation when nothing expected)", () => {
-    // expectedEpsPaise=0: zero expected → not a pending trigger even when actual is null.
+  it("a zero expected EPS with a null actual now needs confirmation (blocker 1 — EPS/employer/employee lost their zero exception)", () => {
+    // expectedEpsPaise=0: for employee/employer/EPS, zero expected still triggers pending
+    // when actual is null (only VPF keeps the zero-skip exception).
+    // statusRow() defaults: actualEmployeePaise=180000, actualEmployerPaise=55000 (non-null),
+    // actualVpfPaise=null, expectedVpfPaise=0 — so the leading all-null check is NOT triggered.
     const status = computeStatus(statusRow({ expectedEpsPaise: 0, actualEpsPaise: null }));
-    assert.equal(status, "matched");
+    assert.equal(status, "pending");
+  });
+
+  it("a zero expected employee with a null actual needs confirmation (no zero exception for employee)", () => {
+    // expectedEmployeePaise=0, actualEmployeePaise=null → needsConfirmation(0, null) = true → pending.
+    // statusRow() defaults: actualEmployerPaise=55000, actualEpsPaise=125000 (non-null),
+    // so the leading all-null check is NOT triggered.
+    const status = computeStatus(statusRow({ expectedEmployeePaise: 0, actualEmployeePaise: null }));
+    assert.equal(status, "pending");
+  });
+
+  it("a zero expected employer with a null actual needs confirmation (no zero exception for employer)", () => {
+    // expectedEmployerPaise=0, actualEmployerPaise=null → needsConfirmation(0, null) = true → pending.
+    // statusRow() defaults: actualEmployeePaise=180000, actualEpsPaise=125000 (non-null),
+    // so the leading all-null check is NOT triggered.
+    const status = computeStatus(statusRow({ expectedEmployerPaise: 0, actualEmployerPaise: null }));
+    assert.equal(status, "pending");
   });
 
   it("treats a zero expected column as not comparable for mismatch (avoids divide-by-zero)", () => {
     // expectedEpsPaise=0, actualEpsPaise=125000: zero expected → no mismatch flagged.
     const status = computeStatus(statusRow({ expectedEpsPaise: 0, actualEpsPaise: 125000 }));
     assert.equal(status, "matched");
+  });
+
+  it("returns pending when all four actuals are null, even with all expected null/zero (fresh unconfirmed row)", () => {
+    const status = computeStatus({
+      actualEmployeePaise: null,
+      actualEmployerPaise: null,
+      actualEpsPaise: null,
+      actualVpfPaise: null,
+      expectedEmployeePaise: null,
+      expectedEmployerPaise: null,
+      expectedEpsPaise: null,
+      expectedVpfPaise: 0,
+    });
+    assert.equal(status, "pending");
   });
 
   it("flags a mismatch when actual is lower than expected by more than 1%", () => {
@@ -222,6 +256,32 @@ describe("computeEpfProjection", () => {
   it("produces integer results (no fractional paise)", () => {
     const result = computeEpfProjection(999_999, 36, 825);
     assert.equal(result, Math.floor(result));
+  });
+
+  it("produces an exact BigInt result for a corpus where the intermediate product exceeds Number.MAX_SAFE_INTEGER", () => {
+    // corpus = 8_000_000_000_200 paise (~₹80 crore)
+    // corpus * (10000 + 825) = 8_000_000_000_200 * 10825 ≈ 8.66e16 > MAX_SAFE_INTEGER ≈ 9.007e15
+    // so the old plain-number multiplication would have lost precision.
+    // Expected: (8000000000200n * 10825n + 5000n) / 10000n
+    // = (86600000002165000n + 5000n) / 10000n
+    // = 86600000002170000n / 10000n
+    // = 8660000000217n → 8_660_000_000_217
+    const expectedBigInt = (8000000000200n * 10825n + 5000n) / 10000n;
+    const expected = Number(expectedBigInt);
+    assert.ok(Number.isSafeInteger(expected), "expected result must itself be a safe integer");
+    const result = computeEpfProjection(8_000_000_000_200, 12, 825);
+    assert.equal(result, expected);
+    assert.ok(Number.isSafeInteger(result), "result must be a safe integer");
+  });
+
+  it("throws HttpError 500 when a compounding step produces a result exceeding Number.MAX_SAFE_INTEGER", () => {
+    // Starting corpus 9_000_000_000_000_000 paise (9e15, a safe integer — just below MAX_SAFE ~9.007e15).
+    // After 1 year at 825 bps: 9_000_000_000_000_000 * 10825 / 10000 ≈ 9_742_500_000_000_000 > MAX_SAFE_INTEGER.
+    // The overflow guard must throw HttpError(500) so the app error handler preserves the message.
+    assert.throws(
+      () => computeEpfProjection(9_000_000_000_000_000, 12, 825),
+      (err: unknown) => err instanceof HttpError && err.statusCode === 500,
+    );
   });
 });
 

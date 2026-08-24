@@ -11,7 +11,7 @@
  *
  * Employer EPF invariant:
  *   employer_epf = credited to PF corpus (AFTER EPS diversion).
- *   employer_epf + eps = gross employer share (12% of basic).
+ *   employer_epf + eps = gross employer share (no fixed-rate check — the actual rate varies by employer/payslip; H2 removed the unconditional 12%-of-basic assumption).
  *   Never double-count.
  *
  * 80C eligibility:
@@ -19,14 +19,14 @@
  *   employer_epf is NOT 80C eligible.
  *
  * Reconciliation status state machine (pure):
- *   pending  → ANY component with positive expected still has a null actual
- *   matched  → all positive-expected components have their actual set, all within 1% tolerance
- *   mismatch → all positive-expected components have their actual set, ≥1 differs by >1%
+ *   pending  → all four actuals are null (unconditional), OR any non-null expected has a null actual
+ *   matched  → all relevant components have their actual set, all within 1% tolerance
+ *   mismatch → all relevant components have their actual set, ≥1 differs by >1%
  *   confirmed → reserved for a future explicit user-override action (not computed here)
  */
 
 import { and, eq, gte, isNotNull, isNull, lte, sql } from "drizzle-orm";
-import type { DbOrTx } from "../../../db/index.ts";
+import type { Db, DbOrTx } from "../../../db/index.ts";
 import { epfContributions, payslips, payslipComponents } from "../schema.ts";
 import { accounts } from "../../../db/shared/hubs.ts";
 import { postings, transactions } from "../../../db/shared/ledger.ts";
@@ -47,11 +47,12 @@ import type {
  * Compute reconciliation status from a row's actual vs expected values.
  * Pure function — no I/O.
  *
- * Logic (H4):
- *   1. Any component with a POSITIVE expected value and a null actual → 'pending'.
- *      Zero-expected components are treated as "no expectation" (consistent with
- *      the mismatch guard that skips zero-expected components).
- *   2. Once all positive-expected components have their actual set:
+ * Logic (H4 + blocker 1 / review-4):
+ *   0. Unconditional leading check: if ALL four actuals are null → 'pending' always.
+ *   1. Employee/employer/EPS: any non-null expected with null actual → 'pending'
+ *      (including exactly zero expected; zero-expected EPS/employee/employer now
+ *      needs an actual). VPF keeps its zero-skip exception (0 = no VPF expected).
+ *   2. Once all relevant components have their actual set:
  *      - Any component where |actual − expected| * 100 > expected → 'mismatch'
  *        (integer cross-multiplication; skips null or zero expected).
  *   3. Otherwise → 'matched'.
@@ -71,15 +72,31 @@ export function computeStatus(row: {
   /** NOT NULL in DB; defaults to 0 (meaning no VPF). */
   expectedVpfPaise: number;
 }): ReconciliationStatus {
-  // A component "needs confirmation" if it has a positive expected value but actual is still null.
+  // Unconditional: a row where nothing has been confirmed yet is always
+  // 'pending', regardless of what is expected (blocker 1 / review-4).
+  if (
+    row.actualEmployeePaise === null &&
+    row.actualEmployerPaise === null &&
+    row.actualEpsPaise === null &&
+    row.actualVpfPaise === null
+  ) {
+    return "pending";
+  }
+
+  // A component "needs confirmation" if it has a non-null expected value
+  // (including exactly zero) but actual is still null. VPF is the one
+  // exception: its expected defaults to 0 meaning "no VPF", so a zero
+  // expected VPF does not need an actual.
   const needsConfirmation = (expected: number | null, actual: number | null): boolean =>
-    expected !== null && expected !== 0 && actual === null;
+    expected !== null && actual === null;
+  const vpfNeedsConfirmation = (expected: number, actual: number | null): boolean =>
+    expected !== 0 && actual === null;
 
   if (
     needsConfirmation(row.expectedEmployeePaise, row.actualEmployeePaise) ||
     needsConfirmation(row.expectedEmployerPaise, row.actualEmployerPaise) ||
     needsConfirmation(row.expectedEpsPaise, row.actualEpsPaise) ||
-    needsConfirmation(row.expectedVpfPaise, row.actualVpfPaise)
+    vpfNeedsConfirmation(row.expectedVpfPaise, row.actualVpfPaise)
   ) {
     return "pending";
   }
@@ -150,12 +167,28 @@ export function computeEpfProjection(
   monthsToRetirement: number,
   assumedAnnualRateBps: number,
 ): number {
+  // Per-step BigInt arithmetic: avoids silent precision loss when the intermediate
+  // product (corpus * rateNumerator) exceeds Number.MAX_SAFE_INTEGER.
   const yearsToCompound = Math.floor(monthsToRetirement / 12);
-  let corpus = currentCorpusPaise;
+  const rateNumerator = 10000n + BigInt(assumedAnnualRateBps);
+  const rateDenominator = 10000n;
+  const half = rateDenominator / 2n;
+  const maxSafe = BigInt(Number.MAX_SAFE_INTEGER);
+  let corpus = BigInt(currentCorpusPaise);
   for (let i = 0; i < yearsToCompound; i++) {
-    corpus = Math.round((corpus * (10000 + assumedAnnualRateBps)) / 10000);
+    corpus = (corpus * rateNumerator + half) / rateDenominator;
+    if (corpus > maxSafe) {
+      // Throws HttpError (not plain Error) so the app's error handler preserves
+      // this curated message rather than masking it to a generic 500.
+      // HttpError is a plain Error subclass with a statusCode field — it does not
+      // perform any I/O, so using it here does not violate the "Pure — no I/O" contract.
+      throw new HttpError(
+        500,
+        "computeEpfProjection: projected corpus exceeded Number.MAX_SAFE_INTEGER during compounding — refusing to lose paise",
+      );
+    }
   }
-  return corpus;
+  return Number(corpus);
 }
 
 /** Build the EpfContribution DTO from a DB row. Pure — no I/O. */
@@ -197,40 +230,73 @@ export function buildEpfContributionDto(
 /**
  * Create a manual EPF contribution entry.
  * Upserts on (user_id, wage_month, epfo_member_id) — safe to call multiple times.
- * Does NOT update actual_* columns on conflict.
+ * Does NOT update actual_* columns on conflict. Recomputes reconciliationStatus
+ * atomically on every upsert using the existing actual_* values + new expected_*.
  */
 export async function createManual(
-  db: DbOrTx,
+  db: Db,
   userId: string,
   input: CreateEpfContributionBody,
 ): Promise<EpfContribution> {
-  const [row] = await db
-    .insert(epfContributions)
-    .values({
-      userId,
-      wageMonth: input.wageMonth,
-      employerName: input.employerName ?? null,
-      epfoMemberId: input.epfoMemberId,
+  return db.transaction(async (tx) => {
+    // Select the existing row to get current actual_* values before the upsert.
+    // .for("update") acquires a row-level lock for the remainder of this transaction,
+    // so a concurrent confirmActual's UPDATE on the same row blocks until we commit —
+    // eliminating the TOCTOU race where we might read stale actual_* values.
+    // On the fresh-insert path (no existing row) this is a no-op.
+    const [existing] = await tx
+      .select()
+      .from(epfContributions)
+      .where(
+        and(
+          eq(epfContributions.userId, userId),
+          eq(epfContributions.wageMonth, input.wageMonth),
+          eq(epfContributions.epfoMemberId, input.epfoMemberId),
+        ),
+      )
+      .for("update");
+
+    const status = computeStatus({
+      actualEmployeePaise: existing?.actualEmployeePaise ?? null,
+      actualEmployerPaise: existing?.actualEmployerPaise ?? null,
+      actualEpsPaise: existing?.actualEpsPaise ?? null,
+      actualVpfPaise: existing?.actualVpfPaise ?? null,
       expectedEmployeePaise: input.expectedEmployeePaise ?? null,
       expectedEmployerPaise: input.expectedEmployerPaise ?? null,
       expectedEpsPaise: input.expectedEpsPaise ?? null,
       expectedVpfPaise: input.expectedVpfPaise ?? 0,
-    })
-    .onConflictDoUpdate({
-      target: [epfContributions.userId, epfContributions.wageMonth, epfContributions.epfoMemberId],
-      set: {
-        expectedEmployeePaise: sql`EXCLUDED.expected_employee_paise`,
-        expectedEmployerPaise: sql`EXCLUDED.expected_employer_paise`,
-        expectedEpsPaise: sql`EXCLUDED.expected_eps_paise`,
-        expectedVpfPaise: sql`EXCLUDED.expected_vpf_paise`,
-        employerName: sql`EXCLUDED.employer_name`,
-        updatedAt: sql`NOW()`,
-      },
-    })
-    .returning();
+    });
 
-  if (!row) throw new HttpError(500, "Failed to create EPF contribution");
-  return buildEpfContributionDto(row);
+    const [row] = await tx
+      .insert(epfContributions)
+      .values({
+        userId,
+        wageMonth: input.wageMonth,
+        employerName: input.employerName ?? null,
+        epfoMemberId: input.epfoMemberId,
+        expectedEmployeePaise: input.expectedEmployeePaise ?? null,
+        expectedEmployerPaise: input.expectedEmployerPaise ?? null,
+        expectedEpsPaise: input.expectedEpsPaise ?? null,
+        expectedVpfPaise: input.expectedVpfPaise ?? 0,
+        reconciliationStatus: status,
+      })
+      .onConflictDoUpdate({
+        target: [epfContributions.userId, epfContributions.wageMonth, epfContributions.epfoMemberId],
+        set: {
+          expectedEmployeePaise: sql`EXCLUDED.expected_employee_paise`,
+          expectedEmployerPaise: sql`EXCLUDED.expected_employer_paise`,
+          expectedEpsPaise: sql`EXCLUDED.expected_eps_paise`,
+          expectedVpfPaise: sql`EXCLUDED.expected_vpf_paise`,
+          employerName: sql`EXCLUDED.employer_name`,
+          reconciliationStatus: sql`EXCLUDED.reconciliation_status`,
+          updatedAt: sql`NOW()`,
+        },
+      })
+      .returning();
+
+    if (!row) throw new HttpError(500, "Failed to create EPF contribution");
+    return buildEpfContributionDto(row);
+  });
 }
 
 /**
@@ -239,7 +305,9 @@ export async function createManual(
  * Algorithm:
  * 1. Load payslip — verify ownership and status='accepted'.
  * 2. Sum canonical component kinds → expected_* columns.
- * 3. Upsert on (user_id, wage_month, epfo_member_id); preserve existing actual_* on conflict.
+ * 3. Select existing row (to read current actual_* values).
+ * 4. Upsert on (user_id, wage_month, epfo_member_id); recompute reconciliationStatus
+ *    atomically from existing actual_* + new expected_*. actual_* NOT in SET clause.
  *
  * Idempotency: the upsert's ON CONFLICT DO UPDATE refreshes expected_* columns
  * from the current payslip components on every call — corrected payslip values
@@ -250,138 +318,178 @@ export async function createManual(
  * employer_epf + eps = gross employer share. Never double-count.
  */
 export async function importFromPayslip(
-  db: DbOrTx,
+  db: Db,
   userId: string,
   payslipId: string,
   epfoMemberId: string,
 ): Promise<EpfContribution> {
-  // Step 1: Load payslip — ownership + status check.
-  const [payslip] = await db
-    .select()
-    .from(payslips)
-    .where(and(eq(payslips.id, payslipId), eq(payslips.userId, userId)));
+  return db.transaction(async (tx) => {
+    // Step 1: Load payslip — ownership + status check.
+    const [payslip] = await tx
+      .select()
+      .from(payslips)
+      .where(and(eq(payslips.id, payslipId), eq(payslips.userId, userId)));
 
-  if (!payslip) throw new HttpError(404, "Payslip not found");
-  if (payslip.status !== "accepted") {
-    throw new HttpError(409, "Payslip must be in accepted status to import EPF contributions");
-  }
-
-  // Step 2: Load components and sum by canonical kind.
-  const components = await db
-    .select()
-    .from(payslipComponents)
-    .where(eq(payslipComponents.payslipId, payslipId));
-
-  let expectedEmployeePaise: number | null = null;
-  let expectedEmployerPaise: number | null = null;
-  let expectedEpsPaise: number | null = null;
-  let expectedVpfPaise = 0;
-
-  for (const comp of components) {
-    switch (comp.canonicalKind) {
-      case "employee_epf":
-        expectedEmployeePaise = (expectedEmployeePaise ?? 0) + comp.currentPaise;
-        break;
-      case "employer_epf":
-        // NET credited to PF corpus (after EPS diversion) — do not add EPS here.
-        expectedEmployerPaise = (expectedEmployerPaise ?? 0) + comp.currentPaise;
-        break;
-      case "eps":
-        // EPS pension diversion — separate accumulator, never added to employer_epf.
-        expectedEpsPaise = (expectedEpsPaise ?? 0) + comp.currentPaise;
-        break;
-      case "vpf":
-        expectedVpfPaise += comp.currentPaise;
-        break;
+    if (!payslip) throw new HttpError(404, "Payslip not found");
+    if (payslip.status !== "accepted") {
+      throw new HttpError(409, "Payslip must be in accepted status to import EPF contributions");
     }
-  }
 
-  // Step 3: Upsert — refreshes expected_* from current payslip components;
-  // actual_* are NOT in the SET clause so confirmed passbook values survive re-import.
-  const [row] = await db
-    .insert(epfContributions)
-    .values({
-      userId,
-      wageMonth: payslip.payMonth,
-      employerName: payslip.employerName ?? null,
-      epfoMemberId,
+    // Step 2: Load components and sum by canonical kind.
+    const components = await tx
+      .select()
+      .from(payslipComponents)
+      .where(eq(payslipComponents.payslipId, payslipId));
+
+    let expectedEmployeePaise: number | null = null;
+    let expectedEmployerPaise: number | null = null;
+    let expectedEpsPaise: number | null = null;
+    let expectedVpfPaise = 0;
+
+    for (const comp of components) {
+      switch (comp.canonicalKind) {
+        case "employee_epf":
+          expectedEmployeePaise = (expectedEmployeePaise ?? 0) + comp.currentPaise;
+          break;
+        case "employer_epf":
+          // NET credited to PF corpus (after EPS diversion) — do not add EPS here.
+          expectedEmployerPaise = (expectedEmployerPaise ?? 0) + comp.currentPaise;
+          break;
+        case "eps":
+          // EPS pension diversion — separate accumulator, never added to employer_epf.
+          expectedEpsPaise = (expectedEpsPaise ?? 0) + comp.currentPaise;
+          break;
+        case "vpf":
+          expectedVpfPaise += comp.currentPaise;
+          break;
+      }
+    }
+
+    // Step 3: Select existing row to get current actual_* values for status recompute.
+    // .for("update") acquires a row-level lock for the remainder of this transaction,
+    // so a concurrent confirmActual's UPDATE on the same row blocks until we commit —
+    // eliminating the TOCTOU race where we might read stale actual_* values.
+    // On the fresh-insert path (no existing row) this is a no-op.
+    const [existing] = await tx
+      .select()
+      .from(epfContributions)
+      .where(
+        and(
+          eq(epfContributions.userId, userId),
+          eq(epfContributions.wageMonth, payslip.payMonth),
+          eq(epfContributions.epfoMemberId, epfoMemberId),
+        ),
+      )
+      .for("update");
+
+    const status = computeStatus({
+      actualEmployeePaise: existing?.actualEmployeePaise ?? null,
+      actualEmployerPaise: existing?.actualEmployerPaise ?? null,
+      actualEpsPaise: existing?.actualEpsPaise ?? null,
+      actualVpfPaise: existing?.actualVpfPaise ?? null,
       expectedEmployeePaise,
       expectedEmployerPaise,
       expectedEpsPaise,
       expectedVpfPaise,
-      payslipId,
-    })
-    .onConflictDoUpdate({
-      target: [epfContributions.userId, epfContributions.wageMonth, epfContributions.epfoMemberId],
-      set: {
-        expectedEmployeePaise: sql`EXCLUDED.expected_employee_paise`,
-        expectedEmployerPaise: sql`EXCLUDED.expected_employer_paise`,
-        expectedEpsPaise: sql`EXCLUDED.expected_eps_paise`,
-        expectedVpfPaise: sql`EXCLUDED.expected_vpf_paise`,
-        payslipId: sql`EXCLUDED.payslip_id`,
-        employerName: sql`EXCLUDED.employer_name`,
-        updatedAt: sql`NOW()`,
-        // actual_* columns are NOT in the SET clause — preserved on re-import.
-      },
-    })
-    .returning();
+    });
 
-  if (!row) throw new HttpError(500, "Failed to import EPF contribution from payslip");
-  return buildEpfContributionDto(row);
+    // Step 4: Upsert — refreshes expected_* from current payslip components;
+    // actual_* are NOT in the SET clause so confirmed passbook values survive re-import.
+    const [row] = await tx
+      .insert(epfContributions)
+      .values({
+        userId,
+        wageMonth: payslip.payMonth,
+        employerName: payslip.employerName ?? null,
+        epfoMemberId,
+        expectedEmployeePaise,
+        expectedEmployerPaise,
+        expectedEpsPaise,
+        expectedVpfPaise,
+        payslipId,
+        reconciliationStatus: status,
+      })
+      .onConflictDoUpdate({
+        target: [epfContributions.userId, epfContributions.wageMonth, epfContributions.epfoMemberId],
+        set: {
+          expectedEmployeePaise: sql`EXCLUDED.expected_employee_paise`,
+          expectedEmployerPaise: sql`EXCLUDED.expected_employer_paise`,
+          expectedEpsPaise: sql`EXCLUDED.expected_eps_paise`,
+          expectedVpfPaise: sql`EXCLUDED.expected_vpf_paise`,
+          payslipId: sql`EXCLUDED.payslip_id`,
+          employerName: sql`EXCLUDED.employer_name`,
+          reconciliationStatus: sql`EXCLUDED.reconciliation_status`,
+          updatedAt: sql`NOW()`,
+          // actual_* columns are NOT in the SET clause — preserved on re-import.
+        },
+      })
+      .returning();
+
+    if (!row) throw new HttpError(500, "Failed to import EPF contribution from payslip");
+    return buildEpfContributionDto(row);
+  });
 }
 
 /**
  * Confirm actual EPF passbook values for a contribution row.
  * Computes reconciliationStatus via computeStatus() and persists it atomically.
  *
- * The computed status is always 'matched' or 'mismatch' after this call
+ * The computed status can be 'pending' (if some expected component still lacks
+ * an actual after this call), 'matched', or 'mismatch'
  * (never 'confirmed' — that label is reserved for a future explicit-confirm flow).
  * Returns the updated row.
  */
 export async function confirmActual(
-  db: DbOrTx,
+  db: Db,
   userId: string,
   id: string,
   body: ConfirmActualBody,
 ): Promise<EpfContribution> {
-  // Load the row first so we can run computeStatus.
-  const [existing] = await db
-    .select()
-    .from(epfContributions)
-    .where(and(eq(epfContributions.id, id), eq(epfContributions.userId, userId)));
+  return db.transaction(async (tx) => {
+    // Load the row first so we can run computeStatus.
+    // .for("update") acquires a row-level lock for the remainder of this transaction,
+    // so a concurrent createManual/importFromPayslip upsert on the same row blocks until
+    // we commit — eliminating the TOCTOU race where expected_* might change between our
+    // SELECT and UPDATE, causing us to write a stale reconciliationStatus.
+    const [existing] = await tx
+      .select()
+      .from(epfContributions)
+      .where(and(eq(epfContributions.id, id), eq(epfContributions.userId, userId)))
+      .for("update");
 
-  if (!existing) throw new HttpError(404, "EPF contribution not found");
+    if (!existing) throw new HttpError(404, "EPF contribution not found");
 
-  const newActuals = {
-    actualEmployeePaise: body.actualEmployeePaise,
-    actualEmployerPaise: body.actualEmployerPaise ?? null,
-    actualEpsPaise: body.actualEpsPaise ?? null,
-    actualVpfPaise: body.actualVpfPaise ?? null,
-  };
+    const newActuals = {
+      actualEmployeePaise: body.actualEmployeePaise,
+      actualEmployerPaise: body.actualEmployerPaise ?? null,
+      actualEpsPaise: body.actualEpsPaise ?? null,
+      actualVpfPaise: body.actualVpfPaise ?? null,
+    };
 
-  const status = computeStatus({
-    actualEmployeePaise: newActuals.actualEmployeePaise,
-    actualEmployerPaise: newActuals.actualEmployerPaise,
-    actualEpsPaise: newActuals.actualEpsPaise,
-    actualVpfPaise: newActuals.actualVpfPaise,
-    expectedEmployeePaise: existing.expectedEmployeePaise ?? null,
-    expectedEmployerPaise: existing.expectedEmployerPaise ?? null,
-    expectedEpsPaise: existing.expectedEpsPaise ?? null,
-    expectedVpfPaise: existing.expectedVpfPaise ?? 0,
+    const status = computeStatus({
+      actualEmployeePaise: newActuals.actualEmployeePaise,
+      actualEmployerPaise: newActuals.actualEmployerPaise,
+      actualEpsPaise: newActuals.actualEpsPaise,
+      actualVpfPaise: newActuals.actualVpfPaise,
+      expectedEmployeePaise: existing.expectedEmployeePaise ?? null,
+      expectedEmployerPaise: existing.expectedEmployerPaise ?? null,
+      expectedEpsPaise: existing.expectedEpsPaise ?? null,
+      expectedVpfPaise: existing.expectedVpfPaise ?? 0,
+    });
+
+    const [updated] = await tx
+      .update(epfContributions)
+      .set({
+        ...newActuals,
+        reconciliationStatus: status,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(epfContributions.id, id), eq(epfContributions.userId, userId)))
+      .returning();
+
+    if (!updated) throw new HttpError(404, "EPF contribution not found");
+    return buildEpfContributionDto(updated);
   });
-
-  const [updated] = await db
-    .update(epfContributions)
-    .set({
-      ...newActuals,
-      reconciliationStatus: status,
-      updatedAt: new Date(),
-    })
-    .where(and(eq(epfContributions.id, id), eq(epfContributions.userId, userId)))
-    .returning();
-
-  if (!updated) throw new HttpError(404, "EPF contribution not found");
-  return buildEpfContributionDto(updated);
 }
 
 /**
@@ -527,8 +635,10 @@ export async function getProjection(
   const now = new Date();
   let monthsToRetirement: number;
   let retirementDate: Date;
+  let dobMissing: boolean;
 
   if (profile?.dateOfBirth) {
+    dobMissing = false;
     const dob = new Date(profile.dateOfBirth);
     retirementDate = new Date(dob);
     retirementDate.setFullYear(dob.getFullYear() + retirementAge);
@@ -541,12 +651,18 @@ export async function getProjection(
     );
   } else {
     // Fallback: 20 years if no DOB recorded (240 months).
+    dobMissing = true;
     monthsToRetirement = 240;
     retirementDate = new Date(now);
     retirementDate.setFullYear(now.getFullYear() + 20);
   }
 
   const ASSUMED_ANNUAL_RATE_BPS = 825; // 8.25% p.a. — FY 2024-25 official rate
+  const BASE_DISCLAIMER =
+    "This is an estimate assuming no future EPF contributions and using the last known official EPF interest rate (8.25% p.a. for FY 2024-25). Actual corpus may differ based on future rate declarations and contributions.";
+  const DOB_MISSING_DISCLAIMER =
+    "Date of birth not on file — assumed 20 years to retirement. " + BASE_DISCLAIMER;
+
   const projectedCorpusPaise = computeEpfProjection(
     currentCorpusPaise,
     monthsToRetirement,
@@ -566,7 +682,6 @@ export async function getProjection(
     rateSource: "last_known_official",
     rateApplicableFy: "2024-25",
     assumedAnnualRateBps: ASSUMED_ANNUAL_RATE_BPS,
-    disclaimer:
-      "This is an estimate assuming no future EPF contributions and using the last known official EPF interest rate (8.25% p.a. for FY 2024-25). Actual corpus may differ based on future rate declarations and contributions.",
+    disclaimer: dobMissing ? DOB_MISSING_DISCLAIMER : BASE_DISCLAIMER,
   };
 }
