@@ -343,3 +343,335 @@ describe("IncomeEventSummarySchema", () => {
     assert.ok(!result.success, "missing notes should fail");
   });
 });
+
+// ─── CreateDeductionEntrySchema ───────────────────────────────────────────────
+
+import {
+  CreateDeductionEntrySchema,
+  UpdateDeductionEntrySchema,
+  DeductionEntrySchema,
+  DeductionBasketSchema,
+} from "./tax.ts";
+
+describe("CreateDeductionEntrySchema", () => {
+  test("accepts a valid 80C entry", () => {
+    const r = CreateDeductionEntrySchema.safeParse({
+      fy: "2025-26",
+      section: "80C",
+      deductionKind: "other_80c",
+      amountPaise: 1_000_000,
+    });
+    assert.ok(r.success, `should accept valid 80C: ${JSON.stringify(r.error)}`);
+  });
+
+  test("rejects mismatched section/kind (80C + nps_additional)", () => {
+    const r = CreateDeductionEntrySchema.safeParse({
+      fy: "2025-26",
+      section: "80C",
+      deductionKind: "nps_additional",
+      amountPaise: 1_000_000,
+    });
+    assert.ok(!r.success, "should reject 80C + nps_additional");
+    assert.ok(
+      r.error.issues.some((i) => i.path.includes("deductionKind")),
+      "error should reference deductionKind",
+    );
+  });
+
+  test("accepts valid 80CCD1B entry", () => {
+    const r = CreateDeductionEntrySchema.safeParse({
+      fy: "2025-26",
+      section: "80CCD1B",
+      deductionKind: "nps_additional",
+      amountPaise: 2_000_000,
+    });
+    assert.ok(r.success, `should accept valid 80CCD1B: ${JSON.stringify(r.error)}`);
+  });
+
+  test("accepts valid 80CCD2 entry with required fields", () => {
+    const r = CreateDeductionEntrySchema.safeParse({
+      fy: "2025-26",
+      section: "80CCD2",
+      deductionKind: "employer_nps_ccd2",
+      amountPaise: 5_000_000,
+      employerType: "private",
+      salaryBasePaise: 50_000_000,
+    });
+    assert.ok(r.success, `should accept valid 80CCD2: ${JSON.stringify(r.error)}`);
+  });
+
+  test("rejects 80CCD2 without employerType", () => {
+    const r = CreateDeductionEntrySchema.safeParse({
+      fy: "2025-26",
+      section: "80CCD2",
+      deductionKind: "employer_nps_ccd2",
+      amountPaise: 5_000_000,
+      salaryBasePaise: 50_000_000,
+    });
+    assert.ok(!r.success, "should reject 80CCD2 without employerType");
+    assert.ok(
+      r.error.issues.some((i) => i.path.includes("employerType")),
+      "error should reference employerType",
+    );
+  });
+
+  test("rejects 80CCD2 without salaryBasePaise", () => {
+    const r = CreateDeductionEntrySchema.safeParse({
+      fy: "2025-26",
+      section: "80CCD2",
+      deductionKind: "employer_nps_ccd2",
+      amountPaise: 5_000_000,
+      employerType: "government",
+    });
+    assert.ok(!r.success, "should reject 80CCD2 without salaryBasePaise");
+    assert.ok(
+      r.error.issues.some((i) => i.path.includes("salaryBasePaise")),
+      "error should reference salaryBasePaise",
+    );
+  });
+
+  test("accepts valid 80D preventive_checkup entry with eightyDGroup", () => {
+    const r = CreateDeductionEntrySchema.safeParse({
+      fy: "2025-26",
+      section: "80D",
+      deductionKind: "preventive_checkup",
+      amountPaise: 300_000,
+      eightyDGroup: "self_family",
+    });
+    assert.ok(r.success, `should accept valid 80D preventive: ${JSON.stringify(r.error)}`);
+  });
+
+  test("rejects 80D entry without eightyDGroup", () => {
+    const r = CreateDeductionEntrySchema.safeParse({
+      fy: "2025-26",
+      section: "80D",
+      deductionKind: "other_80d",
+      amountPaise: 300_000,
+    });
+    assert.ok(!r.success, "should reject 80D without eightyDGroup");
+    assert.ok(
+      r.error.issues.some((i) => i.path.includes("eightyDGroup")),
+      "error should reference eightyDGroup",
+    );
+  });
+
+  test("rejects negative amountPaise", () => {
+    const r = CreateDeductionEntrySchema.safeParse({
+      fy: "2025-26",
+      section: "80C",
+      deductionKind: "other_80c",
+      amountPaise: -1000,
+    });
+    assert.ok(!r.success, "should reject negative amount");
+  });
+
+  test("rejects unknown section", () => {
+    const r = CreateDeductionEntrySchema.safeParse({
+      fy: "2025-26",
+      section: "80E",
+      deductionKind: "other_80c",
+      amountPaise: 1_000_000,
+    });
+    assert.ok(!r.success, "should reject unknown section");
+  });
+});
+
+// ─── UpdateDeductionEntrySchema ───────────────────────────────────────────────
+
+describe("UpdateDeductionEntrySchema", () => {
+  test("accepts empty update object", () => {
+    const r = UpdateDeductionEntrySchema.safeParse({});
+    assert.ok(r.success, "empty update should be valid");
+  });
+
+  test("accepts partial updates", () => {
+    const r = UpdateDeductionEntrySchema.safeParse({
+      amountPaise: 2_000_000,
+      description: "Updated description",
+    });
+    assert.ok(r.success, `partial update should be valid: ${JSON.stringify(r.error)}`);
+  });
+
+  test("rejects negative amountPaise", () => {
+    const r = UpdateDeductionEntrySchema.safeParse({ amountPaise: -500 });
+    assert.ok(!r.success, "should reject negative amount on update");
+  });
+});
+
+// ─── DeductionEntrySchema ─────────────────────────────────────────────────────
+
+describe("DeductionEntrySchema", () => {
+  function validEntry(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      id: "00000000-0000-4000-8000-000000000001",
+      fy: "2025-26",
+      section: "80C",
+      deductionKind: "other_80c",
+      amountPaise: 1_000_000,
+      description: "",
+      employerType: null,
+      salaryBasePaise: null,
+      eightyDGroup: null,
+      createdAt: "2025-07-01T00:00:00.000Z",
+      updatedAt: "2025-07-01T00:00:00.000Z",
+      ...overrides,
+    };
+  }
+
+  test("accepts a valid entry", () => {
+    const r = DeductionEntrySchema.safeParse(validEntry());
+    assert.ok(r.success, `valid entry should parse: ${JSON.stringify(r.error)}`);
+  });
+
+  test("requires id (UUID)", () => {
+    const entry = validEntry();
+    delete (entry as Record<string, unknown>)["id"];
+    assert.ok(!DeductionEntrySchema.safeParse(entry).success, "missing id should fail");
+  });
+
+  test("requires fy", () => {
+    const entry = validEntry({ fy: "20-21" });
+    assert.ok(!DeductionEntrySchema.safeParse(entry).success, "malformed fy should fail");
+  });
+
+  test("employer fields are present for 80CCD2 variant", () => {
+    const entry = validEntry({
+      section: "80CCD2",
+      deductionKind: "employer_nps_ccd2",
+      employerType: "private",
+      salaryBasePaise: 100_000_000,
+    });
+    const r = DeductionEntrySchema.safeParse(entry);
+    assert.ok(r.success, `80CCD2 entry should parse: ${JSON.stringify(r.error)}`);
+    if (r.success) {
+      assert.equal(r.data.employerType, "private");
+      assert.equal(r.data.salaryBasePaise, 100_000_000);
+    }
+  });
+});
+
+// ─── DeductionBasketSchema (shape contract) ───────────────────────────────────
+
+describe("DeductionBasketSchema", () => {
+  function validBasket(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      fy: "2025-26",
+      regime: "old",
+      eightyC: {
+        sources: [],
+        npsRemainderPaise: 0,
+        contributedPaise: 0,
+        capPaise: 15_000_000,
+        eligiblePaise: 0,
+        headroomPaise: 15_000_000,
+        assumptions: [],
+      },
+      eightyCcd1b: {
+        contributedPaise: 0,
+        capPaise: 5_000_000,
+        eligiblePaise: 0,
+        headroomPaise: 5_000_000,
+      },
+      eightyCcd2: {
+        entries: [],
+        contributedPaise: 0,
+        eligiblePaise: 0,
+      },
+      eightyD: {
+        selfFamily: {
+          contributedPaise: 0,
+          seniorApplies: false,
+          capPaise: 2_500_000,
+          eligiblePaise: 0,
+          preventiveCheckupPaise: 0,
+          headroomPaise: 2_500_000,
+        },
+        parents: {
+          contributedPaise: 0,
+          seniorApplies: false,
+          capPaise: 2_500_000,
+          eligiblePaise: 0,
+          preventiveCheckupPaise: 0,
+          headroomPaise: 2_500_000,
+        },
+        unallocatedPolicies: [],
+      },
+      emiInterestEstimatePaise: 0,
+      generatedAt: "2025-07-01T00:00:00.000Z",
+      ...overrides,
+    };
+  }
+
+  test("accepts a valid basket (old regime)", () => {
+    const r = DeductionBasketSchema.safeParse(validBasket());
+    assert.ok(r.success, `valid basket should parse: ${JSON.stringify(r.error)}`);
+  });
+
+  test("accepts new regime with null headrooms", () => {
+    const r = DeductionBasketSchema.safeParse(
+      validBasket({
+        regime: "new",
+        eightyC: {
+          sources: [],
+          npsRemainderPaise: 0,
+          contributedPaise: 0,
+          capPaise: 15_000_000,
+          eligiblePaise: 0,
+          headroomPaise: null,
+          assumptions: [],
+        },
+        eightyCcd1b: {
+          contributedPaise: 0,
+          capPaise: 5_000_000,
+          eligiblePaise: 0,
+          headroomPaise: null,
+        },
+        eightyD: {
+          selfFamily: {
+            contributedPaise: 0,
+            seniorApplies: false,
+            capPaise: 2_500_000,
+            eligiblePaise: 0,
+            preventiveCheckupPaise: 0,
+            headroomPaise: null,
+          },
+          parents: {
+            contributedPaise: 0,
+            seniorApplies: false,
+            capPaise: 2_500_000,
+            eligiblePaise: 0,
+            preventiveCheckupPaise: 0,
+            headroomPaise: null,
+          },
+          unallocatedPolicies: [],
+        },
+      }),
+    );
+    assert.ok(r.success, `new regime basket should parse: ${JSON.stringify(r.error)}`);
+  });
+
+  test("rejects basket without fy", () => {
+    const basket = validBasket();
+    delete (basket as Record<string, unknown>)["fy"];
+    assert.ok(!DeductionBasketSchema.safeParse(basket).success, "missing fy should fail");
+  });
+
+  test("rejects basket without eightyCcd2.entries", () => {
+    const basket = validBasket({
+      eightyCcd2: { contributedPaise: 0, eligiblePaise: 0 },
+    });
+    assert.ok(!DeductionBasketSchema.safeParse(basket).success, "missing entries should fail");
+  });
+
+  test("rejects unallocated policy with unknown reason", () => {
+    const basket = validBasket({
+      eightyD: {
+        ...(validBasket().eightyD as object),
+        unallocatedPolicies: [
+          { policyId: "abc", name: "Test", reason: "wrong_reason" },
+        ],
+      },
+    });
+    assert.ok(!DeductionBasketSchema.safeParse(basket).success, "unknown reason should fail");
+  });
+});

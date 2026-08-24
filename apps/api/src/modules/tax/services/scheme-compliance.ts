@@ -144,8 +144,13 @@ async function ppfCompliance(
   fyStart: string,
   fyEnd: string,
 ): Promise<AccountComplianceResult> {
+  // Sum contributions first — the result is carried into every buildResult path,
+  // including data_missing. Previously, data_missing returned 0 by construction
+  // (the call was below the guard); now all paths report the real contributed value.
+  const contributed = await sumContributions(db, account.id, userId, fyStart, fyEnd);
+
   if (!account.schemeOpenedDate) {
-    return buildResult(account.id, "ppf", fy, 0, "data_missing", [
+    return buildResult(account.id, "ppf", fy, contributed, "data_missing", [
       "schemeOpenedDate is not set — cannot determine lifecycle status",
     ]);
   }
@@ -154,13 +159,11 @@ async function ppfCompliance(
   const maturityDate = ppfMaturityDate(account.schemeOpenedDate);
   if (today > maturityDate) {
     // Past maturity with no extension-mode data → lifecycle_unknown.
-    const contributed = await sumContributions(db, account.id, userId, fyStart, fyEnd);
     return buildResult(account.id, "ppf", fy, contributed, "lifecycle_unknown", [
       `PPF matured on ${maturityDate}. Extension mode is not modelled; lifecycle cannot be determined.`,
     ]);
   }
 
-  const contributed = await sumContributions(db, account.id, userId, fyStart, fyEnd);
   const rules = schemeRulesFor("ppf", fy);
   const notes: string[] = [];
   let statusCode: AccountComplianceResult["statusCode"];
@@ -198,27 +201,32 @@ async function ssyCompliance(
   fyStart: string,
   fyEnd: string,
 ): Promise<AccountComplianceResult> {
+  // Sum contributions first — the result is carried into every buildResult path,
+  // including data_missing/data_invalid/outside_deposit_window. Previously, those
+  // early-return paths passed 0 by construction; now all paths report the real value.
+  const contributed = await sumContributions(db, account.id, userId, fyStart, fyEnd);
+
   // Gender check is always skipped — no sex column in family_members.
   const notes: string[] = [
     "Gender check skipped — no sex/gender field in family_members.",
   ];
 
   if (!account.schemeOpenedDate) {
-    return buildResult(account.id, "ssy", fy, 0, "data_missing", [
+    return buildResult(account.id, "ssy", fy, contributed, "data_missing", [
       ...notes,
       "schemeOpenedDate is not set — cannot determine deposit window or holder age.",
     ]);
   }
 
   if (!holder) {
-    return buildResult(account.id, "ssy", fy, 0, "data_missing", [
+    return buildResult(account.id, "ssy", fy, contributed, "data_missing", [
       ...notes,
       "No family member linked as holder (holderId is null or member not found for this user).",
     ]);
   }
 
   if (!holder.dateOfBirth) {
-    return buildResult(account.id, "ssy", fy, 0, "data_missing", [
+    return buildResult(account.id, "ssy", fy, contributed, "data_missing", [
       ...notes,
       `Family member ${holder.id} has no date_of_birth recorded.`,
     ]);
@@ -228,7 +236,7 @@ async function ssyCompliance(
   // completedYearsBetween returns the age (completed years) on the opening date.
   const ageAtOpening = completedYearsBetween(holder.dateOfBirth, account.schemeOpenedDate);
   if (ageAtOpening > 10) {
-    return buildResult(account.id, "ssy", fy, 0, "data_invalid", [
+    return buildResult(account.id, "ssy", fy, contributed, "data_invalid", [
       ...notes,
       `Holder was ${ageAtOpening} completed years old on the opening date ${account.schemeOpenedDate}. SSY requires the girl child to be ≤ 10 years at opening.`,
     ]);
@@ -238,13 +246,12 @@ async function ssyCompliance(
   const windowEnd = ssyDepositWindowEnd(account.schemeOpenedDate);
   // The FY's start date determines if deposits were/are accepted in this FY.
   if (fyStart > windowEnd) {
-    return buildResult(account.id, "ssy", fy, 0, "outside_deposit_window", [
+    return buildResult(account.id, "ssy", fy, contributed, "outside_deposit_window", [
       ...notes,
       `SSY deposit window closed on ${windowEnd} (15 years from opening date ${account.schemeOpenedDate}).`,
     ]);
   }
 
-  const contributed = await sumContributions(db, account.id, userId, fyStart, fyEnd);
   const rules = schemeRulesFor("ssy", fy);
   let statusCode: AccountComplianceResult["statusCode"];
 

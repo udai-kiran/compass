@@ -7,7 +7,7 @@ import { createDb } from "../../../db/index.ts";
 import { createPool } from "../../../infra/db.ts";
 import { accounts, recurringTemplates, transactions, users } from "../../../db/schema.ts";
 import { HttpError } from "../../../lib/errors.ts";
-import { amortize, createEmi, splitInstallments, stepAmortization, upsertEmiDetails } from "./emis.ts";
+import { amortize, createEmi, getEmiInterestEstimateForFy, splitInstallments, stepAmortization, upsertEmiDetails } from "./emis.ts";
 import { createTransaction } from "../../ledger/services/transactions.ts";
 
 // ---------- (a) on-schedule payments match amortize()'s per-row arithmetic exactly ----------
@@ -508,4 +508,190 @@ test("upsertEmiDetails: an unchanged loanAccountId is not revalidated, even if i
   });
   assert.equal(updated.loanAccountId, destId);
   assert.equal(updated.annualRateBps, 1300);
+});
+
+// ─── getEmiInterestEstimateForFy — FY filter / sum behavior ──────────────────
+//
+// These tests verify that:
+//   1. Only installments whose .date falls within [fyStart, fyEnd] are summed.
+//   2. Interest from multiple templates is summed together.
+//   3. Installments outside the FY window are excluded.
+//
+// The amortisation math itself (reducing-balance, skipped-period capitalization)
+// is already exercised by the splitInstallments tests above.  We don't recompute
+// it here — we just stub the DB to return preset payment rows and assert on the
+// resulting FY-filtered sum.
+
+test("getEmiInterestEstimateForFy: sums only installments within the FY window across 2 templates", async () => {
+  // ── Scenario ──────────────────────────────────────────────────────────────
+  //
+  // Template 1 ("tmpl-1"):
+  //   principalPaise = 120_000, annualRateBps = 1200 (1%/month), startDate = 2025-03-01
+  //   Payments:
+  //     t1: 2025-04-01 (IN  FY 2025-26)
+  //     t2: 2026-04-01 (OUT FY 2025-26) → excluded
+  //
+  // Template 2 ("tmpl-2"):
+  //   principalPaise = 60_000, annualRateBps = 600 (0.5%/month), startDate = 2025-05-15
+  //   Payments:
+  //     t3: 2025-06-15 (IN  FY 2025-26)
+  //     t4: 2025-03-01 (OUT FY 2025-26 — before Apr 2025) → excluded
+  //
+  // The expected FY 2025-26 total is computed below via the same splitInstallments
+  // pure function (not hardcoded) so this test remains correct if the interest
+  // math ever changes.
+
+  const now = new Date();
+
+  const d1 = {
+    templateId: "tmpl-1",
+    userId: "user-1",
+    principalPaise: 120_000,
+    annualRateBps: 1200,
+    totalInstallments: 12,
+    startDate: "2025-03-01",
+    loanAccountId: null,
+    createdAt: now,
+    updatedAt: now,
+  };
+  const t1 = {
+    id: "tmpl-1",
+    accountId: "acct-1",
+    userId: "user-1",
+    categoryId: null,
+    merchant: "Loan 1",
+    amountPaise: -11_200,
+    notes: "",
+    frequency: "monthly",
+    interval: 1,
+    nextDueDate: "2025-04-01",
+    endDate: "2026-02-01",
+    kind: "emi",
+    pausedAt: null,
+    createdAt: now,
+    updatedAt: now,
+  };
+  const d2 = {
+    templateId: "tmpl-2",
+    userId: "user-1",
+    principalPaise: 60_000,
+    annualRateBps: 600,
+    totalInstallments: 12,
+    startDate: "2025-05-15",
+    loanAccountId: null,
+    createdAt: now,
+    updatedAt: now,
+  };
+  const t2 = {
+    id: "tmpl-2",
+    accountId: "acct-2",
+    userId: "user-1",
+    categoryId: null,
+    merchant: "Loan 2",
+    amountPaise: -5_300,
+    notes: "",
+    frequency: "monthly",
+    interval: 1,
+    nextDueDate: "2025-06-15",
+    endDate: "2026-04-15",
+    kind: "emi",
+    pausedAt: null,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  const emiListRows = [{ d: d1, t: t1 }, { d: d2, t: t2 }];
+
+  const paymentRowsTmpl1 = [
+    { id: "t1", date: "2025-04-01", amountPaise: -11_200 },  // IN FY 2025-26
+    { id: "t2", date: "2026-04-01", amountPaise: -11_200 },  // OUT
+  ];
+  const paymentRowsTmpl2 = [
+    { id: "t4", date: "2025-03-01", amountPaise: -5_300 },   // OUT (before FY start)
+    { id: "t3", date: "2025-06-15", amountPaise: -5_300 },   // IN FY 2025-26
+  ];
+
+  const selectResults: unknown[][] = [emiListRows, paymentRowsTmpl1, paymentRowsTmpl2];
+  let selectIdx = 0;
+
+  let templateFindIdx = 0;
+  const templateFindResults = [t1, t2];
+  let emiDetailsFindIdx = 0;
+  const emiDetailsFindResults = [d1, d2];
+
+  function makeChainBuilder(rows: unknown[]) {
+    const b: Record<string, unknown> = {};
+    b["from"] = () => b;
+    b["innerJoin"] = () => b;
+    b["where"] = () => b;
+    b["orderBy"] = () => b;
+    b["limit"] = () => Promise.resolve(rows);
+    // For listEmis, .where() is the terminal call — make builder thenable so
+    // `await db.select(...).from(...).innerJoin(...).where(...)` also works.
+    b["then"] = (resolve: (v: unknown) => void) => resolve(rows);
+    return b;
+  }
+
+  const stubDb: unknown = {
+    select: (_fields?: unknown) => makeChainBuilder(selectResults[selectIdx++] ?? []),
+    query: {
+      recurringTemplates: {
+        findFirst: async () => templateFindResults[templateFindIdx++],
+      },
+      emiDetails: {
+        findFirst: async () => emiDetailsFindResults[emiDetailsFindIdx++],
+      },
+    },
+  };
+
+  const result = await getEmiInterestEstimateForFy(stubDb as never, "user-1", "2025-26");
+
+  assert.equal(result.templateCount, 2);
+
+  // Compute expected via the same splitInstallments function (pure — no DB).
+  const fyStart = "2025-04-01";
+  const fyEnd = "2026-03-31";
+  const tmpl1Insts = splitInstallments(120_000, 1200, "2025-03-01",
+    paymentRowsTmpl1.map(r => ({ transactionId: r.id, date: r.date, amountPaise: r.amountPaise })));
+  const tmpl2Insts = splitInstallments(60_000, 600, "2025-05-15",
+    paymentRowsTmpl2.map(r => ({ transactionId: r.id, date: r.date, amountPaise: r.amountPaise })));
+
+  const expected =
+    tmpl1Insts.filter(i => i.date >= fyStart && i.date <= fyEnd).reduce((s, i) => s + i.interestPaise, 0) +
+    tmpl2Insts.filter(i => i.date >= fyStart && i.date <= fyEnd).reduce((s, i) => s + i.interestPaise, 0);
+
+  assert.ok(expected > 0, "test setup: expected interest must be non-zero to be meaningful");
+  assert.equal(result.estimatePaise, expected,
+    `FY-filtered interest from 2 templates: got ${result.estimatePaise}, expected ${expected}`);
+
+  // Verify exclusion: total without FY filter must be larger (at least one installment was excluded).
+  const totalAll =
+    tmpl1Insts.reduce((s, i) => s + i.interestPaise, 0) +
+    tmpl2Insts.reduce((s, i) => s + i.interestPaise, 0);
+  assert.ok(result.estimatePaise < totalAll,
+    "FY-filtered total must be less than the all-installments total");
+});
+
+test("getEmiInterestEstimateForFy: returns {estimatePaise:0, templateCount:0} when user has no EMIs", async () => {
+  function makeEmptyBuilder() {
+    const b: Record<string, unknown> = {};
+    b["from"] = () => b;
+    b["innerJoin"] = () => b;
+    b["where"] = () => b;
+    b["orderBy"] = () => b;
+    b["limit"] = () => Promise.resolve([]);
+    b["then"] = (resolve: (v: unknown) => void) => resolve([]);
+    return b;
+  }
+  const stubDb: unknown = {
+    select: () => makeEmptyBuilder(),
+    query: {
+      recurringTemplates: { findFirst: async () => null },
+      emiDetails: { findFirst: async () => null },
+    },
+  };
+
+  const result = await getEmiInterestEstimateForFy(stubDb as never, "user-1", "2025-26");
+  assert.equal(result.estimatePaise, 0);
+  assert.equal(result.templateCount, 0);
 });

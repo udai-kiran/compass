@@ -506,3 +506,68 @@ describe("contribution exclusion proofs (SQL stub)", () => {
     assert.equal(result?.statusCode, "discontinued");
   });
 });
+
+// ─── Fix (1b): real contributions reported even on data_missing paths ─────────
+//
+// Previously, ppfCompliance / ssyCompliance called sumContributions AFTER the
+// early-return guards, so data_missing / data_invalid / outside_deposit_window
+// always reported annualContributedPaise = 0 by construction (even if the user
+// had real postings). The fix moves sumContributions to the top of each function.
+
+describe("PPF/SSY data_missing with real contributions (task 13.7 fix 1b)", () => {
+  const pastFy = "2023-24";
+
+  it("PPF data_missing (missing schemeOpenedDate) now reports real contributed paise, not 0", async () => {
+    // Account has no schemeOpenedDate → data_missing path, BUT contributions exist.
+    const account = makeAccount({ type: "ppf", schemeOpenedDate: null });
+    // sumContributions will return 150_000 paise (real postings exist)
+    const db = makeDb({ contributionPaise: 150_000, selectRows: [[account]] });
+    const result = await getAccountSchemeCompliance(db as never, "user-1", "acct-1", pastFy);
+    assert.equal(result?.statusCode, "data_missing");
+    // The key assertion: real contributed paise must be non-zero now.
+    assert.equal(result?.annualContributedPaise, 150_000,
+      "data_missing should carry real contributions, not 0");
+  });
+
+  it("SSY data_missing (missing schemeOpenedDate) now reports real contributed paise, not 0", async () => {
+    const account = makeAccount({ type: "ssy", schemeOpenedDate: null, holderId: "member-1" });
+    const db = makeDb({ contributionPaise: 60_000, selectRows: [[account]] });
+    const result = await getAccountSchemeCompliance(db as never, "user-1", "acct-1", pastFy);
+    assert.equal(result?.statusCode, "data_missing");
+    assert.equal(result?.annualContributedPaise, 60_000,
+      "SSY data_missing should carry real contributions, not 0");
+  });
+
+  it("SSY data_missing (no holder linked) now reports real contributed paise, not 0", async () => {
+    // holderId is null → no member lookup → data_missing, but contributions exist.
+    const account = makeAccount({ type: "ssy", schemeOpenedDate: "2020-06-01", holderId: null });
+    const db = makeDb({ contributionPaise: 40_000, selectRows: [[account]] });
+    const result = await getAccountSchemeCompliance(db as never, "user-1", "acct-1", pastFy);
+    assert.equal(result?.statusCode, "data_missing");
+    assert.equal(result?.annualContributedPaise, 40_000,
+      "SSY data_missing (no holder) should carry real contributions, not 0");
+  });
+
+  it("SSY data_invalid (age gate violation) now reports real contributed paise, not 0", async () => {
+    // Holder was 11 years old at opening → data_invalid, but contributions may still exist.
+    const account = makeAccount({ type: "ssy", schemeOpenedDate: "2020-04-01", holderId: "member-1" });
+    const member = makeMember({ dateOfBirth: "2009-04-01" }); // 11 years at opening
+    const db = makeDb({ contributionPaise: 25_000, selectRows: [[account], [member]] });
+    const result = await getAccountSchemeCompliance(db as never, "user-1", "acct-1", pastFy);
+    assert.equal(result?.statusCode, "data_invalid");
+    assert.equal(result?.annualContributedPaise, 25_000,
+      "SSY data_invalid should carry real contributions, not 0");
+  });
+
+  it("SSY outside_deposit_window now reports real contributed paise, not 0", async () => {
+    // Deposit window closed in 2020; FY 2023-24 starts 2023-04-01 > window end.
+    // But the account may still have had postings (erroneous or historical data).
+    const account = makeAccount({ type: "ssy", schemeOpenedDate: "2005-01-01", holderId: "member-1" });
+    const member = makeMember({ dateOfBirth: "2004-06-01" });
+    const db = makeDb({ contributionPaise: 12_500, selectRows: [[account], [member]] });
+    const result = await getAccountSchemeCompliance(db as never, "user-1", "acct-1", pastFy);
+    assert.equal(result?.statusCode, "outside_deposit_window");
+    assert.equal(result?.annualContributedPaise, 12_500,
+      "SSY outside_deposit_window should carry real contributions, not 0");
+  });
+});

@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import {
   bigint,
+  boolean,
   check,
   date,
   index,
@@ -80,11 +81,21 @@ export const holdings = pgTable(
     gainsTaxClass: gainsTaxClass("gains_tax_class").notNull().default("equity"),
     /** Goal this holding (folio) is earmarked for; null = "Unassigned". See accounts.goalId. */
     goalId: uuid("goal_id").references(() => goals.id, { onDelete: "set null" }),
+    /** Whether this mutual-fund holding is an ELSS (Equity Linked Savings Scheme),
+     *  qualifying for deduction under Section 80C. Only meaningful for mutual_fund
+     *  asset class; enforced by a DB check constraint. */
+    isElss: boolean("is_elss").notNull().default(false),
     archivedAt: timestamp("archived_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("holdings_user_idx").on(t.userId)],
+  (t) => [
+    index("holdings_user_idx").on(t.userId),
+    check(
+      "holdings_elss_requires_mf",
+      sql`NOT ${t.isElss} OR ${t.assetClass} = 'mutual_fund'`,
+    ),
+  ],
 );
 
 export const insuranceKind = pgEnum("insurance_kind", ["life", "health", "vehicle"]);

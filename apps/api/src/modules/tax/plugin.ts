@@ -12,6 +12,7 @@ import { payslipRoutes } from "./routes/payslips.ts";
 import { incomeEventRoutes } from "./routes/income-events.ts";
 import { epfContributionRoutes } from "./routes/epf-contributions.ts";
 import { schemeComplianceRoutes } from "./routes/scheme-compliance.ts";
+import { deductionRoutes } from "./routes/deductions.ts";
 
 export async function taxRoutes(app: FastifyInstance): Promise<void> {
   await app.register(regimePreferenceRoutes);
@@ -19,4 +20,5 @@ export async function taxRoutes(app: FastifyInstance): Promise<void> {
   await app.register(incomeEventRoutes);
   await app.register(epfContributionRoutes);
   await app.register(schemeComplianceRoutes);
+  await app.register(deductionRoutes);
 }

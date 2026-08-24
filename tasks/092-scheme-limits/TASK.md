@@ -1,7 +1,7 @@
 # Task: 13.6 — PPF / SSY / NPS Contribution-Limit & Eligibility Checks
 
 ## Status
-IMPLEMENTING
+COMPLETE
 
 ## Review-5 Blockers (pending fix — first implementation-code review)
 
