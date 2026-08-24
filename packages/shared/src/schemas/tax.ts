@@ -435,9 +435,9 @@ export type GetIncomeEventsSummaryQuery = z.infer<typeof GetIncomeEventsSummaryQ
 
 /**
  * Reconciliation status for an EPF contribution row.
- * pending:   any component with a positive expected value still has a null actual.
- * matched:   all positive-expected components have actuals within 1% of expected.
- * mismatch:  all positive-expected components have actuals; ≥1 differs by >1%.
+ * pending:   any component with a non-null expected value (including zero, except VPF's zero-skip exception) still has a null actual, OR all four actuals are null.
+ * matched:   all relevant components (per the pending rule above) have actuals within 1% of expected.
+ * mismatch:  all relevant components (per the pending rule above) have actuals; ≥1 differs by >1%.
  * confirmed: RESERVED — set only by a future explicit user-override action, never
  *            computed automatically by computeStatus(). Do not use as an output
  *            of the state machine; it will never be returned by computeStatus.
@@ -475,7 +475,7 @@ export const EpfContributionSchema = z.object({
   eligible80cPaise: z.number().int(),
   /**
    * Employer EPF/EPS invariant: employer_epf (credited to PF corpus) + eps (diverted to
-   * pension fund) = gross employer share (statutory ~12% of wage).
+   * pension fund) = gross employer share (no fixed-rate check — the actual rate varies by employer/payslip).
    * Uses actual values if confirmed, expected values otherwise.
    * NOT 80C eligible — employer contributions are recognized PF (perquisite treatment).
    */

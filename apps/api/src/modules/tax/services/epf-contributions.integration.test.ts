@@ -37,6 +37,7 @@ import { payslips, payslipComponents, epfContributions } from "../schema.ts";
 import { userProfiles } from "../../system/schema.ts";
 import { HttpError } from "../../../lib/errors.ts";
 import {
+  createManual,
   importFromPayslip,
   confirmActual,
   listContributions,
@@ -280,9 +281,11 @@ test("importFromPayslip: re-import preserves confirmed actual_* values", async (
 
   // First import then confirm
   const first = await importFromPayslip(db, userId, payslipId, EPFO_ID);
-  await confirmActual(db, userId, first.id, { actualEmployeePaise: 180000 });
+  const confirmed = await confirmActual(db, userId, first.id, { actualEmployeePaise: 180000 });
+  // employee expected=180000, actual=180000 → matched
+  assert.equal(confirmed.reconciliationStatus, "matched", "after confirm: employee matches exactly");
 
-  // Correct the payslip and re-import
+  // Correct the payslip and re-import (expected now 185000, actual still 180000)
   await db.delete(payslipComponents).where(eq(payslipComponents.payslipId, payslipId));
   await addComponents(payslipId, [
     { canonicalKind: "employee_epf", currentPaise: 185000 },
@@ -291,6 +294,8 @@ test("importFromPayslip: re-import preserves confirmed actual_* values", async (
   const second = await importFromPayslip(db, userId, payslipId, EPFO_ID);
   assert.equal(second.expectedEmployeePaise, 185000, "expected_* updated from corrected payslip");
   assert.equal(second.actualEmployeePaise, 180000, "actual_* preserved from prior confirmation");
+  // expected=185000, actual=180000: |5000|*100=500000 > 185000 → mismatch (not stale matched)
+  assert.equal(second.reconciliationStatus, "mismatch", "re-import must recompute status (not stale matched)");
 });
 
 // ─── Test 6: confirmActual cross-user isolation ───────────────────────────────
@@ -421,6 +426,106 @@ test("getProjection: currentCorpusPaise matches posted balance; projection is in
   assert.equal(result.rateSource, "last_known_official");
   assert.equal(result.rateApplicableFy, "2024-25");
   assert.ok(typeof result.disclaimer === "string" && result.disclaimer.length > 10);
+  // No dateOfBirth set for this user → DOB-missing disclaimer
+  assert.match(result.disclaimer, /date of birth/i, "DOB-missing path must mention 'date of birth'");
   assert.ok(typeof result.monthsToRetirement === "number");
   assert.equal(result.monthsToRetirement, Math.floor(result.monthsToRetirement), "integer months");
+});
+
+// ─── Test 12: createManual — status recompute preserves existing actuals ─────────
+
+test("createManual: re-upsert with corrected expected recomputes status from existing actuals (Fix 1 / TOCTOU)", async (t) => {
+  const userId = await createUser();
+  t.after(() => cleanupUser(userId));
+
+  // Create a manual entry with expectedEmployee=180000.
+  const first = await createManual(db, userId, {
+    wageMonth: "2025-07",
+    epfoMemberId: EPFO_ID,
+    expectedEmployeePaise: 180000,
+  });
+  assert.equal(first.reconciliationStatus, "pending", "fresh row with no actuals should be pending");
+
+  // Confirm the actual to 180000 — should be matched.
+  const confirmed = await confirmActual(db, userId, first.id, { actualEmployeePaise: 180000 });
+  assert.equal(confirmed.reconciliationStatus, "matched", "exact match after confirm should be matched");
+  assert.equal(confirmed.actualEmployeePaise, 180000);
+
+  // Re-call createManual with a corrected expectedEmployee=190000.
+  // The existing actual (180000) must be preserved; status should recompute to mismatch.
+  // The SELECT in createManual uses .for("update") so that a concurrent confirmActual
+  // cannot update actual_* between our SELECT and INSERT..ON CONFLICT — the sequential
+  // test below validates the status-recompute logic that lock protects.
+  const second = await createManual(db, userId, {
+    wageMonth: "2025-07",
+    epfoMemberId: EPFO_ID,
+    expectedEmployeePaise: 190000,
+  });
+  assert.equal(second.id, first.id, "same row updated, not duplicated");
+  assert.equal(second.expectedEmployeePaise, 190000, "expected_* updated");
+  assert.equal(second.actualEmployeePaise, 180000, "actual_* preserved from prior confirmation");
+  // expected=190000, actual=180000: |10000|*100=1000000 > 190000 → mismatch
+  assert.equal(second.reconciliationStatus, "mismatch", "status recomputed from preserved actual + new expected");
+});
+
+// ─── Test 13: confirmActual — reads fresh expected_* after concurrent update (sequential proof) ──
+
+test("confirmActual: re-confirm reads fresh expected_* after createManual updates them (sequential TOCTOU proof)", async (t) => {
+  const userId = await createUser();
+  t.after(() => cleanupUser(userId));
+
+  // Step 1: Create a manual entry with expected=180000.
+  const first = await createManual(db, userId, {
+    wageMonth: "2025-08",
+    epfoMemberId: EPFO_ID,
+    expectedEmployeePaise: 180000,
+  });
+  assert.equal(first.reconciliationStatus, "pending", "fresh row with no actuals should be pending");
+
+  // Step 2: Confirm actual=180000 → matched (exact match).
+  const confirmed = await confirmActual(db, userId, first.id, { actualEmployeePaise: 180000 });
+  assert.equal(confirmed.reconciliationStatus, "matched", "exact match after confirm should be matched");
+
+  // Step 3: Simulate a concurrent createManual that corrects expected to 190000.
+  // True concurrent-interleaving reproduction requires two separate pool connections and was out of scope here.
+  // The SELECT…FOR UPDATE in confirmActual ensures it blocks until such a concurrent upsert commits,
+  // then reads the post-commit expected_* before computing status.
+  const reupserted = await createManual(db, userId, {
+    wageMonth: "2025-08",
+    epfoMemberId: EPFO_ID,
+    expectedEmployeePaise: 190000,
+  });
+  assert.equal(reupserted.id, first.id, "same row updated, not duplicated");
+  assert.equal(reupserted.reconciliationStatus, "mismatch", "expected=190000 vs actual=180000 → mismatch");
+
+  // Step 4: Re-confirm with actual=190000 (exact match to the new expected).
+  // confirmActual must read the CURRENT expected (190000 set by step 3) not the stale 180000;
+  // the SELECT…FOR UPDATE inside the transaction guarantees it reads the post-commit row.
+  const reconfirmed = await confirmActual(db, userId, first.id, { actualEmployeePaise: 190000 });
+  assert.equal(reconfirmed.reconciliationStatus, "matched", "actual=190000 matches new expected=190000");
+  assert.equal(reconfirmed.expectedEmployeePaise, 190000, "confirmActual reads current expected, not stale 180000");
+  assert.equal(reconfirmed.actualEmployeePaise, 190000);
+});
+
+// ─── Test 11: getProjection — base disclaimer when DOB is present ─────────────
+
+test("getProjection: uses base disclaimer (no DOB mention) when dateOfBirth is on file", async (t) => {
+  const userId = await createUser();
+  t.after(() => cleanupUser(userId));
+
+  // Insert a userProfiles row with a dateOfBirth set.
+  await db.insert(userProfiles).values({ userId, dateOfBirth: "1985-06-15" });
+
+  const epfAccountId = await createEpfAccount(userId);
+  await postBalance(userId, epfAccountId, 100_000_00); // ₹1,00,000
+
+  const result = await getProjection(db, userId, epfAccountId);
+  // DOB is present → should use BASE_DISCLAIMER (no "date of birth" fallback mention)
+  assert.ok(typeof result.disclaimer === "string" && result.disclaimer.length > 10);
+  assert.doesNotMatch(
+    result.disclaimer,
+    /date of birth/i,
+    "DOB-present path must NOT mention 'date of birth' in disclaimer",
+  );
+  assert.ok(Number.isSafeInteger(result.projectedCorpusPaise));
 });

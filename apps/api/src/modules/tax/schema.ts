@@ -314,7 +314,7 @@ export const epfContributions = pgTable(
     /**
      * Employer EPF credited to PF corpus in paise — AFTER EPS diversion.
      * This is what actually lands in the member's PF corpus.
-     * employer_epf + eps = gross employer share (12% of basic).
+     * employer_epf + eps = gross employer share (no fixed-rate check — the actual rate varies by employer/payslip; H2 removed the unconditional 12%-of-basic assumption).
      */
     expectedEmployerPaise: bigint("expected_employer_paise", { mode: "number" }),
     /** EPS amount diverted to pension fund in paise (NOT credited to PF corpus). */

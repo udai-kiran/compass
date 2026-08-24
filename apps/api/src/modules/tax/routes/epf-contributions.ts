@@ -142,8 +142,7 @@ export async function epfContributionRoutes(app: FastifyInstance): Promise<void>
    * from an accepted payslip's canonical components.
    *
    * Body { epfoMemberId } is REQUIRED (422 from Zod validation if absent).
-   * Idempotent by payslip_id: a second call returns the existing row.
-   * Re-import over an existing (month, member) row preserves actual_*.
+   * Always upserts on (user, wage_month, epfo_member_id): a second call refreshes expected_* (and reconciliationStatus) from the current payslip components, preserving any already-confirmed actual_*.
    *
    * employer_epf = credited to PF corpus (AFTER EPS diversion);
    * eps = diverted to the pension fund. Never double-counted.

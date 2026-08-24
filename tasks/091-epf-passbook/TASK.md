@@ -1,7 +1,7 @@
 # Task: 13.5 — EPF Passbook Reconciliation & Benefit Projection
 
 ## Status
-IMPLEMENTING
+COMPLETE
 
 ## Objective
 Track EPF contributions per wage-month with employee/employer/EPS split, reconcile payslip-derived expected amounts against manually-confirmed actual deposits, flag contribution gaps, and project EPF corpus at retirement. **EPS defined-benefit pension formula is out of scope** (requires service history not yet modelled).
@@ -358,3 +358,60 @@ this sandboxed environment (`DATABASE_URL` unset) — an environment limitation
 affecting every task in this phase equally. The TASK.md route line above has
 already been corrected from PUT to POST by the coordinator directly (no
 worker action needed for that item).
+
+## Review-4 Blockers — Resolution Status
+
+All 5 review-4 blockers are fixed across implementation rounds 3, 4, and 5
+(implementation-3.md, implementation-4.md, implementation-5.md):
+
+1. `computeStatus` unconditional-pending + zero-skip-only-for-VPF fix — done
+   (implementation-3.md).
+2. Stale `reconciliationStatus` after re-import: `createManual` and
+   `importFromPayslip` now recompute status atomically in the same upsert —
+   done (implementation-3.md).
+3. BigInt per-step compounding in `computeEpfProjection` — done
+   (implementation-3.md).
+4. DOB-missing fallback now surfaces an explicit disclaimer in the response —
+   done (implementation-3.md).
+5. Stale doc-comment cleanup (service header, import route, shared schema) —
+   done (implementation-3.md).
+
+**TOCTOU race (found and fixed post review-4):** A follow-up Codex review
+found a TOCTOU race in `createManual`/`importFromPayslip`: the status
+recompute SELECT and the upsert were not atomic, so a concurrent
+`confirmActual` could write actuals between them, and the upsert would
+overwrite the persisted `reconciliationStatus` with a stale value (computed
+from pre-confirm actuals). Fixed via `db.transaction()` + `.for("update")`
+on the preflight SELECT in both functions (implementation-4.md).
+
+The same review also found the symmetric race exists in `confirmActual`: a
+concurrent `createManual`/`importFromPayslip` could change `expected_*`
+between `confirmActual`'s SELECT and UPDATE, causing it to persist a status
+computed against stale expected values. Fixed the same way — `confirmActual`
+now also wraps in `db.transaction()` + `.for("update")` (implementation-5.md).
+
+**Accepted residual limitation (coordinator decision):** One exotic race
+remains undocumented and NOT fixed, by coordinator decision: if two
+`createManual`/`importFromPayslip` calls for a not-yet-existing row race with
+an interleaved `confirmActual`, the first call's `ON CONFLICT DO UPDATE` can,
+in one specific 4-step interleaving, overwrite a freshly-confirmed status with
+its own stale-computed one. The `.for("update")` lock cannot protect a key
+that does not yet exist. This requires three concurrent mutating requests for
+the same (user, wage_month, epfo_member_id) tuple from a single user, which
+is not a realistic scenario for this single-user personal-finance app.
+Additionally the status is self-correcting: the next invocation of any of the
+three operations on that row will recompute from current data. No fix applied;
+acknowledged here as a known, accepted limitation.
+
+**Final doc-accuracy fixes applied (implementation-6.md):**
+- `packages/shared/src/schemas/tax.ts` — `ReconciliationStatus` doc comment
+  `matched`/`mismatch` lines updated to reference "relevant components (per
+  the pending rule above)" rather than the stale "positive-expected
+  components" wording, which no longer accurately describes the current
+  `computeStatus` logic (zero-expected employee/employer/EPS also require an
+  actual).
+- `apps/api/src/modules/tax/services/epf-contributions.ts` — `confirmActual`
+  doc comment updated: the claim that the status is "always 'matched' or
+  'mismatch'" was wrong; `computeStatus` can also return `'pending'` when only
+  some actuals are submitted in a single call while other expected components
+  still have null actuals.
