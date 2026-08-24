@@ -35,6 +35,7 @@ function toHolding(h: HoldingRow): Holding {
     gainsTaxClass: h.gainsTaxClass,
     goalId: h.goalId,
     archived: h.archivedAt !== null,
+    isElss: h.isElss,
   };
 }
 
@@ -99,6 +100,11 @@ async function ownedHolding(db: Db, userId: string, id: string): Promise<Holding
 }
 
 export async function createHolding(db: Db, userId: string, input: CreateHolding): Promise<Holding> {
+  // Guard: isElss can only be set on mutual_fund holdings (service-level 400;
+  // the DB check constraint is the backstop).
+  if (input.isElss && input.assetClass !== "mutual_fund") {
+    throw new HttpError(400, "isElss can only be set on mutual_fund holdings");
+  }
   const gainsTaxClass = input.gainsTaxClass ?? defaultTaxClass(input.assetClass);
   const rows = await db
     .insert(holdings)
@@ -169,6 +175,14 @@ export async function updateHolding(
       .for("update");
     const current = currentRows[0];
     if (!current) throw new HttpError(404, "Holding not found");
+
+    // Guard: isElss can only be set on mutual_fund holdings (service-level 400;
+    // the DB check constraint is the backstop).
+    const mergedIsElss = rest.isElss !== undefined ? rest.isElss : current.isElss;
+    const mergedAssetClass = rest.assetClass !== undefined ? rest.assetClass : current.assetClass;
+    if (mergedIsElss && mergedAssetClass !== "mutual_fund") {
+      throw new HttpError(400, "isElss can only be set on mutual_fund holdings");
+    }
 
     const goalChanging = rest.goalId !== undefined && rest.goalId !== current.goalId;
     const archiving = archived === true && current.archivedAt === null;

@@ -358,3 +358,79 @@ export const epfContributions = pgTable(
     index("epf_contributions_user_month_idx").on(t.userId, t.wageMonth),
   ],
 );
+
+// ─── Deduction Entries (task 13.7) ────────────────────────────────────────────
+
+/**
+ * Income-tax deduction section this entry applies to.
+ * 80C / 80D are old-regime only; 80CCD2 applies both regimes.
+ */
+export const deductionSection = pgEnum("deduction_section", ["80C", "80D", "80CCD1B", "80CCD2"]);
+
+/**
+ * Fine-grained kind within a section — drives UI labels and eligibility logic.
+ * Valid (section, kind) pairings are enforced by `deduction_entries_section_kind` check.
+ */
+export const deductionKind = pgEnum("deduction_kind", [
+  "nsc_additional",
+  "tuition_fees",
+  "elss_manual",
+  "nps_additional",
+  "employer_nps_ccd2",
+  "preventive_checkup",
+  "other_80c",
+  "other_80d",
+]);
+
+/** For 80D entries: which coverage group the premium belongs to. */
+export const eightyDGroup = pgEnum("eighty_d_group", ["self_family", "parents"]);
+
+/**
+ * Manual deduction entries — user-recorded amounts that don't flow automatically
+ * from other modules (NSC interest, tuition fees, manual ELSS records, employer
+ * NPS contributions, preventive health check-ups, etc.).
+ *
+ * DB check constraints mirror the Zod superRefine validation in packages/shared.
+ * No source_doc_key column (document attachment deferred — see TASK.md non-goals).
+ */
+export const deductionEntries = pgTable(
+  "deduction_entries",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    /** Canonical FY label: "YYYY-YY" (e.g. "2025-26"). */
+    fy: text("fy").notNull(),
+    section: deductionSection("section").notNull(),
+    deductionKind: deductionKind("deduction_kind").notNull(),
+    /** Deductible amount in paise; must be > 0 (enforced by check constraint). */
+    amountPaise: bigint("amount_paise", { mode: "number" }).notNull(),
+    /** User-supplied description; empty string when not provided. */
+    description: text("description").notNull().default(""),
+    /** 'private' | 'government'; required when section = '80CCD2'. */
+    employerType: text("employer_type"),
+    /** Basic+DA in paise; required when section = '80CCD2'. */
+    salaryBasePaise: bigint("salary_base_paise", { mode: "number" }),
+    /** Required when section = '80D'. */
+    eightyDGroup: eightyDGroup("eighty_d_group"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("deduction_entries_user_fy_idx").on(t.userId, t.fy),
+    check("deduction_entries_amount_positive", sql`${t.amountPaise} > 0`),
+    check(
+      "deduction_entries_ccd2_fields",
+      sql`${t.section} <> '80CCD2' OR (${t.employerType} IS NOT NULL AND ${t.employerType} IN ('private','government') AND ${t.salaryBasePaise} IS NOT NULL AND ${t.salaryBasePaise} > 0)`,
+    ),
+    check(
+      "deduction_entries_80d_group",
+      sql`${t.section} <> '80D' OR ${t.eightyDGroup} IS NOT NULL`,
+    ),
+    check(
+      "deduction_entries_section_kind",
+      sql`(${t.section} = '80C' AND ${t.deductionKind} IN ('nsc_additional','tuition_fees','elss_manual','other_80c')) OR (${t.section} = '80CCD1B' AND ${t.deductionKind} = 'nps_additional') OR (${t.section} = '80CCD2' AND ${t.deductionKind} = 'employer_nps_ccd2') OR (${t.section} = '80D' AND ${t.deductionKind} IN ('preventive_checkup','other_80d'))`,
+    ),
+  ],
+);

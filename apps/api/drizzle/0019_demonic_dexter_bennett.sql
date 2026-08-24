@@ -1,0 +1,2 @@
+ALTER TABLE "holdings" ADD COLUMN "is_elss" boolean DEFAULT false NOT NULL;--> statement-breakpoint
+ALTER TABLE "holdings" ADD CONSTRAINT "holdings_elss_requires_mf" CHECK (NOT "holdings"."is_elss" OR "holdings"."asset_class" = 'mutual_fund');

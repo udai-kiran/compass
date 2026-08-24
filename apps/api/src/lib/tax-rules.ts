@@ -497,6 +497,13 @@ for (const fy of ["2024-25", "2025-26", "2026-27"]) {
   });
 }
 
+/**
+ * Section 80D sub-limit for preventive health check-ups: ₹5,000 per group
+ * (self+family or parents), included within (not additive on top of) the
+ * 80D group cap. Flat statutory limit — not FY- or regime-varying.
+ */
+export const PREVENTIVE_CHECKUP_SUBLIMIT_PAISE = lakh(0.05); // ₹5,000
+
 // 80D — health insurance premium; old regime only; four variants:
 //   80D_self        — self + family (non-senior), ₹25,000
 //   80D_self_senior — self + family (taxpayer is senior citizen), ₹50,000
@@ -685,4 +692,38 @@ export function getAdvanceTaxSchedule(fy: string): AdvanceTaxSchedule {
  */
 export function coveredFys(): string[] {
   return [...new Set([...REGIME_RULES_MAP.keys()].map((k) => k.split("|")[0]!))].sort();
+}
+
+/**
+ * Returns the employer NPS contribution rate (basis points of Basic+DA) allowed
+ * as a deduction under Section 80CCD(2) for the given FY, regime, and employer
+ * type.
+ *
+ * Looks up the 80CCD(2) deduction cap for the FY, finds the matching regime entry,
+ * and returns the rateBpsOfBasic for the matching employerType.
+ *
+ * Throws a plain Error (matching this file's convention — no HttpError) when:
+ *   - the FY is not covered
+ *   - no 80CCD(2) entry exists for the regime
+ *   - no rate entry for the given employerType
+ */
+export function resolveEmployerNpsRateBps(
+  fy: string,
+  regime: Regime,
+  employerType: "private" | "government",
+): number {
+  const caps = getDeductionCap("80CCD(2)", fy);
+  const entry = caps.find((c) => c.regime === regime || c.regime === "both");
+  if (!entry) {
+    throw new Error(
+      `tax-rules: no 80CCD(2) deduction cap entry for FY "${fy}" regime "${regime}"`,
+    );
+  }
+  const rateEntry = (entry.employerRatesBps ?? []).find((r) => r.employerType === employerType);
+  if (!rateEntry) {
+    throw new Error(
+      `tax-rules: no 80CCD(2) rate for employerType "${employerType}" in FY "${fy}" regime "${regime}"`,
+    );
+  }
+  return rateEntry.rateBpsOfBasic;
 }

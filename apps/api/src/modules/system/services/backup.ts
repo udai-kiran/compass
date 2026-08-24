@@ -51,6 +51,7 @@ export const ALL_TABLES = [
   "payslips", "payslip_components",
   "income_events",
   "epf_contributions",
+  "deduction_entries",
 ] as const;
 
 /** Tables that carry a user_id directly — scoped by that column in the export. */
@@ -82,6 +83,7 @@ export const USER_TABLES: Record<string, string> = {
   payslips: "user_id",
   income_events: "user_id",
   epf_contributions: "user_id",
+  deduction_entries: "user_id",
 };
 
 /**

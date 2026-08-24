@@ -1,7 +1,7 @@
 # Task: 13.4 — Structured Taxable-Income Ledger
 
 ## Status
-IMPLEMENTING
+COMPLETE
 
 ## Objective
 Add a reviewable, provenance-carrying income-event ledger to the tax module: one

@@ -1,7 +1,7 @@
 # Task: 13.7 — 80C/80D Deduction Basket
 
 ## Status
-PLAN_REVIEW
+COMPLETE
 
 ## Objective
 Aggregate all deduction sources into four legally-distinct buckets (80C, 80CCD(1B), 80CCD(2), 80D) with correct individual caps, headroom computation, and regime-gating.

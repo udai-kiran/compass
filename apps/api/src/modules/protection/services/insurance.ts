@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
 import type {
   CreateInsurancePolicy,
   HealthCard,
@@ -12,9 +12,10 @@ import {
   LogPremiumSchema,
   UpdateInsurancePolicySchema,
 } from "@compass/shared";
-import type { Db } from "../../../db/index.ts";
-import { insuranceHealthCards, insurancePolicies } from "../schema.ts";
+import type { Db, DbOrTx } from "../../../db/index.ts";
+import { insuranceHealthCards, insurancePolicies, policyCoveredPersons } from "../schema.ts";
 import { accounts, postings, transactions } from "../../../db/schema.ts";
+import { familyMembers } from "../../../db/shared/persons.ts";
 import { HttpError } from "../../../lib/errors.ts";
 import type { Storage } from "../../../lib/storage.ts";
 import { assertUploadable } from "../../ledger/services/attachments.ts";
@@ -28,7 +29,11 @@ function toHealthCard(c: HealthCardRow): HealthCard {
   return { id: c.id, label: c.label, fileName: c.fileName, mimeType: c.mimeType, sizeBytes: c.sizeBytes };
 }
 
-function toPolicy(p: PolicyRow, cards: HealthCardRow[] = []): InsurancePolicy {
+function toPolicy(
+  p: PolicyRow,
+  cards: HealthCardRow[] = [],
+  coveredPersonIds: string[] = [],
+): InsurancePolicy {
   return {
     id: p.id,
     name: p.name,
@@ -50,7 +55,7 @@ function toPolicy(p: PolicyRow, cards: HealthCardRow[] = []): InsurancePolicy {
     nominee: p.nominee,
     nomineePersonId: p.nomineePersonId ?? null,
     coveredMembers: p.coveredMembers,
-    coveredPersonIds: [],
+    coveredPersonIds,
     documentName: p.documentName,
     documentMime: p.documentMime,
     documentSizeBytes: p.documentSizeBytes,
@@ -60,14 +65,57 @@ function toPolicy(p: PolicyRow, cards: HealthCardRow[] = []): InsurancePolicy {
   };
 }
 
-/** A single policy with its health cards, for endpoints that return one policy. */
+/**
+ * Validate that all personIds belong to the user's family_members, then
+ * atomically replace the policy's covered-person links (delete old, insert new).
+ * Must be called inside an existing transaction.
+ */
+async function replaceCoveredPersons(
+  db: DbOrTx,
+  userId: string,
+  policyId: string,
+  personIds: string[],
+): Promise<void> {
+  if (personIds.length > 0) {
+    // Batch-validate all IDs in one query — never loop queries.
+    const found = await db
+      .select({ id: familyMembers.id })
+      .from(familyMembers)
+      .where(
+        and(
+          eq(familyMembers.userId, userId),
+          inArray(familyMembers.id, personIds),
+        ),
+      );
+    const foundIds = new Set(found.map((r) => r.id));
+    for (const id of personIds) {
+      if (!foundIds.has(id)) {
+        throw new HttpError(400, `Unknown family member: ${id}`);
+      }
+    }
+  }
+  // Delete existing covered persons, then bulk-insert new ones.
+  await db.delete(policyCoveredPersons).where(eq(policyCoveredPersons.policyId, policyId));
+  if (personIds.length > 0) {
+    await db
+      .insert(policyCoveredPersons)
+      .values(personIds.map((personId) => ({ policyId, personId })));
+  }
+}
+
+/** A single policy with its health cards and covered-person IDs, for single-policy endpoints. */
 async function getPolicyWithCards(db: Db, userId: string, id: string): Promise<InsurancePolicy> {
   const row = await ownedPolicy(db, userId, id);
   const cards = await db.query.insuranceHealthCards.findMany({
     where: eq(insuranceHealthCards.policyId, id),
     orderBy: (c, { asc }) => [asc(c.createdAt)],
   });
-  return toPolicy(row, cards);
+  const coveredPersonRows = await db
+    .select({ personId: policyCoveredPersons.personId })
+    .from(policyCoveredPersons)
+    .where(eq(policyCoveredPersons.policyId, id));
+  const coveredPersonIds = coveredPersonRows.map((r) => r.personId);
+  return toPolicy(row, cards, coveredPersonIds);
 }
 
 async function ownedPolicy(db: Db, userId: string, id: string): Promise<PolicyRow> {
@@ -83,22 +131,33 @@ export async function listPolicies(db: Db, userId: string): Promise<InsurancePol
     where: eq(insurancePolicies.userId, userId),
     orderBy: (p, { asc }) => [asc(p.archivedAt), asc(p.name)],
   });
-  const cards = rows.length
-    ? await db.query.insuranceHealthCards.findMany({
-        where: inArray(
-          insuranceHealthCards.policyId,
-          rows.map((r) => r.id),
-        ),
-        orderBy: (c, { asc }) => [asc(c.createdAt)],
-      })
-    : [];
+  if (rows.length === 0) return [];
+  const policyIds = rows.map((r) => r.id);
+  const [cards, coveredPersonsRows] = await Promise.all([
+    db.query.insuranceHealthCards.findMany({
+      where: inArray(insuranceHealthCards.policyId, policyIds),
+      orderBy: (c, { asc }) => [asc(c.createdAt)],
+    }),
+    db
+      .select({ policyId: policyCoveredPersons.policyId, personId: policyCoveredPersons.personId })
+      .from(policyCoveredPersons)
+      .where(inArray(policyCoveredPersons.policyId, policyIds)),
+  ]);
   const byPolicy = new Map<string, HealthCardRow[]>();
   for (const c of cards) {
     const list = byPolicy.get(c.policyId) ?? [];
     list.push(c);
     byPolicy.set(c.policyId, list);
   }
-  return rows.map((r) => toPolicy(r, byPolicy.get(r.id) ?? []));
+  const byCoveredPolicy = new Map<string, string[]>();
+  for (const cp of coveredPersonsRows) {
+    const list = byCoveredPolicy.get(cp.policyId) ?? [];
+    list.push(cp.personId);
+    byCoveredPolicy.set(cp.policyId, list);
+  }
+  return rows.map((r) =>
+    toPolicy(r, byPolicy.get(r.id) ?? [], byCoveredPolicy.get(r.id) ?? []),
+  );
 }
 
 export async function createPolicy(
@@ -108,11 +167,17 @@ export async function createPolicy(
 ): Promise<InsurancePolicy> {
   const parsed = CreateInsurancePolicySchema.parse(input);
   await assertOwnedResource(db, userId, parsed.resourceId);
-  const rows = await db
-    .insert(insurancePolicies)
-    .values({ ...parsed, userId })
-    .returning();
-  return toPolicy(rows[0]!);
+  const { coveredPersonIds, ...policyFields } = parsed;
+  const policyId = await db.transaction(async (tx) => {
+    const rows = await tx
+      .insert(insurancePolicies)
+      .values({ ...policyFields, userId })
+      .returning({ id: insurancePolicies.id });
+    const id = rows[0]!.id;
+    await replaceCoveredPersons(tx, userId, id, coveredPersonIds ?? []);
+    return id;
+  });
+  return getPolicyWithCards(db, userId, policyId);
 }
 
 export async function updatePolicy(
@@ -122,12 +187,17 @@ export async function updatePolicy(
   input: UpdateInsurancePolicy,
 ): Promise<InsurancePolicy> {
   await ownedPolicy(db, userId, id);
-  const { archived, ...fields } = UpdateInsurancePolicySchema.parse(input);
+  const { archived, coveredPersonIds, ...fields } = UpdateInsurancePolicySchema.parse(input);
   await assertOwnedResource(db, userId, fields.resourceId);
-  await db
-    .update(insurancePolicies)
-    .set({ ...fields, archivedAt: archived ? new Date() : null, updatedAt: new Date() })
-    .where(and(eq(insurancePolicies.id, id), eq(insurancePolicies.userId, userId)));
+  await db.transaction(async (tx) => {
+    await tx
+      .update(insurancePolicies)
+      .set({ ...fields, archivedAt: archived ? new Date() : null, updatedAt: new Date() })
+      .where(and(eq(insurancePolicies.id, id), eq(insurancePolicies.userId, userId)));
+    if (coveredPersonIds !== undefined) {
+      await replaceCoveredPersons(tx, userId, id, coveredPersonIds);
+    }
+  });
   return getPolicyWithCards(db, userId, id);
 }
 
@@ -144,6 +214,8 @@ export async function deletePolicy(
   });
   // Premium transactions FK policy_id with onDelete: set null, so deleting a
   // policy detaches its premiums (they stay in the ledger) rather than failing.
+  // policyCoveredPersons FKs policy_id with onDelete: cascade, so covered
+  // persons are removed automatically.
   const rows = await db
     .delete(insurancePolicies)
     .where(and(eq(insurancePolicies.id, id), eq(insurancePolicies.userId, userId)))
@@ -319,6 +391,42 @@ export async function listPolicyPremiums(
   }));
   const totalPaise = items.reduce((s, i) => s + Math.abs(i.amountPaise), 0);
   return { items, totalPaise, count: items.length };
+}
+
+/**
+ * Sum of premiums paid for a policy within a date range (inclusive). Excludes
+ * soft-deleted transactions and system accounts (opening balance legs). Used by
+ * the deduction basket to compute actual premiums paid in a financial year.
+ */
+export async function sumPolicyPremiumsInRange(
+  db: DbOrTx,
+  userId: string,
+  policyId: string,
+  fyStart: string,
+  fyEnd: string,
+): Promise<{ totalPaise: number; count: number }> {
+  const rows = await db
+    .select({
+      totalPaise: sql<number>`coalesce(sum(abs(${postings.amountPaise})), 0)::int`,
+      count: sql<number>`count(*)::int`,
+    })
+    .from(transactions)
+    .innerJoin(postings, eq(postings.transactionId, transactions.id))
+    .innerJoin(accounts, and(eq(accounts.id, postings.accountId), isNull(accounts.systemKind)))
+    .where(
+      and(
+        eq(transactions.policyId, policyId),
+        eq(transactions.userId, userId),
+        isNull(transactions.deletedAt),
+        gte(transactions.date, fyStart),
+        lte(transactions.date, fyEnd),
+      ),
+    );
+  const row = rows[0];
+  return {
+    totalPaise: row?.totalPaise ?? 0,
+    count: row?.count ?? 0,
+  };
 }
 
 /**

@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   costBasis,
+  createHolding,
   eventNeedsUnits,
   holdingArchiveConflictsWithSip,
   holdingGoalEditConflictsWithSip,
@@ -9,7 +10,9 @@ import {
   sipTargetHoldingArchiveBlockedMessage,
   sipTargetHoldingBlockedMessage,
   unitsHeld,
+  updateHolding,
 } from "./holdings.ts";
+import { HttpError } from "../../../lib/errors.ts";
 
 const buy = (date: string, units: number, amountPaise: number) => ({ type: "buy", date, units, amountPaise });
 const sell = (date: string, units: number, amountPaise: number) => ({ type: "sell", date, units, amountPaise });
@@ -188,4 +191,117 @@ test("a dividend never needs units, whatever the asset class", () => {
   assert.equal(eventNeedsUnits("gold", "dividend"), false);
   assert.equal(eventNeedsUnits("silver", "dividend"), false);
   assert.equal(eventNeedsUnits("real_estate", "dividend"), false);
+});
+
+// ---------- isElss guard (task 13.7 Phase 1e) ----------
+
+test("createHolding: isElss=true on a non-mutual_fund asset class throws HttpError(400)", async () => {
+  // The guard fires before any DB call, so no stub is needed.
+  const db = {} as never;
+  await assert.rejects(
+    () =>
+      createHolding(db, "user-1", {
+        name: "HDFC Top 100",
+        assetClass: "stock",
+        isElss: true,
+        gainsTaxClass: undefined,
+        notes: "",
+        targetPct: null,
+        amfiSchemeCode: null,
+        folioNumber: null,
+        grandfatherNavPaise: null,
+      }),
+    (err: unknown) => {
+      assert.ok(err instanceof HttpError);
+      assert.equal((err as HttpError).statusCode, 400);
+      assert.ok((err as HttpError).message.includes("isElss"));
+      return true;
+    },
+  );
+});
+
+test("createHolding: isElss=true on mutual_fund is accepted and returned in the Holding", async () => {
+  // The insert is the only DB operation in createHolding (after the guard).
+  const returnedRow = {
+    id: "h-1",
+    name: "Axis Long Term Equity",
+    assetClass: "mutual_fund",
+    notes: "",
+    targetPct: null,
+    amfiSchemeCode: 120503,
+    folioNumber: null,
+    grandfatherNavPaise: null,
+    gainsTaxClass: "equity_mf",
+    goalId: null,
+    archivedAt: null,
+    isElss: true,
+  };
+  const db = {
+    insert: (_table: unknown) => ({
+      values: (_vals: unknown) => ({
+        returning: () => Promise.resolve([returnedRow]),
+      }),
+    }),
+  } as never;
+
+  const holding = await createHolding(db, "user-1", {
+    name: "Axis Long Term Equity",
+    assetClass: "mutual_fund",
+    isElss: true,
+    gainsTaxClass: undefined,
+    notes: "",
+    targetPct: null,
+    amfiSchemeCode: 120503,
+    folioNumber: null,
+    grandfatherNavPaise: null,
+  });
+  assert.equal(holding.isElss, true);
+  assert.equal(holding.assetClass, "mutual_fund");
+});
+
+test("updateHolding: setting isElss=true on a stock holding throws HttpError(400)", async () => {
+  // assertOwnedGoal short-circuits when goalId is absent (no DB.query.goals call).
+  // The select inside the transaction returns the current stock holding.
+  const currentRow = {
+    id: "h-1",
+    userId: "user-1",
+    name: "Infosys",
+    assetClass: "stock",
+    notes: "",
+    targetPct: null,
+    amfiSchemeCode: null,
+    folioNumber: null,
+    grandfatherNavPaise: null,
+    gainsTaxClass: "equity_direct",
+    goalId: null,
+    archivedAt: null,
+    isElss: false,
+    updatedAt: new Date(),
+  };
+
+  const selectChain = {
+    from: () => selectChain,
+    where: () => selectChain,
+    for: (_lock: string) => Promise.resolve([currentRow]),
+  };
+  const db = {
+    query: { goals: { findFirst: async () => null } },
+    transaction: (cb: (tx: unknown) => Promise<unknown>) =>
+      cb({
+        select: () => selectChain,
+      }),
+  } as never;
+
+  await assert.rejects(
+    () =>
+      updateHolding(db, "user-1", "h-1", {
+        isElss: true,
+      }),
+    (err: unknown) => {
+      assert.ok(err instanceof HttpError);
+      assert.equal((err as HttpError).statusCode, 400);
+      assert.ok((err as HttpError).message.includes("isElss"));
+      return true;
+    },
+  );
 });

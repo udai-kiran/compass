@@ -152,4 +152,8 @@ export {
   incomeKind,
   incomeSourceKind,
   epfContributions,
+  deductionEntries,
+  deductionSection,
+  deductionKind,
+  eightyDGroup,
 } from "../modules/tax/schema.ts";

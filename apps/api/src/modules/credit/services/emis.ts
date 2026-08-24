@@ -12,6 +12,7 @@ import { emiDetails } from "../schema.ts";
 import { HttpError } from "../../../lib/errors.ts";
 import { assertOwnedCategory } from "../../../lib/ownership.ts";
 import { assertPublicAccountType } from "../../../lib/account-type.ts";
+import { fyRange } from "../../../lib/financial-year.ts";
 
 function monthsSince(startDate: string, today: string): number {
   const [sy, sm, sd] = startDate.split("-").map(Number) as [number, number, number];
@@ -507,4 +508,32 @@ export async function listEmiInstallments(
     d.startDate,
     rows.map((r) => ({ transactionId: r.id, date: r.date, amountPaise: r.amountPaise })),
   );
+}
+
+/**
+ * Estimates the total EMI interest portion that falls within the given financial
+ * year for all of a user's EMI templates. Sums `interestPaise` from
+ * `listEmiInstallments` for installments whose date falls in [fyStart, fyEnd].
+ *
+ * This is an INFORMATIONAL figure only — it is NOT a deduction bucket. It is
+ * reported alongside the deduction basket but never added into any cap/eligible
+ * total (see deductions.ts §80D / `emiInterestEstimatePaise`).
+ */
+export async function getEmiInterestEstimateForFy(
+  db: Db,
+  userId: string,
+  fy: string,
+): Promise<{ estimatePaise: number; templateCount: number }> {
+  const [fyStart, fyEnd] = fyRange(fy);
+  const emis = await listEmis(db, userId);
+  let estimatePaise = 0;
+  for (const emi of emis) {
+    const installments = await listEmiInstallments(db, userId, emi.templateId);
+    for (const inst of installments) {
+      if (inst.date >= fyStart && inst.date <= fyEnd) {
+        estimatePaise += inst.interestPaise;
+      }
+    }
+  }
+  return { estimatePaise, templateCount: emis.length };
 }

@@ -125,7 +125,7 @@ const policyFields = {
   maturityDate: z.iso.date().nullable().default(null),
   nominee: z.string().max(120).default(""),
   nomineePersonId: z.uuid().nullable().default(null),
-  coveredPersonIds: z.array(z.uuid()).default([]),
+  coveredPersonIds: z.array(z.uuid()).optional(),
   /** covered members, each a non-empty name; up to 20 */
   coveredMembers: z.array(z.string().min(1).max(120)).max(20).default([]),
   notes: z.string().max(1000).default(""),

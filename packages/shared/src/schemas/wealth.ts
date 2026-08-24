@@ -479,6 +479,8 @@ export const HoldingSchema = z.object({
   /** Goal this folio is earmarked for; null = Unassigned. */
   goalId: z.uuid().nullable(),
   archived: z.boolean(),
+  /** Whether this mutual-fund holding is an ELSS (Section 80C deduction eligible). */
+  isElss: z.boolean(),
 });
 export type Holding = z.infer<typeof HoldingSchema>;
 
@@ -492,6 +494,8 @@ export const CreateHoldingSchema = z.object({
   grandfatherNavPaise: z.number().int().min(0).nullable().default(null),
   /** Omit to let the service guess from asset class; user can correct later. */
   gainsTaxClass: GainsTaxClassSchema.optional(),
+  /** Whether this mutual-fund holding is an ELSS (Section 80C deduction eligible). Defaults to false. */
+  isElss: z.boolean().default(false),
 });
 export type CreateHolding = z.input<typeof CreateHoldingSchema>;
 
@@ -506,6 +510,8 @@ export const UpdateHoldingSchema = z.object({
   gainsTaxClass: GainsTaxClassSchema.optional(),
   goalId: z.uuid().nullable().optional(),
   archived: z.boolean().optional(),
+  /** Whether this mutual-fund holding is an ELSS (Section 80C deduction eligible). */
+  isElss: z.boolean().optional(),
 });
 export type UpdateHolding = z.infer<typeof UpdateHoldingSchema>;
 

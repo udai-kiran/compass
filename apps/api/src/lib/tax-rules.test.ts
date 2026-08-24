@@ -9,6 +9,8 @@ import {
   getDeductionCap,
   getAdvanceTaxSchedule,
   coveredFys,
+  resolveEmployerNpsRateBps,
+  PREVENTIVE_CHECKUP_SUBLIMIT_PAISE,
 } from "./tax-rules.ts";
 
 const L = 100_000 * 100;   // 1 lakh in paise
@@ -420,4 +422,61 @@ test("surcharge slab boundaries are contiguous for all regimes and FYs", () => {
       }
     }
   }
+});
+
+// ─── resolveEmployerNpsRateBps (task 13.7 Phase 1c) ──────────────────────────
+
+test("resolveEmployerNpsRateBps: old regime — private=1000bps (10%), govt=1400bps (14%) for all FYs", () => {
+  for (const fy of ["2023-24", "2024-25", "2025-26", "2026-27"]) {
+    assert.equal(
+      resolveEmployerNpsRateBps(fy, "old", "private"),
+      1000,
+      `${fy} old private should be 1000 bps`,
+    );
+    assert.equal(
+      resolveEmployerNpsRateBps(fy, "old", "government"),
+      1400,
+      `${fy} old govt should be 1400 bps`,
+    );
+  }
+});
+
+test("resolveEmployerNpsRateBps: new regime FY23-24 — private=1000bps (10%), govt=1400bps (14%)", () => {
+  // Finance Act 2024 §115BAC(1A) was not yet in effect for FY 2023-24.
+  assert.equal(resolveEmployerNpsRateBps("2023-24", "new", "private"), 1000);
+  assert.equal(resolveEmployerNpsRateBps("2023-24", "new", "government"), 1400);
+});
+
+test("resolveEmployerNpsRateBps: new regime FY24-25+ — 14% for ALL employers (Finance Act 2024 §115BAC(1A))", () => {
+  for (const fy of ["2024-25", "2025-26", "2026-27"]) {
+    assert.equal(
+      resolveEmployerNpsRateBps(fy, "new", "private"),
+      1400,
+      `${fy} new private should be 1400 bps after Finance Act 2024`,
+    );
+    assert.equal(
+      resolveEmployerNpsRateBps(fy, "new", "government"),
+      1400,
+      `${fy} new govt should be 1400 bps`,
+    );
+  }
+});
+
+test("resolveEmployerNpsRateBps: boundary year FY23-24 vs FY24-25 — private rate changes from 1000 to 1400 in new regime", () => {
+  // Explicitly assert the boundary that changed with Finance Act 2024.
+  assert.equal(resolveEmployerNpsRateBps("2023-24", "new", "private"), 1000, "FY23-24 new private = 1000");
+  assert.equal(resolveEmployerNpsRateBps("2024-25", "new", "private"), 1400, "FY24-25 new private = 1400");
+});
+
+test("resolveEmployerNpsRateBps: throws on unknown FY", () => {
+  assert.throws(
+    () => resolveEmployerNpsRateBps("2020-21", "old", "private"),
+    /not in the covered deduction-cap data set/,
+  );
+});
+
+// ─── PREVENTIVE_CHECKUP_SUBLIMIT_PAISE (task 13.7 Phase 1c) ──────────────────
+
+test("PREVENTIVE_CHECKUP_SUBLIMIT_PAISE is ₹5,000 (500_000 paise)", () => {
+  assert.equal(PREVENTIVE_CHECKUP_SUBLIMIT_PAISE, 500_000);
 });

@@ -669,3 +669,283 @@ export const GetSchemeComplianceQuerySchema = z.object({
   fy: z.string().optional(),
 });
 export type GetSchemeComplianceQuery = z.infer<typeof GetSchemeComplianceQuerySchema>;
+
+// ─── Deduction Entries (task 13.7) ───────────────────────────────────────────
+
+/** Income-tax deduction section for manual entries. */
+export const DeductionSectionSchema = z.enum(["80C", "80D", "80CCD1B", "80CCD2"]);
+export type DeductionSection = z.infer<typeof DeductionSectionSchema>;
+
+/**
+ * Fine-grained kind within a deduction section.
+ * Valid (section, kind) pairings are enforced by both superRefine and the DB.
+ */
+export const DeductionKindSchema = z.enum([
+  "nsc_additional",
+  "tuition_fees",
+  "elss_manual",
+  "nps_additional",
+  "employer_nps_ccd2",
+  "preventive_checkup",
+  "other_80c",
+  "other_80d",
+]);
+export type DeductionKind = z.infer<typeof DeductionKindSchema>;
+
+/** Which 80D coverage group a health-insurance deduction entry belongs to. */
+export const EightyDGroupSchema = z.enum(["self_family", "parents"]);
+export type EightyDGroup = z.infer<typeof EightyDGroupSchema>;
+
+/** Full deduction entry DTO (returned by all CRUD operations). */
+export const DeductionEntrySchema = z.object({
+  id: z.uuid(),
+  fy: FySchema,
+  section: DeductionSectionSchema,
+  deductionKind: DeductionKindSchema,
+  /** Amount in paise; always > 0. */
+  amountPaise: z.number().int().positive(),
+  description: z.string(),
+  /** 'private' | 'government'; non-null only for section='80CCD2'. */
+  employerType: z.enum(["private", "government"]).nullable(),
+  /** Basic+DA in paise; non-null only for section='80CCD2'. */
+  salaryBasePaise: z.number().int().positive().nullable(),
+  /** Required only for section='80D'. */
+  eightyDGroup: EightyDGroupSchema.nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type DeductionEntry = z.infer<typeof DeductionEntrySchema>;
+
+/**
+ * Validates section/kind/group compatibility (mirrors DB check constraints).
+ * Called via superRefine on Create — the DB check is the backstop on Update.
+ */
+function validateSectionKindCompatibility(
+  data: {
+    section: string;
+    deductionKind: string;
+    eightyDGroup?: string | null;
+    employerType?: string | null;
+    salaryBasePaise?: number | null;
+  },
+  ctx: z.RefinementCtx,
+): void {
+  const validKinds: Record<string, string[]> = {
+    "80C": ["nsc_additional", "tuition_fees", "elss_manual", "other_80c"],
+    "80CCD1B": ["nps_additional"],
+    "80CCD2": ["employer_nps_ccd2"],
+    "80D": ["preventive_checkup", "other_80d"],
+  };
+  if (!(validKinds[data.section] ?? []).includes(data.deductionKind)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `deductionKind "${data.deductionKind}" is not valid for section "${data.section}"`,
+      path: ["deductionKind"],
+    });
+  }
+  if (data.section === "80D" && !data.eightyDGroup) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `eightyDGroup is required for section "80D"`,
+      path: ["eightyDGroup"],
+    });
+  }
+  if (data.section === "80CCD2") {
+    if (!data.employerType) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `employerType is required for section "80CCD2"`,
+        path: ["employerType"],
+      });
+    }
+    if (!(data.salaryBasePaise && data.salaryBasePaise > 0)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `salaryBasePaise (positive integer) is required for section "80CCD2"`,
+        path: ["salaryBasePaise"],
+      });
+    }
+  }
+}
+
+/** Request body for POST /api/tax/deductions/entries */
+export const CreateDeductionEntrySchema = z
+  .object({
+    fy: FySchema,
+    section: DeductionSectionSchema,
+    deductionKind: DeductionKindSchema,
+    amountPaise: z.number().int().positive(),
+    description: z.string().default(""),
+    employerType: z.enum(["private", "government"]).optional(),
+    salaryBasePaise: z.number().int().positive().optional(),
+    eightyDGroup: EightyDGroupSchema.optional(),
+  })
+  .superRefine(validateSectionKindCompatibility);
+export type CreateDeductionEntry = z.infer<typeof CreateDeductionEntrySchema>;
+
+/** Request body for PUT /api/tax/deductions/entries/:id */
+export const UpdateDeductionEntrySchema = z.object({
+  amountPaise: z.number().int().positive().optional(),
+  description: z.string().optional(),
+  employerType: z.enum(["private", "government"]).optional(),
+  salaryBasePaise: z.number().int().positive().optional(),
+  eightyDGroup: EightyDGroupSchema.optional(),
+});
+export type UpdateDeductionEntry = z.infer<typeof UpdateDeductionEntrySchema>;
+
+// ─── Deduction Basket (task 13.7) ─────────────────────────────────────────────
+
+/** A single contribution source within the 80C bucket. */
+const DeductionSourceSchema = z.object({
+  /**
+   * Source kind. "manual" covers all explicit deduction_entries with section='80C'.
+   * "epf" covers EPF + VPF combined (the eligible80cPaise DTO field already merges them).
+   */
+  kind: z.enum([
+    "epf", "vpf", "ppf", "ssy", "elss",
+    "life_insurance", "tax_saver_fd", "nsc", "manual",
+  ]),
+  /** Display name: account/policy/holding name or a category label. */
+  label: z.string(),
+  /** Contribution amount in paise for this FY. */
+  contributedPaise: z.number().int(),
+  /**
+   * Data quality: actual = from real ledger; expected = from unconfirmed EPF rows;
+   * estimated = computed from premium/frequency; manual = user entry; data_missing = source present but data absent.
+   */
+  provenance: z.enum(["actual", "expected", "estimated", "manual", "data_missing"]),
+  /** Passthrough notes (compliance statusCode, estimation caveat, etc.). */
+  note: z.string().nullable(),
+});
+
+/** A single 80CCD(2) entry (one per deduction_entries row with section='80CCD2'). */
+const EightyCcd2EntrySchema = z.object({
+  id: z.string(),
+  employerType: z.enum(["private", "government"]),
+  /** Basic+DA in paise supplied on the entry. */
+  salaryBasePaise: z.number().int(),
+  /** Amount actually contributed (from the entry). */
+  contributedPaise: z.number().int(),
+  /** Applicable rate in basis points of Basic+DA (from tax-rules.ts for fy+regime+employerType). */
+  ratebps: z.number().int(),
+  /** Statutory cap = floor(salaryBasePaise × ratebps / 10000). */
+  capPaise: z.number().int(),
+  /** min(contributedPaise, capPaise). */
+  eligiblePaise: z.number().int(),
+  /** True when contributedPaise > capPaise. */
+  capExceeded: z.boolean(),
+});
+
+/**
+ * Per-group (self+family or parents) 80D sub-result.
+ * `headroomPaise` is null only when the overall basket regime is "new"
+ * (80D is not available under the new regime; headroom is meaningless).
+ */
+const EightyDGroupResultSchema = z.object({
+  /** Sum of premiums + other_80d entries + preventive_checkup entries for this group. */
+  contributedPaise: z.number().int(),
+  /** True when the taxpayer / spouse (selfFamily) or any covered parent (parents) is ≥60 on FY end. */
+  seniorApplies: z.boolean(),
+  /** Group cap from tax-rules.ts (25k non-senior / 50k senior). */
+  capPaise: z.number().int(),
+  /** min(contributedPaise, capPaise). */
+  eligiblePaise: z.number().int(),
+  /**
+   * Sub-limit-capped preventive checkup amount (≤ ₹5,000).
+   * INCLUDED within contributedPaise (not additive on top).
+   */
+  preventiveCheckupPaise: z.number().int(),
+  headroomPaise: z.number().int().nullable(),
+});
+
+/** A health policy that could not be allocated to a bucket (no/mixed covered persons). */
+const UnallocatedPolicySchema = z.object({
+  policyId: z.string(),
+  name: z.string(),
+  reason: z.enum(["no_covered_persons", "mixed_coverage"]),
+});
+
+/**
+ * Full deduction basket for a given user + FY.
+ *
+ * Money invariants (enforced by the service, verifiable by callers):
+ *  - eligiblePaise <= capPaise for all buckets
+ *  - headroomPaise >= 0 when non-null
+ *  - eightyC.contributedPaise = sum(sources[*].contributedPaise) + npsRemainderPaise
+ *  - eightyCcd1b.contributedPaise + eightyC.npsRemainderPaise = raw NPS employee contribution
+ *  - emiInterestEstimatePaise is informational — NEVER included in any cap/eligible total
+ *
+ * headroomPaise is null for 80C/80CCD1B/80D buckets when regime === "new"
+ * (the deductions don't apply; headroom would be misleading).
+ * eightyCcd2 is never suppressed — it applies under both regimes.
+ */
+export const DeductionBasketSchema = z.object({
+  fy: z.string(),
+  /** Effective regime from getRegimePreference. */
+  regime: RegimeSchema,
+  eightyC: z.object({
+    /** Ordered list of auto-detected contribution sources (zero-value sources omitted). */
+    sources: z.array(DeductionSourceSchema),
+    /**
+     * NPS employee contribution above the 80CCD(1B) ₹50,000 cap, carried into 80C.
+     * Included in contributedPaise but NOT salary-cap-validated (see task 13.8).
+     */
+    npsRemainderPaise: z.number().int(),
+    /** sum(sources[*].contributedPaise) + npsRemainderPaise */
+    contributedPaise: z.number().int(),
+    /** Statutory 80C cap (₹1.5L = 15,000,000 paise) from tax-rules.ts. */
+    capPaise: z.number().int(),
+    /** min(contributedPaise, capPaise). */
+    eligiblePaise: z.number().int(),
+    /** null when regime === "new". */
+    headroomPaise: z.number().int().nullable(),
+    /** Caveats from the aggregation (e.g. NPS salary-cap deferral, missing EPF records). */
+    assumptions: z.array(z.string()),
+  }),
+  eightyCcd1b: z.object({
+    /** min(npsEmployeeContribution, 50,000 × 100 paise). */
+    contributedPaise: z.number().int(),
+    /** Statutory cap (₹50,000 = 5,000,000 paise). */
+    capPaise: z.number().int(),
+    /** min(contributedPaise, capPaise). Equal to contributedPaise (already capped). */
+    eligiblePaise: z.number().int(),
+    /** null when regime === "new". */
+    headroomPaise: z.number().int().nullable(),
+  }),
+  eightyCcd2: z.object({
+    entries: z.array(EightyCcd2EntrySchema),
+    /** Sum of entries[*].contributedPaise. */
+    contributedPaise: z.number().int(),
+    /**
+     * Sum of entries[*].eligiblePaise.
+     * Available under BOTH regimes — never suppressed by headroomPaise logic.
+     */
+    eligiblePaise: z.number().int(),
+  }),
+  eightyD: z.object({
+    selfFamily: EightyDGroupResultSchema,
+    parents: EightyDGroupResultSchema,
+    /**
+     * Health policies that could not be assigned to either bucket because they have
+     * no covered persons or mixed (parent + non-parent) coverage.
+     * These are excluded from both buckets' totals — not silently lost.
+     */
+    unallocatedPolicies: z.array(UnallocatedPolicySchema),
+  }),
+  /**
+   * Total EMI interest falling in the FY across all EMI templates.
+   * INFORMATIONAL ONLY — not a deduction bucket, never added to any eligible total.
+   */
+  emiInterestEstimatePaise: z.number().int(),
+  /** ISO timestamp when this basket was computed. */
+  generatedAt: z.string(),
+});
+export type DeductionBasket = z.infer<typeof DeductionBasketSchema>;
+
+/** Query parameters for GET /api/tax/deductions */
+export const GetDeductionBasketQuerySchema = z.object({ fy: FySchema });
+export type GetDeductionBasketQuery = z.infer<typeof GetDeductionBasketQuerySchema>;
+
+/** Query parameters for GET /api/tax/deductions/entries */
+export const GetDeductionEntriesQuerySchema = z.object({ fy: FySchema });
+export type GetDeductionEntriesQuery = z.infer<typeof GetDeductionEntriesQuerySchema>;

@@ -33,6 +33,7 @@ DELETE /api/shopping/sources/:id
 DELETE /api/sips/:id
 DELETE /api/sips/:id/installments/link/:transactionId
 DELETE /api/splits/:id
+DELETE /api/tax/deductions/entries/:id
 DELETE /api/transaction-links/:id
 DELETE /api/transactions/:id
 DELETE /api/transfers/:id
@@ -152,6 +153,8 @@ GET /api/sips
 GET /api/sips/:id/installment-candidates
 GET /api/splits/:id
 GET /api/subscriptions/suggestions
+GET /api/tax/deductions
+GET /api/tax/deductions/entries
 GET /api/tax/epf-contributions
 GET /api/tax/epf-contributions/gaps
 GET /api/tax/epf-contributions/projection
@@ -287,6 +290,8 @@ HEAD /api/sips
 HEAD /api/sips/:id/installment-candidates
 HEAD /api/splits/:id
 HEAD /api/subscriptions/suggestions
+HEAD /api/tax/deductions
+HEAD /api/tax/deductions/entries
 HEAD /api/tax/epf-contributions
 HEAD /api/tax/epf-contributions/gaps
 HEAD /api/tax/epf-contributions/projection
@@ -408,6 +413,7 @@ POST /api/sips
 POST /api/sips/:id/installments
 POST /api/sips/:id/installments/link
 POST /api/subscriptions/dismiss
+POST /api/tax/deductions/entries
 POST /api/tax/epf-contributions
 POST /api/tax/epf-contributions/:id/confirm-actual
 POST /api/tax/epf-contributions/import-from-payslip/:payslipId
@@ -457,5 +463,6 @@ PUT /api/shopping/lists/:id/items/reorder
 PUT /api/shopping/receipts/:id/lines/:lineId
 PUT /api/shopping/sources/:id
 PUT /api/shopping/sources/:sourceId/serviceability/:pincode
+PUT /api/tax/deductions/entries/:id
 PUT /api/tax/regime-preference
 PUT /api/transactions/:id/splits
