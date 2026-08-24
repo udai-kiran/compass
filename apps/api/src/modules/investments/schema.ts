@@ -15,6 +15,7 @@ import { sql } from "drizzle-orm";
 import {
   bigint,
   boolean,
+  check,
   date,
   doublePrecision,
   index,
@@ -176,4 +177,83 @@ export const netWorthSnapshots = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [uniqueIndex("net_worth_snapshots_unique_idx").on(t.userId, t.date)],
+);
+
+// ---------- Deposit details (FD / RD / NSC / Tax-saver FD) ----------
+
+/** Discriminates the deposit instrument. */
+export const depositKind = pgEnum("deposit_kind", ["fd", "rd", "nsc", "tax_saver_fd"]);
+
+/** How often interest is compounded. */
+export const compoundingFrequency = pgEnum("compounding_frequency", [
+  "monthly",
+  "quarterly",
+  "half_yearly",
+  "annually",
+]);
+
+/** Whether earned interest is reinvested (compounds) or paid out each period. */
+export const interestDisposition = pgEnum("interest_disposition", ["reinvest", "payout"]);
+
+/**
+ * Structured terms for fixed-income holdings (FD, RD, NSC, tax-saver FD).
+ * One row per holding (holdingId PK → holdings.id). Asset class must be 'fd'
+ * for the parent holding — enforced in the service layer, not the DB.
+ *
+ * Lump-sum instruments (FD/NSC/tax_saver_fd) supply `principalPaise`.
+ * Recurring deposits (RD) supply `installmentPaise` + `totalInstallments`.
+ */
+export const depositDetails = pgTable(
+  "deposit_details",
+  {
+    holdingId: uuid("holding_id")
+      .primaryKey()
+      .references(() => holdings.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    depositKind: depositKind("deposit_kind").notNull(),
+    /** FD/NSC: lump-sum invested amount. Null for RD. */
+    principalPaise: bigint("principal_paise", { mode: "number" }),
+    /** RD: monthly installment amount. Null for FD/NSC. */
+    installmentPaise: bigint("installment_paise", { mode: "number" }),
+    /** RD: number of monthly installments. Null for FD/NSC. */
+    totalInstallments: integer("total_installments"),
+    /** Annual interest rate in basis points: 7.10% = 710. */
+    annualRateBps: integer("annual_rate_bps").notNull(),
+    compoundingFrequency: compoundingFrequency("compounding_frequency").notNull(),
+    interestDisposition: interestDisposition("interest_disposition").notNull().default("reinvest"),
+    /** Non-null only when interestDisposition = 'payout'. */
+    payoutFrequency: text("payout_frequency"),
+    startDate: date("start_date").notNull(),
+    maturityDate: date("maturity_date").notNull(),
+    autoRenewal: boolean("auto_renewal").notNull().default(false),
+    /** Rate reduction on premature closure, basis points; null = not applicable. */
+    prematureClosurePenaltyBps: integer("premature_closure_penalty_bps"),
+    /** Free-form joint holder name (not FK to family_members). */
+    jointHolderName: text("joint_holder_name"),
+    /** Advisory 194A flag — actual TDS recording deferred to task 13.4/13.10. */
+    tdsSectionApplicable: boolean("tds_section_applicable").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    check("deposit_details_maturity_after_start", sql`${t.maturityDate} > ${t.startDate}`),
+    check(
+      "deposit_details_principal_or_installment",
+      sql`${t.principalPaise} > 0 OR ${t.installmentPaise} > 0`,
+    ),
+    check(
+      "deposit_details_rd_needs_installment",
+      sql`${t.depositKind} <> 'rd' OR ${t.installmentPaise} IS NOT NULL`,
+    ),
+    check(
+      "deposit_details_rd_needs_total_installments",
+      sql`${t.depositKind} <> 'rd' OR ${t.totalInstallments} IS NOT NULL`,
+    ),
+    check(
+      "deposit_details_non_rd_needs_principal",
+      sql`${t.depositKind} = 'rd' OR ${t.principalPaise} IS NOT NULL`,
+    ),
+  ],
 );

@@ -50,7 +50,7 @@ test("findInconsistentPostings: returns [] for a normally-created transaction", 
   const userId = await createUser();
   t.after(() => cleanupUser(userId));
   await seedSystemAccounts(db, userId);
-  const acct = await createAccount(db, userId, { name: "Bank", type: "bank", institution: null, accountLast4: null, holderName: null, holderId: null, currency: "INR", openingBalancePaise: 0 });
+  const acct = await createAccount(db, userId, { name: "Bank", type: "bank", institution: null, accountLast4: null, holderName: null, holderId: null, currency: "INR", openingBalancePaise: 0, schemeOpenedDate: null });
   await createTransaction(db, userId, {
     accountId: acct.id,
     amountPaise: -5000,
@@ -65,7 +65,7 @@ test("findInconsistentPostings: reports 'no postings' for a raw-inserted transac
   const userId = await createUser();
   t.after(() => cleanupUser(userId));
   await seedSystemAccounts(db, userId);
-  const _acct = await createAccount(db, userId, { name: "Bank", type: "bank", institution: null, accountLast4: null, holderName: null, holderId: null, currency: "INR", openingBalancePaise: 0 });
+  const _acct = await createAccount(db, userId, { name: "Bank", type: "bank", institution: null, accountLast4: null, holderName: null, holderId: null, currency: "INR", openingBalancePaise: 0, schemeOpenedDate: null });
   const [txn] = await db
     .insert(transactions)
     .values({ userId, date: "2026-01-02", merchant: "Raw" })
@@ -80,7 +80,7 @@ test("findInconsistentPostings: reports non-zero-sum for postings that don't bal
   const userId = await createUser();
   t.after(() => cleanupUser(userId));
   await seedSystemAccounts(db, userId);
-  const acct = await createAccount(db, userId, { name: "Bank", type: "bank", institution: null, accountLast4: null, holderName: null, holderId: null, currency: "INR", openingBalancePaise: 0 });
+  const acct = await createAccount(db, userId, { name: "Bank", type: "bank", institution: null, accountLast4: null, holderName: null, holderId: null, currency: "INR", openingBalancePaise: 0, schemeOpenedDate: null });
   // Raw-insert a transaction and a single posting with no counterpart — sum is non-zero
   const [txn] = await db
     .insert(transactions)
@@ -106,8 +106,8 @@ test("findInconsistentPostings: tenant-scope — reports only the target user's 
   t.after(async () => { await cleanupUser(userA); await cleanupUser(userB); });
   await seedSystemAccounts(db, userA);
   await seedSystemAccounts(db, userB);
-  const _acctA = await createAccount(db, userA, { name: "Bank A", type: "bank", institution: null, accountLast4: null, holderName: null, holderId: null, currency: "INR", openingBalancePaise: 0 });
-  const _acctB = await createAccount(db, userB, { name: "Bank B", type: "bank", institution: null, accountLast4: null, holderName: null, holderId: null, currency: "INR", openingBalancePaise: 0 });
+  const _acctA = await createAccount(db, userA, { name: "Bank A", type: "bank", institution: null, accountLast4: null, holderName: null, holderId: null, currency: "INR", openingBalancePaise: 0, schemeOpenedDate: null });
+  const _acctB = await createAccount(db, userB, { name: "Bank B", type: "bank", institution: null, accountLast4: null, holderName: null, holderId: null, currency: "INR", openingBalancePaise: 0, schemeOpenedDate: null });
   // Raw-insert for BOTH users
   await db.insert(transactions).values({ userId: userA, date: "2026-01-01", merchant: "A" });
   await db.insert(transactions).values({ userId: userB, date: "2026-01-01", merchant: "B" });
@@ -131,7 +131,7 @@ test("findInconsistentPostings: detects orphan posting (missing transaction)", a
   const userId = await createUser();
   t.after(() => cleanupUser(userId));
   await seedSystemAccounts(db, userId);
-  const acct = await createAccount(db, userId, { name: "Bank", type: "bank", institution: null, accountLast4: null, holderName: null, holderId: null, currency: "INR", openingBalancePaise: 0 });
+  const acct = await createAccount(db, userId, { name: "Bank", type: "bank", institution: null, accountLast4: null, holderName: null, holderId: null, currency: "INR", openingBalancePaise: 0, schemeOpenedDate: null });
   // Insert a transaction and an attached posting (valid FK)
   const [txn] = await db
     .insert(transactions)
@@ -177,7 +177,7 @@ test("findInconsistentPostings: detects global ledger imbalance", async (t) => {
   const userId = await createUser();
   t.after(() => cleanupUser(userId));
   await seedSystemAccounts(db, userId);
-  const acct = await createAccount(db, userId, { name: "Bank", type: "bank", institution: null, accountLast4: null, holderName: null, holderId: null, currency: "INR", openingBalancePaise: 0 });
+  const acct = await createAccount(db, userId, { name: "Bank", type: "bank", institution: null, accountLast4: null, holderName: null, holderId: null, currency: "INR", openingBalancePaise: 0, schemeOpenedDate: null });
   // Insert a transaction with deliberately unbalanced postings via raw SQL (bypasses assertZeroSum)
   const [txn] = await db
     .insert(transactions)

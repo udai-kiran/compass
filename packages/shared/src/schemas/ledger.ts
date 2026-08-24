@@ -195,6 +195,13 @@ export const AccountSchema = z.object({
   goalId: z.uuid().nullable(),
   /** For credit_card accounts: the bank account normally used to pay this card's bill. */
   linkedAccountId: z.uuid().nullable(),
+  /**
+   * Opening date of a small-savings scheme account (PPF / SSY / NPS), YYYY-MM-DD.
+   * Null for non-scheme accounts and for scheme accounts whose opening date has
+   * not been recorded — the statutory lifecycle checks (PPF maturity, SSY deposit
+   * window) report 'data_missing' rather than guessing.
+   */
+  schemeOpenedDate: z.string().nullable(),
   sortOrder: z.number().int(),
   archivedAt: z.string().nullable(),
 });
@@ -249,6 +256,8 @@ export const CreateAccountSchema = z.object({
   holderId: z.uuid().nullable().default(null),
   currency: z.string().min(3).max(3).default("INR"),
   openingBalancePaise: z.number().int().default(0),
+  /** PPF/SSY/NPS opening date (YYYY-MM-DD); null for non-scheme accounts. */
+  schemeOpenedDate: z.iso.date().nullable().default(null),
 });
 export type CreateAccount = z.infer<typeof CreateAccountSchema>;
 
@@ -263,6 +272,8 @@ export const UpdateAccountSchema = z.object({
   goalId: z.uuid().nullable().optional(),
   linkedAccountId: z.uuid().nullable().optional(),
   openingBalancePaise: z.number().int().optional(),
+  /** PPF/SSY/NPS opening date (YYYY-MM-DD); omitted means unchanged, null clears it. */
+  schemeOpenedDate: z.iso.date().nullable().optional(),
   sortOrder: z.number().int().optional(),
   archived: z.boolean().optional(),
 });

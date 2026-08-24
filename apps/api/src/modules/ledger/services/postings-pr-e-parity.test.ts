@@ -105,6 +105,7 @@ async function createAcct(
     holderId: null,
     currency: "INR",
     openingBalancePaise,
+    schemeOpenedDate: null,
   });
 }
 

@@ -85,6 +85,55 @@
       "when": 1787411982876,
       "tag": "0011_puzzling_sister_grimm",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1787465355301,
+      "tag": "0012_simple_nightshade",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1787469474745,
+      "tag": "0013_same_angel",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1787481026653,
+      "tag": "0014_smiling_ezekiel_stane",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1787487020382,
+      "tag": "0015_unknown_christian_walker",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1787490688045,
+      "tag": "0016_mighty_blonde_phantom",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1787494218896,
+      "tag": "0017_common_terror",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1787499740071,
+      "tag": "0018_breezy_doctor_octopus",
+      "breakpoints": true
     }
   ]
 }

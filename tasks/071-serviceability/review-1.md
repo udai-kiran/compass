@@ -1,0 +1,16 @@
+**Findings**
+
+1. `price_sources` ALTER TABLE safety: mostly safe if columns are nullable.
+   The existing table has `user_id`, `name`, `kind`, `is_active`, timestamps as `NOT NULL`, plus `uniqueIndex("price_sources_user_name_idx").on(userId, name)` in [schema.ts](/work/personal/compass/apps/api/src/modules/shopping/schema.ts:108). Adding `delivery_fee_paise`, `min_cart_paise`, and `delivery_eta_band` is safe for existing rows only if they are nullable or have defaults. AC1 says `null = unknown`, so the plan should explicitly require nullable additions. Do not add these as `NOT NULL` without a backfill/default. Optional non-negative CHECKs are safe if written as `col IS NULL OR col >= 0`.
+
+2. `deliveryEtaBand` enum values: the plan needs to specify the vocabulary.
+   Sensible values are: `instant`, `same_day`, `next_day`, `scheduled`, `unknown`. I would consider whether `unknown` should be an enum value at all, because AC1 says `null = unknown`. If null already means unknown, omit `unknown` from the enum to avoid two unknown states. If the API wants non-null display values, then use `unknown` consistently and update AC1.
+
+3. `serviceability_checks.user_id`: correct only if the plan keeps `USER_TABLES`.
+   The plan says add `serviceability_checks` to `USER_TABLES` in [TASK.md](/work/personal/compass/tasks/071-serviceability/TASK.md:20), which requires a direct `user_id` column because `USER_TABLES` exports by that column in [backup.ts](/work/personal/compass/apps/api/src/modules/system/services/backup.ts:51). Since `price_sources` already has `user_id`, this is redundant but consistent with most shopping tables. The important caveat: if `serviceability_checks` stores both `user_id` and `source_id`, services must guard that `source_id` belongs to the same user, otherwise a row can claim user A while referencing user B’s source. Alternative: omit `user_id` and put the table in `LINKED_TABLES` scoped through `price_sources`, but that contradicts the current plan.
+
+4. Route snapshots are not mentioned.
+   The plan adds new routes in [TASK.md](/work/personal/compass/tasks/071-serviceability/TASK.md:18) and registers them in plugin.ts, but verification only lists typecheck/lint/app tests. This should explicitly include route snapshot handling: run `apps/api/src/app.route-snapshot.test.ts`, update the canonical route-surface snapshot for the intentional new endpoints, and update the raw route-table snapshot if registration output changes.
+
+5. `schema.smoke.test.ts` definitely needs updates.
+   It currently hard-codes “all 8 shopping tables” and imports exactly the current 8 tables / 5 enums in [schema.smoke.test.ts](/work/personal/compass/apps/api/src/modules/shopping/schema.smoke.test.ts:5). Adding `serviceabilityChecks` and `deliveryEtaBand` means updating table-name assertions, table lists, user_id expectations, enum assertions, and possibly CHECK expectations for `price_sources` if non-negative checks are added. Also update `db/schema.decomposition.test.ts`, whose shopping resident set currently lists only the existing shopping tables/enums in [schema.decomposition.test.ts](/work/personal/compass/apps/api/src/db/schema.decomposition.test.ts:104).

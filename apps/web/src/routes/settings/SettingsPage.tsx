@@ -135,6 +135,7 @@ function AccountsPanel() {
         // current amount owed and therefore becomes the opening balance.
         openingBalancePaise:
           isOverdraft ? -availedPaise : Math.round(parseFloat(opening || "0") * 100),
+        schemeOpenedDate: null,
       });
       if (isOverdraft) {
         await apiPut(

@@ -285,6 +285,7 @@ test("materializeDue: an EMI's destination-account balance walks from -principal
     holderId: null,
     currency: "INR",
     openingBalancePaise: -100000,
+    schemeOpenedDate: null,
   });
   const destId = destAcct.id;
   const emi = await createEmi(db, userId, {

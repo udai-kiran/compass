@@ -773,3 +773,81 @@ Co-Authored-By: Claude <noreply@anthropic.com>
 - exact commands and literal output
 - commit hash
 - staged vs leftover files
+
+---
+
+## Iteration 15 — Post-commit leftover check (read-only)
+
+## Worker
+`codex-worker`
+
+## Routing Reason
+Low-thinking: confirm leftover working tree after commit a4b0cf6. Read-only.
+
+## Approved Plan
+Write `tasks/082-receipt-loop/commit-verify-1.md` with:
+1. `git rev-parse --abbrev-ref HEAD`
+2. `git log -1 --oneline`
+3. `git status --short`
+4. Confirm AGENTS.md and tasks/075 are unstaged leftover, not in the commit
+5. Confirm 082/083 implementation files are in the commit (`git show --stat --oneline HEAD`)
+
+Do not stage or commit.
+
+## Must Not Change
+Everything except the report.
+
+---
+
+## Iteration 16 — Push / PR / merge / release investigation (read-only)
+
+## Worker
+`codex-worker`
+
+## Routing Reason
+Low-thinking: collect branch, remote, tag, and release-process evidence. Read-only. No push, PR, merge, or tag yet.
+
+## Approved Plan
+Write `tasks/082-receipt-loop/release-status-1.md` with exact command output + exit codes:
+
+1. `git rev-parse --abbrev-ref HEAD`
+2. `git log -1 --oneline`
+3. `git status --short`
+4. `git rev-parse --abbrev-ref --symbolic-full-name @{u}` (or report no upstream)
+5. `git log --oneline origin/main..HEAD` if origin/main exists
+6. `git tag --sort=-v:refname | head -20`
+7. Latest GitHub release if `gh` works: `gh release list --limit 5`
+8. Read `.github/workflows/publish.yml` and any release docs in README/INFRA/CLAUDE for the exact tag → publish flow
+9. `gh auth status` (do not leak tokens)
+
+Do not push, create PR, merge, tag, or edit anything except the report.
+
+## Must Not Change
+Everything except the report.
+
+---
+
+## Iteration 17 — Push, PR, merge, tag v3.7.0
+
+## Worker
+`codex-worker`
+
+## Routing Reason
+Low-thinking: explicit git/gh sequence. No new implementation. Do not stage dirty leftovers.
+
+## Approved Plan
+Already done: branch `feat/082-083-receipt-cart-review`, commit `a4b0cf6`.
+Do NOT make a new commit. Do NOT stage leftovers.
+
+1. Confirm HEAD is the feature branch @ a4b0cf6.
+2. `git push -u origin feat/082-083-receipt-cart-review` (no force).
+3. Create PR to main.
+4. Squash-merge (`gh pr merge --squash --delete-branch`). If checks block, `--auto`; no admin bypass.
+5. Fetch; tag `v3.7.0` on `origin/main`; push tag; `gh release create v3.7.0`.
+6. Write `tasks/082-receipt-loop/release-1.md`.
+
+## Must Not Change
+- Implementation files
+- Do not commit leftovers
+- Do not force-push
+- Do not deploy the infra host

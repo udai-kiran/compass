@@ -40,13 +40,17 @@ export const ALL_TABLES = [
   "ai_settings",
   "card_details", "reward_point_lots", "card_issuer_settings", "reward_rules", "card_statements", "bank_details", "retirement_details", "account_nps_details", "overdraft_details",
   "insurance_policies", "policy_covered_persons", "insurance_health_cards",
-  "reward_entries", "emi_details", "holdings", "nps_details", "gold_details",
+  "reward_entries", "emi_details", "holdings", "nps_details", "gold_details", "deposit_details",
   "holding_valuations", "sips", "holding_events", "net_worth_snapshots",
   "mailbox_accounts", "mailbox_credentials", "email_ingestions", "card_offers", "extracted_transactions",
   "statement_reconciliations", "ai_events",
   "catalog_items", "price_sources", "serviceability_checks", "shopping_lists", "shopping_list_items",
   "price_observations", "pantry_items", "cart_drafts", "cart_draft_items", "habit_profiles",
   "receipts", "receipt_lines",
+  "tax_regime_preferences",
+  "payslips", "payslip_components",
+  "income_events",
+  "epf_contributions",
 ] as const;
 
 /** Tables that carry a user_id directly — scoped by that column in the export. */
@@ -64,7 +68,7 @@ export const USER_TABLES: Record<string, string> = {
   bank_details: "user_id", retirement_details: "user_id", account_nps_details: "user_id",
   overdraft_details: "user_id", insurance_policies: "user_id", insurance_health_cards: "user_id",
   reward_entries: "user_id", emi_details: "user_id",
-  holdings: "user_id", nps_details: "user_id", gold_details: "user_id",
+  holdings: "user_id", nps_details: "user_id", gold_details: "user_id", deposit_details: "user_id",
   net_worth_snapshots: "user_id",
   mailbox_accounts: "user_id", mailbox_credentials: "user_id",
   email_ingestions: "user_id", card_offers: "user_id", extracted_transactions: "user_id",
@@ -74,6 +78,10 @@ export const USER_TABLES: Record<string, string> = {
   price_observations: "user_id", pantry_items: "user_id", cart_drafts: "user_id",
   habit_profiles: "user_id",
   receipts: "user_id",
+  tax_regime_preferences: "user_id",
+  payslips: "user_id",
+  income_events: "user_id",
+  epf_contributions: "user_id",
 };
 
 /**
@@ -95,6 +103,7 @@ export const LINKED_TABLES: Record<string, { fk: string; parent: string; parentU
   shopping_list_items: { fk: "list_id", parent: "shopping_lists" },
   cart_draft_items: { fk: "cart_draft_id", parent: "cart_drafts" },
   receipt_lines: { fk: "receipt_id", parent: "receipts" },
+  payslip_components: { fk: "payslip_id", parent: "payslips" },
 };
 
 /**
@@ -225,6 +234,7 @@ export const FILE_COLUMNS: ReadonlyArray<{ table: string; column: string }> = [
   { table: "insurance_health_cards", column: "stored_path" },
   { table: "card_statements", column: "stored_path" },
   { table: "receipts", column: "stored_path" },
+  { table: "payslips", column: "document_key" },
 ];
 
 /** File references found in an exported per-user dump, in FILE_COLUMNS order. */

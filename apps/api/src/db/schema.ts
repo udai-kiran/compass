@@ -61,10 +61,14 @@ export {
   holdingValuations,
   holdingEvents,
   netWorthSnapshots,
+  depositDetails,
   npsTier,
   goldForm,
   holdingEventType,
   holdingEventSource,
+  depositKind,
+  compoundingFrequency,
+  interestDisposition,
 } from "../modules/investments/schema.ts";
 
 export {
@@ -136,3 +140,16 @@ export {
   receiptStatus,
   receiptLineMatchStatus,
 } from "../modules/shopping/schema.ts";
+
+export {
+  taxRegimePreferences,
+  taxRegimeEnum,
+  regimeSourceEnum,
+  payslips,
+  payslipComponents,
+  incomeEvents,
+  incomeEventStatus,
+  incomeKind,
+  incomeSourceKind,
+  epfContributions,
+} from "../modules/tax/schema.ts";

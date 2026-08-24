@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import {
   bigint,
+  date,
   index,
   integer,
   pgEnum,
@@ -113,6 +114,16 @@ export const accounts = pgTable(
     linkedAccountId: uuid("linked_account_id")
       .references((): AnyPgColumn => accounts.id, { onDelete: "set null" }),
     sortOrder: integer("sort_order").notNull().default(0),
+    /**
+     * The date a small-savings scheme account (PPF / SSY / NPS) was opened.
+     * Drives the statutory lifecycle checks in the tax module's scheme-compliance
+     * service (task 13.6): PPF maturity is 15 years from the END of the opening
+     * FY, and the SSY deposit window is 15 years from this date. Null for every
+     * non-scheme account, and null on a scheme account means the lifecycle cannot
+     * be judged — the compliance result is then 'data_missing' rather than a
+     * guess.
+     */
+    schemeOpenedDate: date("scheme_opened_date"),
     archivedAt: timestamp("archived_at", { withTimezone: true }),
     /**
      * Non-null only for the small set of per-user system accounts the
