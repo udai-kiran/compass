@@ -1,0 +1,2 @@
+ALTER TABLE "deduction_entries" DROP CONSTRAINT "deduction_entries_ccd2_fields";--> statement-breakpoint
+ALTER TABLE "deduction_entries" ADD CONSTRAINT "deduction_entries_ccd2_fields" CHECK ("deduction_entries"."section" <> '80CCD2' OR ("deduction_entries"."employer_type" IS NOT NULL AND "deduction_entries"."employer_type" IN ('private','government') AND "deduction_entries"."salary_base_paise" IS NOT NULL AND "deduction_entries"."salary_base_paise" > 0));

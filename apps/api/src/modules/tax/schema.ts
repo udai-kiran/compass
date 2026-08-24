@@ -422,7 +422,7 @@ export const deductionEntries = pgTable(
     check("deduction_entries_amount_positive", sql`${t.amountPaise} > 0`),
     check(
       "deduction_entries_ccd2_fields",
-      sql`${t.section} <> '80CCD2' OR (${t.employerType} IN ('private','government') AND ${t.salaryBasePaise} > 0)`,
+      sql`${t.section} <> '80CCD2' OR (${t.employerType} IS NOT NULL AND ${t.employerType} IN ('private','government') AND ${t.salaryBasePaise} IS NOT NULL AND ${t.salaryBasePaise} > 0)`,
     ),
     check(
       "deduction_entries_80d_group",

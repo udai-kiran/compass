@@ -148,6 +148,13 @@
       "when": 1787566719026,
       "tag": "0020_famous_forgotten_one",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1787581969976,
+      "tag": "0021_flippant_zodiak",
+      "breakpoints": true
     }
   ]
 }

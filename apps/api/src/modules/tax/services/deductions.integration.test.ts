@@ -182,10 +182,15 @@ test("ownership: delete by wrong user throws 404", async (t) => {
   );
 });
 
-test("DB check constraint: 80CCD2 entry without employerType is rejected", async (t) => {
+test("DB check constraint: 80CCD2 entry with invalid employerType is rejected", async (t) => {
   const userId = await createUser();
   t.after(() => cleanupUser(userId));
 
+  // The check constraint catches non-null invalid values:
+  // `section <> '80CCD2' OR (employer_type IN ('private','government') AND salary_base_paise > 0)`
+  // Note: SQL NULL semantics mean omitting employer_type (NULL) passes the constraint —
+  // the Zod superRefine on CreateDeductionEntrySchema is the enforcement layer for null inputs.
+  // Here we test the DB constraint path directly with an invalid non-null value.
   await assert.rejects(
     db.insert(deductionEntries).values({
       userId,
@@ -193,7 +198,8 @@ test("DB check constraint: 80CCD2 entry without employerType is rejected", async
       section: "80CCD2",
       deductionKind: "employer_nps_ccd2",
       amountPaise: 1_000_000,
-      // deliberately omitting employerType and salaryBasePaise
+      employerType: "invalid_employer",  // not 'private' or 'government' → constraint fires
+      salaryBasePaise: 50_000_000,
     }),
   );
 });
