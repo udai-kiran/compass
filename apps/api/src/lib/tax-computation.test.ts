@@ -113,37 +113,93 @@ describe("computeTaxBreakdown — old regime FY 2025-26 ordinary, ₹51L income 
 // ─── computeTaxBreakdown — old regime §87A hard cliff ────────────────────────
 //
 // Fix regression guard: the old code applied marginal relief in BOTH regimes.
-// For income = threshold + 1 paise = 50_000_001 (₹5L + 1p, old regime FY 2025-26),
-// the old code granted rebate of 1_249_999, leaving taxAfterRebate = 1 (near-zero).
+// For income = threshold + ₹10 = 50_001_000 (₹5L+₹10, old regime FY 2025-26),
+// the old code granted rebate of 1_249_800, leaving taxAfterRebate = 400 (near-zero).
 // The correct old-regime rule is a hard cliff: income above the threshold loses
 // the ENTIRE rebate, so rebate87A must be 0.
+//
+// Note: the canonical 1-paise case (50_000_001) is now handled separately below
+// because §288A rounds 50_000_001 down to 50_000_000 (exactly at the threshold),
+// granting a full rebate of ₹0 liability — see the §288A cliff-savings test.
 
 describe("computeTaxBreakdown — old regime §87A hard cliff (FY 2025-26 ordinary)", () => {
   const rules = getRegimeRules("2025-26", "old", "ordinary");
-  // rebate87A.thresholdPaise = lakh(5) = 50_000_000
-  // Test at exactly threshold + 1 paise — the canonical cliff case.
-  const TAXABLE = 50_000_001; // ₹5,00,000.01 — one paise above the ₹5L threshold
+  // rebate87A.thresholdPaise = 50_000_000 (₹5L)
+  // Use threshold + ₹10 = 50_001_000, which is already a multiple of 1000 so
+  // §288A leaves it unchanged — the cliff still fires.
+  const TAXABLE = 50_001_000; // ₹5,00,010 — ₹10 above the ₹5L threshold
 
-  it("slabTax at threshold+1 is 1_250_000 (the 20% band contributes floor(1 * 2000/10000) = 0)", () => {
+  it("slabTax at TAXABLE (₹5L+₹10) is 1_250_200 (5% slab: 1_250_000; 20% of ₹10: 200)", () => {
     // 5% of [₹2.5L+1 .. ₹5L] = 5% of 25_000_000 = 1_250_000
-    // 20% of [₹5L+1 .. TAXABLE] = 20% of 1 paise = floor(0.2) = 0
-    assert.strictEqual(computeSlabTax(TAXABLE, rules.slabs), 1_250_000);
+    // 20% of [₹5L+1 .. TAXABLE] = 20% of 1_000 paise = floor(200) = 200
+    assert.strictEqual(computeSlabTax(TAXABLE, rules.slabs), 1_250_200);
   });
 
   it("rebate87APaise === 0 — old regime cliff: no marginal relief above threshold", () => {
     const bd = computeTaxBreakdown(TAXABLE, rules);
-    assert.strictEqual(bd.rebate87APaise, 0, "old regime must lose the entire rebate at threshold+1p");
+    assert.strictEqual(bd.rebate87APaise, 0, "old regime must lose the entire rebate above threshold");
   });
 
-  it("totalLiabilityPaise equals full slabTax + cess (no rebate, no surcharge)", () => {
+  it("totalLiabilityPaise equals slabTax + cess rounded to nearest ₹10 (§288B)", () => {
     const bd = computeTaxBreakdown(TAXABLE, rules);
-    // slabTax = 1_250_000; no rebate; no surcharge (income << ₹50L); cess = 50_000
-    assert.strictEqual(bd.taxOnSlabsPaise, 1_250_000);
+    // §288A: 50_001_000 / 1000 = 50001 (exact) → no change
+    assert.strictEqual(bd.taxableIncomePaise, 50_001_000);
+    assert.strictEqual(bd.taxOnSlabsPaise, 1_250_200);
     assert.strictEqual(bd.rebate87APaise, 0);
-    assert.strictEqual(bd.taxAfterRebatePaise, 1_250_000);
+    assert.strictEqual(bd.taxAfterRebatePaise, 1_250_200);
     assert.strictEqual(bd.surchargePaise, 0);
-    assert.strictEqual(bd.cessPaise, 50_000); // floor(1_250_000 * 400 / 10000)
-    assert.strictEqual(bd.totalLiabilityPaise, 1_300_000);
+    assert.strictEqual(bd.cessPaise, 50_008); // floor(1_250_200 * 400 / 10000)
+    // §288B: raw total = 1_250_200 + 50_008 = 1_300_208; rounded to nearest ₹10 → 1_300_000
+    assert.strictEqual(bd.totalLiabilityPaise, 1_300_000); // §288B rounds 1_300_208 → 1_300_000
+  });
+});
+
+// ─── computeTaxBreakdown — §288A cliff-savings test ──────────────────────────
+//
+// Old regime taxable = 50_000_001 paise (₹5,00,000.01 — one paise above ₹5L).
+// §288A rounds this DOWN to 50_000_000 (exactly at the ₹5L threshold), so the
+// full §87A rebate applies and total liability is ₹0.  Without §288A, a raw
+// paise engine would charge ~₹13,000 (slabTax 1_250_000 + cess 50_000).
+
+describe("computeTaxBreakdown — §288A rounds 50_000_001 to threshold → zero liability (FY 2025-26 old)", () => {
+  const rules = getRegimeRules("2025-26", "old", "ordinary");
+  const TAXABLE = 50_000_001; // ₹5,00,000.01 — 1 paise over the ₹5L §87A threshold
+
+  it("§288A rounds 50_000_001 down to 50_000_000 (nearest ₹10)", () => {
+    const bd = computeTaxBreakdown(TAXABLE, rules);
+    // round(50_000_001 / 1000) = round(50000.001) = 50000 → 50_000_000
+    assert.strictEqual(bd.taxableIncomePaise, 50_000_000);
+  });
+
+  it("at the rounded threshold income ≤ threshold → full §87A rebate → totalLiabilityPaise === 0", () => {
+    const bd = computeTaxBreakdown(TAXABLE, rules);
+    // slabTax(50_000_000) = 1_250_000; threshold = 50_000_000 → at threshold → rebate granted
+    assert.strictEqual(bd.taxOnSlabsPaise, 1_250_000);
+    assert.strictEqual(bd.rebate87APaise, 1_250_000);
+    assert.strictEqual(bd.taxAfterRebatePaise, 0);
+    assert.strictEqual(bd.cessPaise, 0);
+    assert.strictEqual(bd.totalLiabilityPaise, 0);
+  });
+});
+
+// ─── computeTaxBreakdown — §288B statutory rounding of total liability ────────
+//
+// Pick a taxable income whose raw liability (slab tax + cess) is NOT a multiple
+// of ₹10 paise-wise, and verify §288B rounds it to the nearest ₹10.
+
+describe("computeTaxBreakdown — §288B rounds total liability to nearest ₹10 (FY 2025-26 old)", () => {
+  const rules = getRegimeRules("2025-26", "old", "ordinary");
+  // TAXABLE = ₹10,00,010 = 100_001_000 paise (already a multiple of 1000, §288A no-op)
+  // slabTax: 1_250_000 (5%) + 10_000_000 (20%) + floor(1000*3000/10000)=300 = 11_250_300
+  // cess: floor(11_250_300 * 400 / 10000) = 450_012
+  // raw total: 11_250_300 + 450_012 = 11_700_312 (not a multiple of 1000)
+  // §288B: round(11_700_312 / 1000) = round(11700.312) = 11700 → 11_700_000
+  const TAXABLE = 100_001_000; // ₹10,00,010
+
+  it("raw pre-§288B total (11_700_312) is not a ₹10 multiple; returned value is rounded", () => {
+    const bd = computeTaxBreakdown(TAXABLE, rules);
+    assert.strictEqual(bd.totalLiabilityPaise % 1000, 0, "§288B: totalLiabilityPaise must be a multiple of 1000 paise (₹10)");
+    assert.strictEqual(bd.totalLiabilityPaise, 11_700_000); // §288B rounds 11_700_312 → 11_700_000
   });
 });
 

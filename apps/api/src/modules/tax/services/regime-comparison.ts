@@ -73,6 +73,7 @@ export async function compareRegimes(
 
   let grossIncomePaise = 0;
   let salaryGrossPaise = 0;
+  let rentGrossPaise = 0;
 
   for (const row of incomeRows) {
     const gross = Number(row.totalGross ?? 0);
@@ -80,10 +81,15 @@ export async function compareRegimes(
       throw new HttpError(500, "Income aggregate exceeded a safe integer — refusing to lose paise");
     }
     grossIncomePaise += gross;
-    if (row.incomeKind === "salary") {
-      salaryGrossPaise = gross;
-    }
+    if (row.incomeKind === "salary") salaryGrossPaise = gross;
+    if (row.incomeKind === "rent") rentGrossPaise = gross;
   }
+  // §24(a): income from house property gets a flat 30% standard deduction before
+  // entering taxable income — applies under BOTH old and new regime (it is a
+  // computation-of-income rule, not a regime-disallowed deduction like 80C/HRA).
+  // grossIncomePaise remains the TRUE sum of all income kinds; the §24(a) amount
+  // is subtracted explicitly when computing taxable income for each regime below.
+  const section24aDeductionPaise = Math.floor(rentGrossPaise * 30 / 100);
 
   // ── Deduction basket ─────────────────────────────────────────────────────────
   const basket = await getDeductionBasket(db, userId, fy);
@@ -124,7 +130,7 @@ export async function compareRegimes(
     ccd2EligibleOld +
     eightyDEligible +
     homeLoan24b;
-  const oldTaxableIncome = Math.max(0, grossIncomePaise - oldTotalDeductions);
+  const oldTaxableIncome = Math.max(0, grossIncomePaise - oldTotalDeductions - section24aDeductionPaise);
   const oldBreakdown = computeTaxBreakdown(oldTaxableIncome, oldRules);
 
   const oldLiability: RegimeComparison["old"] = {
@@ -137,6 +143,7 @@ export async function compareRegimes(
       eightyCcd2EligiblePaise: ccd2EligibleOld,
       eightyDEligiblePaise: eightyDEligible,
       homeLoanInterest24bPaise: homeLoan24b,
+      section24aDeductionPaise,
       totalDeductionsPaise: oldTotalDeductions,
     },
     ...oldBreakdown,
@@ -146,7 +153,7 @@ export async function compareRegimes(
   // ── New regime ───────────────────────────────────────────────────────────────
   const newStdDeduction = Math.min(newRules.standardDeductionPaise, salaryGrossPaise);
   const newTotalDeductions = newStdDeduction + ccd2EligibleNew;
-  const newTaxableIncome = Math.max(0, grossIncomePaise - newTotalDeductions);
+  const newTaxableIncome = Math.max(0, grossIncomePaise - newTotalDeductions - section24aDeductionPaise);
   const newBreakdown = computeTaxBreakdown(newTaxableIncome, newRules);
 
   const newLiability: RegimeComparison["new"] = {
@@ -159,6 +166,7 @@ export async function compareRegimes(
       eightyCcd2EligiblePaise: ccd2EligibleNew,
       eightyDEligiblePaise: 0,
       homeLoanInterest24bPaise: 0,
+      section24aDeductionPaise,
       totalDeductionsPaise: newTotalDeductions,
     },
     ...newBreakdown,
@@ -167,19 +175,25 @@ export async function compareRegimes(
 
   // ── Crossover ────────────────────────────────────────────────────────────────
   // Binary search for total old-regime deduction D* such that
-  // computeTaxBreakdown(max(0, gross - D*), oldRules).totalLiabilityPaise
+  // computeTaxBreakdown(max(0, netBase - D*), oldRules).totalLiabilityPaise
   //   = newLiability.totalLiabilityPaise
+  //
+  // netBase = grossIncomePaise − section24aDeductionPaise (the taxable-income base
+  // after the §24(a) rent reduction, which applies identically to both regimes and
+  // is therefore not a "deduction" in the crossover sense). D* represents only the
+  // regime-specific deductions (standard deduction, 80C/D/HRA, home-loan interest).
   //
   // Monotone: old_tax decreases as D increases.
   // If old_tax(D=oldStdDeduction) ≤ new_tax → crossover already crossed; crossover = oldStdDeduction.
   // If old_tax(D=gross) ≥ new_tax → old regime never wins; return null.
   const newLiabilityTotal = newLiability.totalLiabilityPaise;
+  const netBaseForTax = grossIncomePaise - section24aDeductionPaise;
 
   let crossoverDeductionPaise: number | null = null;
 
   if (grossIncomePaise > 0) {
     const taxAtMinD = computeTaxBreakdown(
-      Math.max(0, grossIncomePaise - oldStdDeduction),
+      Math.max(0, netBaseForTax - oldStdDeduction),
       oldRules,
     ).totalLiabilityPaise;
 
@@ -192,13 +206,13 @@ export async function compareRegimes(
       // Old regime never beats new (shouldn't happen since tax(0) = 0 ≤ any new_tax)
       crossoverDeductionPaise = null;
     } else {
-      // Binary search: lo = oldStdDeduction, hi = grossIncomePaise
+      // Binary search: lo = oldStdDeduction, hi = netBaseForTax (not gross)
       let lo = oldStdDeduction;
-      let hi = grossIncomePaise;
+      let hi = netBaseForTax;
       for (let iter = 0; iter < 64; iter++) {
         const mid = Math.floor((lo + hi) / 2);
         const midTax = computeTaxBreakdown(
-          Math.max(0, grossIncomePaise - mid),
+          Math.max(0, netBaseForTax - mid),
           oldRules,
         ).totalLiabilityPaise;
         if (midTax <= newLiabilityTotal) {
@@ -233,6 +247,7 @@ export async function compareRegimes(
     "Income from income_events (accepted rows only); estimates and pending entries excluded.",
     "Labelled an estimate: pending income events, uncollected deductions, and manual adjustments may affect the final liability.",
     `FY: ${fy}. Slabs, rebates and cess as per tax-rules.ts data.`,
+    "Rent income gets the flat 30% Section 24(a) deduction before entering taxable income (both regimes); municipal taxes paid and any other house-property adjustments are not modelled.",
   ];
   if (homeLoan24b < (opts.homeLoanInterestPaise ?? 0)) {
     assumptions.push(

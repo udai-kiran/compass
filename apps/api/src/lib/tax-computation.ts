@@ -15,12 +15,12 @@
  * in scope (max rebate threshold ₹12L < surcharge threshold ₹50L), so step
  * ordering between 2 and 4 is immaterial in practice.
  *
- * Not modelled: §288A (round total/taxable income to the nearest ₹10 before
- * computing tax) and §288B (round the final amount payable/refundable to the
- * nearest ₹10) are statutory rounding rules this engine does not apply —
- * every amount here is exact to the paisa. The resulting drift from a filed
- * return is bounded to a few rupees, immaterial for an estimate that "informs
- * a payment decision; it is not a filed return" (see callers' assumptions).
+ * §288A (§288A of the Income Tax Act, 1961): total income is rounded to the
+ * nearest ₹10 (1000 paise) before computing tax. Fractions of ₹10 under ₹5
+ * round down; ₹5 and above round up — matching Math.round on paise/1000.
+ * Applied inside computeTaxBreakdown before slab / rebate / surcharge / cess.
+ * §288B: the final amount payable is rounded to the nearest ₹10 (1000 paise),
+ * applied at the very end of computeTaxBreakdown after summing surcharge + cess.
  */
 
 import type { Regime, RegimeRules, TaxSlabEntry } from "./tax-rules.ts";
@@ -173,29 +173,36 @@ export function computeSurcharge(
 /**
  * Full tax breakdown for a given taxable income and regime rules.
  * taxableIncomePaise must be >= 0; negative values are clamped to 0.
+ *
+ * §288A rounding is applied to total income before any computation.
+ * §288B rounding is applied to the final total liability before returning.
  */
 export function computeTaxBreakdown(
   taxableIncomePaise: number,
   rules: RegimeRules,
 ): TaxBreakdown {
   const taxable = Math.max(0, taxableIncomePaise);
+  // §288A: round total income to the nearest ₹10 (1000 paise) before computing tax
+  const taxableRounded = Math.round(taxable / 1000) * 1000;
 
-  const taxOnSlabs = computeSlabTax(taxable, rules.slabs);
-  const rebate87A = compute87ARebate(taxOnSlabs, taxable, rules.rebate87A, rules.slabs, rules.regime);
+  const taxOnSlabs = computeSlabTax(taxableRounded, rules.slabs);
+  const rebate87A = compute87ARebate(taxOnSlabs, taxableRounded, rules.rebate87A, rules.slabs, rules.regime);
   const taxAfterRebate = Math.max(0, taxOnSlabs - rebate87A);
 
   const { surchargePaise, marginalReliefPaise } = computeSurcharge(
     taxAfterRebate,
-    taxable,
+    taxableRounded,
     rules,
   );
 
   const taxAfterSurcharge = taxAfterRebate + surchargePaise;
   const cess = Math.floor((taxAfterSurcharge * rules.cessBps) / 10000);
   const totalLiability = taxAfterSurcharge + cess;
+  // §288B: round the final amount payable to the nearest ₹10 (1000 paise)
+  const totalLiabilityRounded = Math.round(totalLiability / 1000) * 1000;
 
   return {
-    taxableIncomePaise: taxable,
+    taxableIncomePaise: taxableRounded,
     taxOnSlabsPaise: taxOnSlabs,
     rebate87APaise: rebate87A,
     taxAfterRebatePaise: taxAfterRebate,
@@ -203,6 +210,6 @@ export function computeTaxBreakdown(
     marginalReliefPaise,
     taxAfterSurchargePaise: taxAfterSurcharge,
     cessPaise: cess,
-    totalLiabilityPaise: totalLiability,
+    totalLiabilityPaise: totalLiabilityRounded,
   };
 }

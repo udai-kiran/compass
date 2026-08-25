@@ -88,6 +88,7 @@ const taxResidents = new Set([
   "epfContributions",
   "deductionEntries", "deductionSection", "deductionKind", "eightyDGroup",
   "capitalLossCarryforward",
+  "capitalLossSetoffApplications",
 ]);
 
 const protectionResidents = new Set([
@@ -126,8 +127,8 @@ const shoppingResidents = new Set([
 
 describe("db/schema.ts decomposition", () => {
 
-  // T3c: barrel exports exactly 82 tables + 67 enums + users, no duplicates
-  it("exports exactly 82 tables + 67 enums + users with no duplicates", () => {
+  // T3c: barrel exports exactly 83 tables + 67 enums + users, no duplicates
+  it("exports exactly 83 tables + 67 enums + users with no duplicates", () => {
     const tables: string[] = [];
     const enums: string[] = [];
     // Postgres-level object names — JS export keys are unique by construction,
@@ -159,7 +160,7 @@ describe("db/schema.ts decomposition", () => {
       `duplicate enum DB names: ${enumDbNames.filter((n, i) => enumDbNames.indexOf(n) !== i)}`,
     );
 
-    assert.equal(tables.length, 82, `expected 82 tables, got ${tables.length}: ${tables.join(", ")}`);
+    assert.equal(tables.length, 83, `expected 83 tables, got ${tables.length}: ${tables.join(", ")}`);
     assert.equal(enums.length, 67, `expected 67 enums, got ${enums.length}: ${enums.join(", ")}`);
 
     // users is also in the barrel

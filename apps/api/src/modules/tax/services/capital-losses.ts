@@ -11,9 +11,9 @@
  * set-off purposes — the carry-forward entries hold the loss amounts explicitly.
  */
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import type { Db, DbOrTx } from "../../../db/index.ts";
-import { capitalLossCarryforward } from "../schema.ts";
+import { capitalLossCarryforward, capitalLossSetoffApplications } from "../schema.ts";
 import { getCapitalGains } from "../../investments/services/capital-gains.ts";
 import { parseFy, fyOf } from "../../../lib/financial-year.ts";
 import { HttpError } from "../../../lib/errors.ts";
@@ -23,6 +23,7 @@ import type {
   UpdateCapitalLossEntry,
   LossSetoffResult,
   CapitalPosition,
+  ApplySetoffResult,
 } from "@compass/shared";
 
 // ─── Pure helpers ─────────────────────────────────────────────────────────────
@@ -345,4 +346,129 @@ export async function getCapitalPosition(
     isEstimate: true,
     generatedAt: new Date().toISOString(),
   };
+}
+
+// ─── Apply set-off (persist drawn-down remainingPaise) ────────────────────────
+
+/**
+ * Persist the capital-loss set-off for a given FY.
+ *
+ * For each bring-forward loss entry that `getCapitalPosition` would absorb
+ * against the FY's gains, decrement `remaining_paise` on that row by the
+ * absorbed amount. Records the application in `capital_loss_setoff_applications`
+ * as an idempotency marker — a second call for the same (userId, fy) returns
+ * HTTP 409 without touching any carry-forward rows again.
+ *
+ * All reads and writes run inside a single transaction so the position read
+ * and the row decrements are atomic.
+ *
+ * Returns a summary of what was absorbed per entry. If no bring-forward entries
+ * were eligible (zero absorption), the application is still recorded and returns
+ * `{ totalAbsorbedPaise: 0, entries: [] }`.
+ */
+export async function applySetoffForFy(
+  db: Db,
+  userId: string,
+  fy: string,
+): Promise<ApplySetoffResult> {
+  try { parseFy(fy); } catch (e) {
+    throw new HttpError(400, e instanceof Error ? e.message : `Invalid FY: "${fy}"`);
+  }
+
+  return db.transaction(async (tx) => {
+    // ── 1. Claim the idempotency lock ──────────────────────────────────────
+    // Insert a placeholder row. If the unique index fires (previous application),
+    // onConflictDoNothing silently swallows it and returning() is empty.
+    const inserted = await tx
+      .insert(capitalLossSetoffApplications)
+      .values({ userId, fy, totalAbsorbedPaise: 0 })
+      .onConflictDoNothing()
+      .returning({ id: capitalLossSetoffApplications.id });
+
+    if (inserted.length === 0) {
+      throw new HttpError(
+        409,
+        `Capital-loss set-off for FY "${fy}" has already been applied`,
+      );
+    }
+
+    // ── 1.5. Acquire row locks on all carry-forward entries for this user ──
+    // SELECT … FOR UPDATE ensures any concurrent applySetoffForFy or
+    // updateCapitalLossEntry call on the same user's rows blocks until this
+    // transaction commits, eliminating the torn-read window under READ COMMITTED.
+    // The lock is acquired BEFORE reading the capital position so that the
+    // position read and subsequent UPDATE are on a consistent locked snapshot.
+    await tx
+      .select({ id: capitalLossCarryforward.id })
+      .from(capitalLossCarryforward)
+      .where(eq(capitalLossCarryforward.userId, userId))
+      .for("update");
+
+    // ── 2. Compute capital position inside the transaction ─────────────────
+    // Casting tx to Db is safe: Drizzle exposes the same query API on both.
+    // Running the position read inside the transaction gives a snapshot
+    // consistent with the rows we are about to update.
+    const position = await getCapitalPosition(tx as unknown as Db, userId, fy);
+    const applied = position.broughtForwardLossesApplied;
+
+    // ── 3. Decrement remainingPaise on each absorbed carry-forward entry ───
+    const resultEntries: ApplySetoffResult["entries"] = [];
+    let totalAbsorbed = 0;
+
+    for (const entry of applied) {
+      if (entry.absorbedPaise <= 0) continue;
+
+      // UPDATE with guards:
+      //   1. remainingPaise >= absorbedPaise — no row can be over-decremented.
+      //   2. returnFiled = true — a row whose return was un-filed between the read
+      //      and the write cannot be silently decremented.
+      const updated = await tx
+        .update(capitalLossCarryforward)
+        .set({
+          remainingPaise: sql`${capitalLossCarryforward.remainingPaise} - ${entry.absorbedPaise}`,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(capitalLossCarryforward.id, entry.entryId),
+            eq(capitalLossCarryforward.userId, userId),
+            sql`${capitalLossCarryforward.remainingPaise} >= ${entry.absorbedPaise}`,
+            eq(capitalLossCarryforward.returnFiled, true),
+          ),
+        )
+        .returning({ remainingPaise: capitalLossCarryforward.remainingPaise });
+
+      if (updated.length === 0) {
+        // The row changed since we read it — another concurrent transaction
+        // must have modified it. The whole outer transaction will be rolled
+        // back, so the idempotency insert is also undone.
+        throw new HttpError(
+          409,
+          `Concurrent modification on carry-forward entry "${entry.entryId}" — retry the operation`,
+        );
+      }
+
+      totalAbsorbed += entry.absorbedPaise;
+      resultEntries.push({
+        entryId: entry.entryId,
+        originFy: entry.originFy,
+        lossKind: entry.lossKind,
+        absorbedPaise: entry.absorbedPaise,
+        remainingPaiseAfter: updated[0]!.remainingPaise,
+      });
+    }
+
+    // ── 4. Update the application row with the real total ──────────────────
+    await tx
+      .update(capitalLossSetoffApplications)
+      .set({ totalAbsorbedPaise: totalAbsorbed })
+      .where(
+        and(
+          eq(capitalLossSetoffApplications.userId, userId),
+          eq(capitalLossSetoffApplications.fy, fy),
+        ),
+      );
+
+    return { fy, totalAbsorbedPaise: totalAbsorbed, entries: resultEntries };
+  });
 }

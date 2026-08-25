@@ -130,6 +130,7 @@
 │       └── /:id (PUT, DELETE)
 ├── /api/tax/capital-position (GET, HEAD)
 ├── /api/tax/capital-losses (GET, HEAD, POST)
+│   ├── /apply-setoff (POST)
 │   └── /:id (PATCH, DELETE)
 ├── /api/tax/advance-tax (GET, HEAD)
 ├── /api/merchant-rules (GET, HEAD)

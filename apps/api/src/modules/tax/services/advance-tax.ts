@@ -302,8 +302,12 @@ async function ordinaryLiabilityFor(
   }
   deductions += ccd2Eligible;
 
+  // §24(a): income from house property gets a flat 30% standard deduction before
+  // entering taxable income — applies under BOTH old and new regime (same as in
+  // regime-comparison.ts; this keeps advance-tax consistent with the comparison).
+  const section24aDeductionPaise = Math.floor((grossByKind["rent"] ?? 0) * 30 / 100);
   const totalGrossPaise = Object.values(grossByKind).reduce((s, v) => s + v, 0);
-  const taxableIncome = Math.max(0, totalGrossPaise - deductions);
+  const taxableIncome = Math.max(0, totalGrossPaise - deductions - section24aDeductionPaise);
   return computeTaxBreakdown(taxableIncome, rules).totalLiabilityPaise;
 }
 
@@ -375,7 +379,11 @@ export async function getAdvanceTaxPosition(
     resolvedFy,
     fullYear.grossByKind,
   );
-  const assessedTax = ordinaryLiability + cgTaxFullYear;
+  // §288B: re-round the combined total to the nearest ₹10 (1000 paise).
+  // ordinaryLiability is already §288B-rounded by computeTaxBreakdown, but
+  // cgTaxFullYear is not independently rounded; their sum must be re-rounded
+  // so the final assessedTaxPaise is a clean §288B figure.
+  const assessedTax = Math.round((ordinaryLiability + cgTaxFullYear) / 1000) * 1000;
   if (!Number.isSafeInteger(assessedTax)) {
     throw new HttpError(500, "Assessed-tax aggregate exceeded a safe integer — refusing to lose paise");
   }
@@ -438,6 +446,7 @@ export async function getAdvanceTaxPosition(
     "Flat capital-gains rates approximate Sec 111A STCG (20%) and Sec 112A LTCG (12.5% over the ₹1.25L annual exemption); gains of non-equity tax classes and pre-23-Jul-2024 disposals inside a split FY use the same flat rates rather than slab/old rates.",
     "Surcharge and cess are not layered onto the flat CG component; the ordinary-income component already includes cess via the standard engine.",
     "HRA exemption and home-loan interest 24(b) are not inputs here and count as zero.",
+    "Rent income is reduced by 30% under §24(a) before entering the ordinary taxable income base (applies under both old and new regime); municipal taxes paid and any other house-property adjustments are not modelled.",
     "Advance-tax PAYMENTS are not tracked yet — every instalment shows its full requirement as shortfall (worst case), and Sec 234B assumes NO advance tax was paid: the entire post-TDS balance accrues 1%/month once the assessment year begins (TDS is already netted out of the statutory assessed-tax base). Statutorily the CG timing relief also assumes the attributable tax IS paid through remaining instalments or by 31 Mar; unpaid amounts can raise actual 234C beyond this estimate.",
     "Sec 208: advance tax (and therefore 234B/234C) applies only when net payable after TDS is ≥ ₹10,000.",
     "Sec 234C interest is shown only for instalments whose due date has fully passed; future rows project the requirement but accrue no interest.",

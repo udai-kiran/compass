@@ -431,6 +431,7 @@ POST /api/sips/:id/installments
 POST /api/sips/:id/installments/link
 POST /api/subscriptions/dismiss
 POST /api/tax/capital-losses
+POST /api/tax/capital-losses/apply-setoff
 POST /api/tax/deductions/entries
 POST /api/tax/epf-contributions
 POST /api/tax/epf-contributions/:id/confirm-actual

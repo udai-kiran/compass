@@ -18,6 +18,8 @@ import {
   CapitalLossEntrySchema,
   CreateCapitalLossEntrySchema,
   UpdateCapitalLossEntrySchema,
+  ApplySetoffRequestSchema,
+  ApplySetoffResultSchema,
 } from "@compass/shared";
 import {
   getCapitalPosition,
@@ -25,6 +27,7 @@ import {
   createCapitalLossEntry,
   updateCapitalLossEntry,
   deleteCapitalLossEntry,
+  applySetoffForFy,
 } from "../services/capital-losses.ts";
 
 export async function capitalLossRoutes(app: FastifyInstance): Promise<void> {
@@ -102,6 +105,28 @@ export async function capitalLossRoutes(app: FastifyInstance): Promise<void> {
     async (req, reply) => {
       await deleteCapitalLossEntry(app.db, req.session!.userId, req.params.id);
       return reply.code(204).send();
+    },
+  );
+
+  // POST /capital-losses/apply-setoff
+  // Persists the capital-loss set-off for the given FY: decrements remainingPaise
+  // on each absorbing carry-forward entry and records an idempotency marker.
+  // A second call for the same (userId, fy) returns 409.
+  //
+  // Demo-mode safety: POST is in MUTATING_METHODS in apps/api/src/plugins/auth.ts,
+  // so demo sessions are rejected by the auth plugin's preHandler before the
+  // handler is invoked — no route-level code needed.
+  a.post(
+    "/capital-losses/apply-setoff",
+    {
+      schema: {
+        body: ApplySetoffRequestSchema,
+        response: { 200: ApplySetoffResultSchema },
+      },
+    },
+    async (req, reply) => {
+      const result = await applySetoffForFy(app.db, req.session!.userId, req.body.fy);
+      return reply.send(result);
     },
   );
 }

@@ -123,7 +123,49 @@ describe("zero income recommendation", () => {
   });
 });
 
-// ─── Test 4: Fix 3 regression guard — CCD2 per-regime rate derivation ─────────
+// ─── Test 4: Section 24(a) — 30% standard deduction on rent income ───────────
+//
+// compareRegimes() applies §24(a) when building grossIncomePaise: rent gross is
+// reduced by 30% before any slab/rebate/surcharge computation. This test
+// verifies the formula and shows both regime breakdowns receive 70% of gross
+// rent as the taxable-income base (pure computation, no DB needed).
+
+describe("Section 24(a) 30% standard deduction on rent income (FY 2025-26)", () => {
+  const RENT_GROSS_PAISE = 100_000_000; // ₹10,00,000 gross rent
+  const RENT_NET_PAISE = 70_000_000;    // ₹7,00,000 (70%) after §24(a) deduction
+
+  it("§24(a) formula: gross - floor(gross * 30 / 100) yields 70% of gross", () => {
+    const section24aDeduction = Math.floor(RENT_GROSS_PAISE * 30 / 100);
+    const net = RENT_GROSS_PAISE - section24aDeduction;
+    assert.strictEqual(section24aDeduction, 30_000_000, "30% of ₹10L = ₹3L");
+    assert.strictEqual(net, RENT_NET_PAISE, "70% of ₹10L = ₹7L enters taxable income");
+  });
+
+  it("old and new regime breakdowns both use ₹7L (not ₹10L) when rent-only income has §24(a) applied", () => {
+    // With rent as the only income and no salary (so no standard deduction), no
+    // basket deductions: grossIncomePaise = rentNetPaise = ₹7L for both regimes.
+    const oldRules = getRegimeRules("2025-26", "old", "ordinary");
+    const newRules = getRegimeRules("2025-26", "new", "ordinary");
+
+    const oldBd = computeTaxBreakdown(RENT_NET_PAISE, oldRules);
+    const newBd = computeTaxBreakdown(RENT_NET_PAISE, newRules);
+
+    // Both breakdowns must use ₹7L as taxable income — not ₹10L gross
+    assert.strictEqual(oldBd.taxableIncomePaise, RENT_NET_PAISE,
+      "old regime: taxable income is ₹7L (70% of rent gross after §24(a))");
+    assert.strictEqual(newBd.taxableIncomePaise, RENT_NET_PAISE,
+      "new regime: taxable income is ₹7L (70% of rent gross after §24(a))");
+
+    // Verify: applying full gross ₹10L (without §24(a)) gives a higher taxable base
+    const oldBdFull = computeTaxBreakdown(RENT_GROSS_PAISE, oldRules);
+    assert.ok(
+      oldBdFull.taxableIncomePaise > oldBd.taxableIncomePaise,
+      "without §24(a), ₹10L gross gives higher taxable income than the §24(a)-net ₹7L",
+    );
+  });
+});
+
+// ─── Test 4 (renumbered): Fix 3 regression guard — CCD2 per-regime rate derivation ─
 //
 // compareRegimes() derives ccd2EligibleNew and ccd2EligibleOld separately by
 // re-applying the per-regime employer-NPS rate to each basket entry. This test

@@ -55,6 +55,16 @@ test("masks phone, PAN and Aadhaar", () => {
   assert.ok(!out.includes("9876543210"));
 });
 
+test("masks lowercase and mixed-case PAN (case-insensitive, §156 i-flag regression)", () => {
+  const lower = redactPii("PAN abcde1234f on record", me);
+  assert.match(lower, /\[pan\]/, "all-lowercase PAN must be masked");
+  assert.ok(!lower.includes("abcde1234f"));
+
+  const mixed = redactPii("PAN AbCdE1234f on record", me);
+  assert.match(mixed, /\[pan\]/, "mixed-case PAN must be masked");
+  assert.ok(!mixed.includes("AbCdE1234f"));
+});
+
 test("masks a labelled PIN code but leaves a bare 6-digit amount alone", () => {
   const labelled = redactPii("Bengaluru, Karnataka PIN 560103", me);
   assert.match(labelled, /\[pin\]/);

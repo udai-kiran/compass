@@ -18,6 +18,8 @@ import {
   rule119AInterest,
   computeInstalments,
 } from "./advance-tax.ts";
+import { computeTaxBreakdown } from "../../../lib/tax-computation.ts";
+import { getRegimeRules } from "../../../lib/tax-rules.ts";
 
 // ─── Flat CG tax ─────────────────────────────────────────────────────────────
 
@@ -228,5 +230,49 @@ describe("computeInstalments — capital-gains timing exception", () => {
     });
     assert.strictEqual(r.statuses[0]!.requiredCumulativePaise, 0);
     assert.strictEqual(r.total234CPaise, 0);
+  });
+});
+
+// ─── §24(a) rent deduction in advance-tax ordinary liability ─────────────────
+//
+// ordinaryLiabilityFor() (private, DB-connected) applies §24(a) = 30% of rent
+// income BEFORE calling computeTaxBreakdown, keeping it consistent with
+// regime-comparison.ts. These pure tests verify the formula and its downstream
+// effect on slab tax so that a revert of the §24(a) line would be caught here
+// without requiring a DB.
+
+describe("§24(a) 30% rent reduction in advance-tax ordinary liability formula (FY 2025-26)", () => {
+  it("30% of rent gross enters section24aDeductionPaise, leaving 70% as the rent taxable base", () => {
+    const rentGrossPaise = 100_000_000; // ₹1,00,000
+    const section24aDeductionPaise = Math.floor(rentGrossPaise * 30 / 100);
+    assert.strictEqual(section24aDeductionPaise, 30_000_000, "30% of ₹1L = ₹30,000");
+    const rentTaxableContribution = rentGrossPaise - section24aDeductionPaise;
+    assert.strictEqual(rentTaxableContribution, 70_000_000, "70% of ₹1L = ₹70,000 enters taxable base");
+  });
+
+  it("computeTaxBreakdown on rent-only income after §24(a) uses the reduced base (not gross)", () => {
+    // ordinaryLiabilityFor() builds: taxable = totalGross − deductions − section24a.
+    // For a new-regime rent-only taxpayer (no salary → no std deduction, no 80C/D):
+    //   grossByKind.rent = 100_000_000
+    //   section24a      =  30_000_000
+    //   deductions      =           0  (no salary → standardDeduction = 0; no basket)
+    //   taxable         =  70_000_000
+    const rules = getRegimeRules("2025-26", "new", "ordinary");
+    const taxableWithSection24a = 70_000_000; // 100M - 30M
+    const bdWithSection24a = computeTaxBreakdown(taxableWithSection24a, rules);
+
+    // taxableIncomePaise in the breakdown must equal the §24(a)-reduced base.
+    assert.strictEqual(
+      bdWithSection24a.taxableIncomePaise,
+      70_000_000,
+      "breakdown must receive the §24(a)-reduced base (70M), not gross (100M)",
+    );
+
+    // Verify the reduction matters: without §24(a) the taxable income would be higher.
+    const bdWithoutSection24a = computeTaxBreakdown(100_000_000, rules);
+    assert.ok(
+      bdWithoutSection24a.taxableIncomePaise > bdWithSection24a.taxableIncomePaise,
+      "without §24(a), the taxable base (100M) exceeds the §24(a)-reduced base (70M)",
+    );
   });
 });

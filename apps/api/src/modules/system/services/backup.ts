@@ -53,6 +53,7 @@ export const ALL_TABLES = [
   "epf_contributions",
   "deduction_entries",
   "capital_loss_carryforward",
+  "capital_loss_setoff_applications",
   "tax_statements", "tax_statement_lines",
 ] as const;
 
@@ -87,6 +88,7 @@ export const USER_TABLES: Record<string, string> = {
   epf_contributions: "user_id",
   deduction_entries: "user_id",
   capital_loss_carryforward: "user_id",
+  capital_loss_setoff_applications: "user_id",
   tax_statements: "user_id",
 };
 

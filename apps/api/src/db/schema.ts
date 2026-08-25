@@ -157,6 +157,7 @@ export {
   deductionKind,
   eightyDGroup,
   capitalLossCarryforward,
+  capitalLossSetoffApplications,
   taxStatements,
   taxStatementKind,
   taxStatementStatus,

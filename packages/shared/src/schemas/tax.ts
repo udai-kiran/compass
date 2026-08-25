@@ -970,6 +970,8 @@ export const RegimeLiabilitySchema = z.object({
     eightyCcd2EligiblePaise: z.number().int(),
     eightyDEligiblePaise: z.number().int(),
     homeLoanInterest24bPaise: z.number().int(),
+    /** §24(a): flat 30% standard deduction on gross rent income (both regimes). */
+    section24aDeductionPaise: z.number().int(),
     totalDeductionsPaise: z.number().int(),
   }),
   taxableIncomePaise: z.number().int(),
@@ -1326,4 +1328,43 @@ export type CreateTaxStatementBody = z.infer<typeof CreateTaxStatementBodySchema
 export const GetTaxStatementsQuerySchema = z.object({
   fy: FySchema,
 });
+
+// ── Capital-loss set-off application (Part 2 fix) ─────────────────────────────
+
+/**
+ * Request body for POST /api/tax/capital-losses/apply-setoff.
+ * The FY for which to apply brought-forward loss set-off.
+ */
+export const ApplySetoffRequestSchema = z.object({
+  fy: FySchema,
+});
+export type ApplySetoffRequest = z.infer<typeof ApplySetoffRequestSchema>;
+
+/**
+ * Per-entry detail in the apply-setoff response — one entry per carry-forward
+ * row that had paise absorbed in this application.
+ */
+export const SetoffAppliedEntrySchema = z.object({
+  entryId: z.string().uuid(),
+  originFy: FySchema,
+  lossKind: LossKindSchema,
+  /** Paise absorbed from this entry's remaining balance. */
+  absorbedPaise: z.number().int().min(0),
+  /** remainingPaise on the carry-forward entry after absorption. */
+  remainingPaiseAfter: z.number().int().min(0),
+});
+export type SetoffAppliedEntry = z.infer<typeof SetoffAppliedEntrySchema>;
+
+/**
+ * Response from POST /api/tax/capital-losses/apply-setoff.
+ * Summarises what was drawn from carry-forward entries for the FY.
+ */
+export const ApplySetoffResultSchema = z.object({
+  fy: FySchema,
+  /** Sum of all entries' absorbedPaise (0 if no brought-forward entries were eligible). */
+  totalAbsorbedPaise: z.number().int().min(0),
+  /** Per carry-forward entry breakdown. Empty when nothing was absorbed. */
+  entries: z.array(SetoffAppliedEntrySchema),
+});
+export type ApplySetoffResult = z.infer<typeof ApplySetoffResultSchema>;
 

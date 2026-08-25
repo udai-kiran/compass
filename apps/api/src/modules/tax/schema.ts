@@ -490,6 +490,45 @@ export const capitalLossCarryforward = pgTable(
   ],
 );
 
+// ─── Capital Loss Set-Off Applications (Part 2 fix) ─────────────────────────
+
+/**
+ * Idempotency ledger for `applySetoffForFy()` — one row per (user, FY),
+ * inserted atomically the first time the user applies brought-forward losses
+ * against that FY's gains.
+ *
+ * The unique index on (user_id, fy) is the idempotency guard: a second call
+ * for the same FY raises a conflict and the service returns HTTP 409.
+ *
+ * total_absorbed_paise records the total paise drawn from carry-forward entries
+ * (sum of all per-entry absorbed amounts). It is set to 0 on insert and updated
+ * to the real total after all carryforward rows have been decremented within the
+ * same transaction.
+ */
+export const capitalLossSetoffApplications = pgTable(
+  "capital_loss_setoff_applications",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** FY for which the set-off was applied, e.g. "2025-26". */
+    fy: text("fy").notNull(),
+    /**
+     * Total paise absorbed across all carry-forward entries in this application.
+     * Set to 0 on insert, updated to the real sum after all rows are decremented.
+     * Must be >= 0 (check constraint).
+     */
+    totalAbsorbedPaise: bigint("total_absorbed_paise", { mode: "number" }).notNull(),
+    /** When the set-off was applied. */
+    appliedAt: timestamp("applied_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("capital_loss_setoff_user_fy_uidx").on(t.userId, t.fy),
+    check("capital_loss_setoff_absorbed_non_neg", sql`${t.totalAbsorbedPaise} >= 0`),
+  ],
+);
+
 // ─── AIS / 26AS / Form-16 statements (task 13.13) ─────────────────────────────
 
 /**

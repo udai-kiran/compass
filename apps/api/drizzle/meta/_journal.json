@@ -176,6 +176,13 @@
       "when": 1787607997177,
       "tag": "0024_freezing_deadpool",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1787671308714,
+      "tag": "0025_oval_charles_xavier",
+      "breakpoints": true
     }
   ]
 }
