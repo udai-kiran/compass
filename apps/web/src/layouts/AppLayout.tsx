@@ -61,6 +61,7 @@ const NAV_GROUPS: NavGroup[] = [
       { to: "/trends", label: "Trends", icon: "trends" },
       { to: "/insights", label: "Insights", icon: "insights" },
       { to: "/reports", label: "Reports", icon: "reports" },
+      { to: "/tax", label: "Tax", icon: "tax" },
     ],
   },
   {

@@ -197,6 +197,12 @@ export interface RealizedGains {
   totalGainPaise: number;
   totalProceedsPaise: number;
   totalCostPaise: number;
+  /**
+   * Unsold FIFO remainder — buys never matched by a sell (partially sold lots
+   * appear once with their remaining units/cost). This is the single source of
+   * truth for open lots so no second calculator re-derives FIFO elsewhere.
+   */
+  openLots: Array<{ buyDate: string; units: number; costPaise: number }>;
 }
 
 function parseIso(d: string): { y: number; m: number; day: number } {
@@ -362,6 +368,12 @@ export function realizeGains(events: LotEvent[], config: TaxLotConfig): Realized
     totalGainPaise: shortTermGainPaise + longTermGainPaise,
     totalProceedsPaise,
     totalCostPaise,
+    openLots: lots
+      // Zero-cost lots (e.g. bonus units) still hold real units with real
+      // market value, so they must still be reported as open positions —
+      // only a fully-consumed (or dust-remainder) lot is dropped.
+      .filter((l) => l.units > 1e-9)
+      .map((l) => ({ buyDate: l.date, units: l.units, costPaise: Math.round(l.costPaise) })),
   };
 }
 

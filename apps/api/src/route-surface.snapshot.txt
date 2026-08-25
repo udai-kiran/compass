@@ -33,7 +33,9 @@ DELETE /api/shopping/sources/:id
 DELETE /api/sips/:id
 DELETE /api/sips/:id/installments/link/:transactionId
 DELETE /api/splits/:id
+DELETE /api/tax/capital-losses/:id
 DELETE /api/tax/deductions/entries/:id
+DELETE /api/tax/statements/:id
 DELETE /api/transaction-links/:id
 DELETE /api/transactions/:id
 DELETE /api/transfers/:id
@@ -90,6 +92,7 @@ GET /api/holdings/:id/deposit/schedule
 GET /api/holdings/:id/gold
 GET /api/holdings/:id/nps
 GET /api/holdings/capital-gains
+GET /api/holdings/tax-harvesting
 GET /api/households
 GET /api/households/:id
 GET /api/households/:id/balances
@@ -153,6 +156,9 @@ GET /api/sips
 GET /api/sips/:id/installment-candidates
 GET /api/splits/:id
 GET /api/subscriptions/suggestions
+GET /api/tax/advance-tax
+GET /api/tax/capital-losses
+GET /api/tax/capital-position
 GET /api/tax/deductions
 GET /api/tax/deductions/entries
 GET /api/tax/epf-contributions
@@ -163,9 +169,12 @@ GET /api/tax/income-events/:id
 GET /api/tax/income-events/summary
 GET /api/tax/payslips
 GET /api/tax/payslips/:id
+GET /api/tax/regime-comparison
 GET /api/tax/regime-preference
 GET /api/tax/scheme-compliance
 GET /api/tax/scheme-compliance/:accountId
+GET /api/tax/statements
+GET /api/tax/statements/:id
 GET /api/transactions
 GET /api/transactions/:id
 GET /api/transactions/:id/attachments
@@ -227,6 +236,7 @@ HEAD /api/holdings/:id/deposit/schedule
 HEAD /api/holdings/:id/gold
 HEAD /api/holdings/:id/nps
 HEAD /api/holdings/capital-gains
+HEAD /api/holdings/tax-harvesting
 HEAD /api/households
 HEAD /api/households/:id
 HEAD /api/households/:id/balances
@@ -290,6 +300,9 @@ HEAD /api/sips
 HEAD /api/sips/:id/installment-candidates
 HEAD /api/splits/:id
 HEAD /api/subscriptions/suggestions
+HEAD /api/tax/advance-tax
+HEAD /api/tax/capital-losses
+HEAD /api/tax/capital-position
 HEAD /api/tax/deductions
 HEAD /api/tax/deductions/entries
 HEAD /api/tax/epf-contributions
@@ -300,9 +313,12 @@ HEAD /api/tax/income-events/:id
 HEAD /api/tax/income-events/summary
 HEAD /api/tax/payslips
 HEAD /api/tax/payslips/:id
+HEAD /api/tax/regime-comparison
 HEAD /api/tax/regime-preference
 HEAD /api/tax/scheme-compliance
 HEAD /api/tax/scheme-compliance/:accountId
+HEAD /api/tax/statements
+HEAD /api/tax/statements/:id
 HEAD /api/transactions
 HEAD /api/transactions/:id
 HEAD /api/transactions/:id/attachments
@@ -326,6 +342,7 @@ PATCH /api/recurring/:id
 PATCH /api/resources/:id
 PATCH /api/sips/:id
 PATCH /api/splits/:id
+PATCH /api/tax/capital-losses/:id
 PATCH /api/transactions/:id
 PATCH /api/user-tasks/:id
 POST /api/accounts
@@ -413,6 +430,8 @@ POST /api/sips
 POST /api/sips/:id/installments
 POST /api/sips/:id/installments/link
 POST /api/subscriptions/dismiss
+POST /api/tax/capital-losses
+POST /api/tax/capital-losses/apply-setoff
 POST /api/tax/deductions/entries
 POST /api/tax/epf-contributions
 POST /api/tax/epf-contributions/:id/confirm-actual
@@ -426,6 +445,11 @@ POST /api/tax/payslips
 POST /api/tax/payslips/:id/accept
 POST /api/tax/payslips/:id/reject
 POST /api/tax/payslips/manual
+POST /api/tax/statements
+POST /api/tax/statements/:id/accept
+POST /api/tax/statements/:id/document
+POST /api/tax/statements/:id/reconcile
+POST /api/tax/statements/:id/reject
 POST /api/transactions
 POST /api/transactions/:id/attachments
 POST /api/transactions/:id/links

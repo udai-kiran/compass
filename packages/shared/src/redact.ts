@@ -152,8 +152,8 @@ export function redactPii(
       const digitCount = m.replace(/[ -]/g, "").length;
       return digitCount >= 9 && digitCount <= 19 ? "[account]" : m;
     });
-    // PAN — ABCDE1234F.
-    out = out.replace(/\b[A-Z]{5}\d{4}[A-Z]\b/g, "[pan]");
+    // PAN — ABCDE1234F (case-insensitive: lowercase and mixed-case PANs are also masked).
+    out = out.replace(/\b[A-Z]{5}\d{4}[A-Z]\b/gi, "[pan]");
     // Indian mobile (optionally +91), before the long-number pass.
     out = out.replace(/\b(?:\+?91[\s-]?)?[6-9]\d{9}\b/g, "[phone]");
     // Full account / card numbers: 9–19 digits. Runs of ≤8 (the bank-masked

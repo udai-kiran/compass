@@ -351,6 +351,7 @@ import {
   UpdateDeductionEntrySchema,
   DeductionEntrySchema,
   DeductionBasketSchema,
+  CreateTaxStatementLineSchema,
 } from "./tax.ts";
 
 describe("CreateDeductionEntrySchema", () => {
@@ -673,5 +674,42 @@ describe("DeductionBasketSchema", () => {
       },
     });
     assert.ok(!DeductionBasketSchema.safeParse(basket).success, "unknown reason should fail");
+  });
+});
+
+// ─── CreateTaxStatementLineSchema ─────────────────────────────────────────────
+
+describe("CreateTaxStatementLineSchema", () => {
+  test("rejects tdsPaise > grossPaise", () => {
+    const r = CreateTaxStatementLineSchema.safeParse({
+      grossPaise: 100,
+      tdsPaise: 101,
+      category: "other",
+    });
+    assert.ok(!r.success, "tdsPaise > grossPaise should fail");
+    assert.ok(
+      r.error.issues.some((i) => i.path.includes("tdsPaise")),
+      "error should reference tdsPaise",
+    );
+  });
+
+  test("accepts tdsPaise === grossPaise", () => {
+    const r = CreateTaxStatementLineSchema.safeParse({
+      grossPaise: 100,
+      tdsPaise: 100,
+      category: "other",
+    });
+    assert.ok(r.success, `tdsPaise === grossPaise should pass: ${JSON.stringify(r.error)}`);
+  });
+
+  test("accepts a line with tdsPaise omitted (defaults to 0)", () => {
+    const r = CreateTaxStatementLineSchema.safeParse({
+      grossPaise: 100,
+      category: "other",
+    });
+    assert.ok(r.success, `omitted tdsPaise should default and pass: ${JSON.stringify(r.error)}`);
+    if (r.success) {
+      assert.equal(r.data.tdsPaise, 0);
+    }
   });
 });

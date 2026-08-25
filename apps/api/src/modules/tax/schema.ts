@@ -15,6 +15,7 @@
 import { sql } from "drizzle-orm";
 import {
   bigint,
+  boolean,
   check,
   date,
   index,
@@ -432,5 +433,209 @@ export const deductionEntries = pgTable(
       "deduction_entries_section_kind",
       sql`(${t.section} = '80C' AND ${t.deductionKind} IN ('nsc_additional','tuition_fees','elss_manual','other_80c')) OR (${t.section} = '80CCD1B' AND ${t.deductionKind} = 'nps_additional') OR (${t.section} = '80CCD2' AND ${t.deductionKind} = 'employer_nps_ccd2') OR (${t.section} = '80D' AND ${t.deductionKind} IN ('preventive_checkup','other_80d'))`,
     ),
+  ],
+);
+
+// ─── Capital Loss Carry-Forward (task 13.11) ──────────────────────────────────
+
+/**
+ * Capital-loss carry-forward ledger — one row per (user, origin FY, loss kind).
+ * Created manually for pre-Compass history, or auto-created when the system
+ * detects a net loss position in a completed FY.
+ *
+ * Carry-forward requires ITR filed within the due date (returnFiled flag).
+ * Entries expire after 8 assessment years from originFy.
+ */
+export const capitalLossCarryforward = pgTable(
+  "capital_loss_carryforward",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** FY in which the loss was originally incurred, e.g. "2022-23". */
+    originFy: text("origin_fy").notNull(),
+    /** "STCL" or "LTCL" */
+    lossKind: text("loss_kind").notNull(),
+    /** Original loss amount (integer paise, positive). */
+    originalPaise: bigint("original_paise", { mode: "number" }).notNull(),
+    /**
+     * Remaining unabsorbed loss (paise). Updated when set-off is applied.
+     * Starts equal to originalPaise; reduced each time this loss absorbs a gain.
+     */
+    remainingPaise: bigint("remaining_paise", { mode: "number" }).notNull(),
+    /**
+     * The FY in which this loss expires (originFy + 8 years).
+     * e.g. origin "2022-23" → expires "2030-31"
+     */
+    expiresFy: text("expires_fy").notNull(),
+    /**
+     * Whether the user filed their ITR for originFy within the due date.
+     * Carry-forward is NOT available if this is false — surfaced as an assumption.
+     */
+    returnFiled: boolean("return_filed").notNull().default(false),
+    /** Optional user note (e.g. "from ITR AY 2023-24"). */
+    note: text("note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("capital_loss_cf_user_fy_idx").on(t.userId, t.originFy),
+    uniqueIndex("capital_loss_cf_user_fy_kind_uidx").on(t.userId, t.originFy, t.lossKind),
+    check("capital_loss_kind_check", sql`${t.lossKind} IN ('STCL', 'LTCL')`),
+    check(
+      "capital_loss_paise_pos",
+      sql`${t.originalPaise} > 0 AND ${t.remainingPaise} >= 0 AND ${t.remainingPaise} <= ${t.originalPaise}`,
+    ),
+  ],
+);
+
+// ─── Capital Loss Set-Off Applications (Part 2 fix) ─────────────────────────
+
+/**
+ * Idempotency ledger for `applySetoffForFy()` — one row per (user, FY),
+ * inserted atomically the first time the user applies brought-forward losses
+ * against that FY's gains.
+ *
+ * The unique index on (user_id, fy) is the idempotency guard: a second call
+ * for the same FY raises a conflict and the service returns HTTP 409.
+ *
+ * total_absorbed_paise records the total paise drawn from carry-forward entries
+ * (sum of all per-entry absorbed amounts). It is set to 0 on insert and updated
+ * to the real total after all carryforward rows have been decremented within the
+ * same transaction.
+ */
+export const capitalLossSetoffApplications = pgTable(
+  "capital_loss_setoff_applications",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** FY for which the set-off was applied, e.g. "2025-26". */
+    fy: text("fy").notNull(),
+    /**
+     * Total paise absorbed across all carry-forward entries in this application.
+     * Set to 0 on insert, updated to the real sum after all rows are decremented.
+     * Must be >= 0 (check constraint).
+     */
+    totalAbsorbedPaise: bigint("total_absorbed_paise", { mode: "number" }).notNull(),
+    /** When the set-off was applied. */
+    appliedAt: timestamp("applied_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("capital_loss_setoff_user_fy_uidx").on(t.userId, t.fy),
+    check("capital_loss_setoff_absorbed_non_neg", sql`${t.totalAbsorbedPaise} >= 0`),
+  ],
+);
+
+// ─── AIS / 26AS / Form-16 statements (task 13.13) ─────────────────────────────
+
+/**
+ * Which tax document an import came from. AIS and 26AS are the department's
+ * view; Form 16 is the employer's. All three are staged, reviewable imports.
+ */
+export const taxStatementKind = pgEnum("tax_statement_kind", ["ais", "26as", "form16"]);
+
+/** Same review lifecycle as payslips: pending → accepted | rejected. */
+export const taxStatementStatus = pgEnum("tax_statement_status", [
+  "pending",
+  "accepted",
+  "rejected",
+]);
+
+/** Per-line reconciliation verdict against the income-events ledger. */
+export const taxLineMatchStatus = pgEnum("tax_line_match_status", [
+  "matched",
+  "unmatched",
+  "amount_mismatch",
+]);
+
+/**
+ * A staged AIS/26AS/Form-16 import header.
+ *
+ * PRIVACY: this is the most sensitive artifact Compass handles. The assessee's
+ * own PAN is deliberately NOT stored — only its last 4 characters, enough to
+ * confirm which person the statement belongs to. The raw uploaded file lives in
+ * object storage via the Storage abstraction under an opaque key; nothing here
+ * is ever sent to a model (matching is deterministic) and nothing is logged raw.
+ *
+ * The import is reversible by construction: accepting a statement never writes
+ * to income_events or any ledger table — it only stamps this statement's own
+ * lines with their match verdicts.
+ */
+export const taxStatements = pgTable(
+  "tax_statements",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** Canonical FY label: "YYYY-YY" (e.g. "2025-26"). */
+    fy: text("fy").notNull(),
+    docKind: taxStatementKind("doc_kind").notNull(),
+    status: taxStatementStatus("status").notNull().default("pending"),
+    /** Opaque Storage key of the raw document; null for typed-in imports. */
+    documentKey: text("document_key"),
+    /**
+     * Last 4 characters of the assessee PAN as printed on the document —
+     * identity confirmation without persisting the full PAN anywhere.
+     */
+    panLast4: text("pan_last_4"),
+    /** Where the rows came from, e.g. "typed" or "PDF upload" (never a raw filename). */
+    sourceLabel: text("source_label"),
+    lineCount: integer("line_count").notNull().default(0),
+    grossTotalPaise: bigint("gross_total_paise", { mode: "number" }).notNull().default(0),
+    tdsTotalPaise: bigint("tds_total_paise", { mode: "number" }).notNull().default(0),
+    /** Match stats over the statement's own lines, refreshed at reconcile/accept. */
+    matchedCount: integer("matched_count").notNull().default(0),
+    unmatchedCount: integer("unmatched_count").notNull().default(0),
+    amountMismatchCount: integer("amount_mismatch_count").notNull().default(0),
+    /** Ledger events for this FY that NO reported line accounted for. */
+    unmatchedLedgerCount: integer("unmatched_ledger_count").notNull().default(0),
+    note: text("note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("tax_statements_user_fy_idx").on(t.userId, t.fy)],
+);
+
+/**
+ * One reported line of a staged statement (a TDS section entry, an SFT
+ * high-value item, a Form-16 salary block…). Scoped through its statement.
+ *
+ * Partial documents are fine: a missing section simply contributes no lines.
+ */
+export const taxStatementLines = pgTable(
+  "tax_statement_lines",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    statementId: uuid("statement_id")
+      .notNull()
+      .references(() => taxStatements.id, { onDelete: "cascade" }),
+    /** TDS section as printed ("192", "194A", "194-I"…); null when unstated. */
+    section: text("section"),
+    /** Broad bucket — same enumeration as the income-events ledger. */
+    category: incomeKind("category").notNull(),
+    payerName: text("payer_name"),
+    /** Payer TAN (or PAN for non-TDS reporters) used for matching. */
+    payerTan: text("payer_tan"),
+    /** Reporting period as printed ("YYYY-MM" or "Q1"); informational only. */
+    period: text("period"),
+    accrualDate: date("accrual_date"),
+    grossPaise: bigint("gross_paise", { mode: "number" }).notNull(),
+    tdsPaise: bigint("tds_paise", { mode: "number" }).notNull().default(0),
+    matchStatus: taxLineMatchStatus("match_status").notNull().default("unmatched"),
+    /** The income event this line was matched to; null while unmatched. */
+    matchedIncomeEventId: uuid("matched_income_event_id").references(() => incomeEvents.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("tax_statement_lines_statement_idx").on(t.statementId),
+    check("tax_statement_lines_gross_non_negative", sql`${t.grossPaise} >= 0`),
+    check("tax_statement_lines_tds_non_negative", sql`${t.tdsPaise} >= 0`),
+    check("tax_statement_lines_tds_le_gross", sql`${t.tdsPaise} <= ${t.grossPaise}`),
   ],
 );

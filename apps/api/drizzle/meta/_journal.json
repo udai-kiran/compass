@@ -155,6 +155,34 @@
       "when": 1787581969976,
       "tag": "0021_flippant_zodiak",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1787589133172,
+      "tag": "0022_keen_yellow_claw",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1787595701506,
+      "tag": "0023_high_leper_queen",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1787607997177,
+      "tag": "0024_freezing_deadpool",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1787671308714,
+      "tag": "0025_oval_charles_xavier",
+      "breakpoints": true
     }
   ]
 }

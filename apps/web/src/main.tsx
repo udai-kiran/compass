@@ -91,6 +91,9 @@ const InsightsPage = lazy(() =>
 const ReportsPage = lazy(() =>
   import("./routes/reports/ReportsPage.tsx").then((m) => ({ default: m.ReportsPage })),
 );
+const TaxPage = lazy(() =>
+  import("./routes/tax/TaxPage.tsx").then((m) => ({ default: m.TaxPage })),
+);
 const NotificationsPage = lazy(() =>
   import("./routes/notifications/NotificationsPage.tsx").then((m) => ({
     default: m.NotificationsPage,
@@ -171,6 +174,7 @@ const router = createBrowserRouter([
       { path: "tasks", element: <TasksPage /> },
       { path: "insights", element: <InsightsPage /> },
       { path: "reports", element: <ReportsPage /> },
+      { path: "tax", element: <TaxPage /> },
       { path: "household", element: <HouseholdPage /> },
       { path: "settings", element: <SettingsPage /> },
       { path: "settings/accounts/:id", element: <AccountDetailPage /> },

@@ -1,0 +1,3 @@
+ALTER TABLE "capital_loss_carryforward" DROP CONSTRAINT "capital_loss_paise_pos";--> statement-breakpoint
+CREATE UNIQUE INDEX "capital_loss_cf_user_fy_kind_uidx" ON "capital_loss_carryforward" USING btree ("user_id","origin_fy","loss_kind");--> statement-breakpoint
+ALTER TABLE "capital_loss_carryforward" ADD CONSTRAINT "capital_loss_paise_pos" CHECK ("capital_loss_carryforward"."original_paise" > 0 AND "capital_loss_carryforward"."remaining_paise" >= 0 AND "capital_loss_carryforward"."remaining_paise" <= "capital_loss_carryforward"."original_paise");

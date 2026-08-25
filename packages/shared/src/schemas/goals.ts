@@ -221,6 +221,10 @@ export const NotificationTypeSchema = z.enum([
   // Autopilot: weekly goal contribution / rebalance advice (distinct from the
   // "goal" milestone alerts, so it can be muted independently).
   "goal_plan",
+  // Tax: 80C/80D headroom nudges, new-regime explanation, deadline escalation.
+  "tax",
+  // Tax: advance-tax instalment reminders (mutable independently of "tax").
+  "advance_tax",
 ]);
 
 /** Anomaly detector sensitivity → z-score threshold (higher = fires more readily). */
