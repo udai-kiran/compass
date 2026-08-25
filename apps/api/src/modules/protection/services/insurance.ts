@@ -5,11 +5,13 @@ import type {
   InsurancePolicy,
   LogPremium,
   PolicyPremiums,
+  SubLimit,
   UpdateInsurancePolicy,
 } from "@compass/shared";
 import {
   CreateInsurancePolicySchema,
   LogPremiumSchema,
+  todayInIST,
   UpdateInsurancePolicySchema,
 } from "@compass/shared";
 import type { Db, DbOrTx } from "../../../db/index.ts";
@@ -21,6 +23,7 @@ import type { Storage } from "../../../lib/storage.ts";
 import { assertUploadable } from "../../ledger/services/attachments.ts";
 import { createTransaction } from "../../ledger/services/transactions.ts";
 import { assertOwnedResource } from "../../ledger/services/resources.ts";
+import { computeClaimReadiness, computeWaitingPeriodEndDates } from "./claim-readiness.ts";
 
 type PolicyRow = typeof insurancePolicies.$inferSelect;
 type HealthCardRow = typeof insuranceHealthCards.$inferSelect;
@@ -33,7 +36,29 @@ function toPolicy(
   p: PolicyRow,
   cards: HealthCardRow[] = [],
   coveredPersonIds: string[] = [],
+  today: string = todayInIST(),
 ): InsurancePolicy {
+  const waitingEndDates = computeWaitingPeriodEndDates({
+    startDate: p.startDate,
+    initialWaitingDays: p.initialWaitingDays,
+    preExistingWaitingMonths: p.preExistingWaitingMonths,
+    maternityWaitingMonths: p.maternityWaitingMonths,
+  });
+  const claimReadiness = computeClaimReadiness({
+    kind: p.kind,
+    today,
+    hasDocument: p.documentPath !== null,
+    healthCardCount: cards.length,
+    tpaName: p.tpaName,
+    renewalDate: p.renewalDate,
+    disclosuresComplete: p.disclosuresComplete,
+    nominee: p.nominee,
+    nomineePersonId: p.nomineePersonId ?? null,
+    initialWaitingDays: p.initialWaitingDays,
+    preExistingWaitingMonths: p.preExistingWaitingMonths,
+    maternityWaitingMonths: p.maternityWaitingMonths,
+    waitingEndDates,
+  });
   return {
     id: p.id,
     name: p.name,
@@ -56,6 +81,29 @@ function toPolicy(
     nomineePersonId: p.nomineePersonId ?? null,
     coveredMembers: p.coveredMembers,
     coveredPersonIds,
+    ownership: p.ownership,
+    employerName: p.employerName,
+    deductiblePaise: p.deductiblePaise,
+    coPayBps: p.coPayBps,
+    roomRentLimitPaise: p.roomRentLimitPaise,
+    roomRentLimitBps: p.roomRentLimitBps,
+    icuLimitPaise: p.icuLimitPaise,
+    icuLimitBps: p.icuLimitBps,
+    subLimits: p.subLimits as SubLimit[],
+    initialWaitingDays: p.initialWaitingDays,
+    preExistingWaitingMonths: p.preExistingWaitingMonths,
+    maternityWaitingMonths: p.maternityWaitingMonths,
+    initialWaitingEndDate: waitingEndDates.initialWaitingEndDate,
+    preExistingWaitingEndDate: waitingEndDates.preExistingWaitingEndDate,
+    maternityWaitingEndDate: waitingEndDates.maternityWaitingEndDate,
+    restorationBenefit: p.restorationBenefit,
+    ncbBps: p.ncbBps,
+    ncbMaxBps: p.ncbMaxBps,
+    tpaName: p.tpaName,
+    tpaContactPhone: p.tpaContactPhone,
+    exclusions: p.exclusions,
+    disclosuresComplete: p.disclosuresComplete,
+    claimReadiness,
     documentName: p.documentName,
     documentMime: p.documentMime,
     documentSizeBytes: p.documentSizeBytes,
@@ -155,8 +203,9 @@ export async function listPolicies(db: Db, userId: string): Promise<InsurancePol
     list.push(cp.personId);
     byCoveredPolicy.set(cp.policyId, list);
   }
+  const today = todayInIST();
   return rows.map((r) =>
-    toPolicy(r, byPolicy.get(r.id) ?? [], byCoveredPolicy.get(r.id) ?? []),
+    toPolicy(r, byPolicy.get(r.id) ?? [], byCoveredPolicy.get(r.id) ?? [], today),
   );
 }
 

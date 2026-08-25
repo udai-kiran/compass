@@ -127,6 +127,25 @@ function makePolicyRow(overrides: Record<string, unknown> = {}): Record<string, 
     nominee: "",
     nomineePersonId: null,
     coveredMembers: [],
+    ownership: "personal",
+    employerName: "",
+    deductiblePaise: null,
+    coPayBps: null,
+    roomRentLimitPaise: null,
+    roomRentLimitBps: null,
+    icuLimitPaise: null,
+    icuLimitBps: null,
+    subLimits: [],
+    initialWaitingDays: null,
+    preExistingWaitingMonths: null,
+    maternityWaitingMonths: null,
+    restorationBenefit: false,
+    ncbBps: 0,
+    ncbMaxBps: 0,
+    tpaName: "",
+    tpaContactPhone: "",
+    exclusions: [],
+    disclosuresComplete: false,
     documentPath: null,
     documentName: null,
     documentMime: null,
@@ -231,6 +250,119 @@ describe("createPolicy: covered persons validation", () => {
     });
 
     assert.deepEqual(policy.coveredPersonIds, ["a1000000-0000-4000-8000-000000000001"]);
+  });
+});
+
+// ─── structured terms & claim-readiness (task 14.1) ──────────────────────────
+
+describe("createPolicy: structured terms, waiting periods & claim-readiness", () => {
+  it("surfaces employer ownership, structured terms, waiting-period end dates and a ready-with-gaps checklist", async () => {
+    // Fixed, deliberately distant dates so waiting-period elapsed / renewal-current
+    // checks are stable no matter what day this test runs (never chase "today").
+    const policyRow = makePolicyRow({
+      startDate: "2000-01-01",
+      renewalDate: "2099-01-01",
+      documentPath: null, // no document uploaded
+      nominee: "Spouse",
+      ownership: "employer",
+      employerName: "Acme Corp",
+      deductiblePaise: 10_000_00,
+      coPayBps: 2000,
+      roomRentLimitBps: 100,
+      icuLimitBps: 200,
+      subLimits: [{ label: "Cataract", capPaise: 4_000_00 }],
+      initialWaitingDays: 30,
+      preExistingWaitingMonths: 36,
+      maternityWaitingMonths: null, // not applicable to this policy
+      restorationBenefit: true,
+      ncbBps: 1000,
+      ncbMaxBps: 5000,
+      tpaName: "MediAssist",
+      tpaContactPhone: "1800-000-0000",
+      exclusions: ["cosmetic surgery"],
+      disclosuresComplete: true,
+    });
+    const db = makeDb({
+      insertResults: [[{ id: "policy-1" }], []],
+      selectResults: [[], []],
+      findFirstPolicy: policyRow,
+      findManyCards: [{ id: "card-1", label: "Self", fileName: "card.pdf", mimeType: "application/pdf", sizeBytes: 100 }],
+    });
+
+    const policy = await createPolicy(db as never, "user-1", {
+      name: "Group Health",
+      kind: "health",
+      vehicleType: null,
+      vehicleRegNo: "",
+      resourceId: null,
+      healthType: "indemnity",
+      insurer: "Star Health",
+      policyNumber: "",
+      policyWordingUrl: "",
+      sumAssuredPaise: 10_00_000_00,
+      bonusPaise: 0,
+      premiumPaise: 0,
+      premiumFrequency: "yearly",
+      startDate: "2000-01-01",
+      renewalDate: "2099-01-01",
+      maturityDate: null,
+      nominee: "Spouse",
+      nomineePersonId: null,
+      coveredMembers: [],
+      ownership: "employer",
+      employerName: "Acme Corp",
+      notes: "",
+    });
+
+    assert.equal(policy.ownership, "employer");
+    assert.equal(policy.employerName, "Acme Corp");
+    assert.equal(policy.deductiblePaise, 10_000_00);
+    assert.equal(policy.coPayBps, 2000);
+    assert.deepEqual(policy.subLimits, [{ label: "Cataract", capPaise: 4_000_00 }]);
+    // 2000-01-01 + 30 days
+    assert.equal(policy.initialWaitingEndDate, "2000-01-31");
+    // 2000-01-01 + 36 months
+    assert.equal(policy.preExistingWaitingEndDate, "2003-01-01");
+    // maternityWaitingMonths is null → not applicable, no end date
+    assert.equal(policy.maternityWaitingEndDate, null);
+
+    // Document missing is the only outstanding gap; everything else is ready.
+    const doc = policy.claimReadiness.find((i) => i.key === "document")!;
+    assert.equal(doc.ready, false);
+    assert.equal(doc.missingArtifact, "Policy document (PDF/scan)");
+    const others = policy.claimReadiness.filter((i) => i.key !== "document");
+    for (const item of others) {
+      assert.equal(item.ready, true, `expected "${item.key}" to be ready`);
+    }
+  });
+
+  it("rejects health-only structured terms on a non-health (life) policy", async () => {
+    await assert.rejects(() =>
+      createPolicy(makeDb() as never, "user-1", {
+        name: "Term Life",
+        kind: "life",
+        vehicleType: null,
+        vehicleRegNo: "",
+        resourceId: null,
+        healthType: null,
+        insurer: "",
+        policyNumber: "",
+        policyWordingUrl: "",
+        sumAssuredPaise: 0,
+        bonusPaise: 0,
+        premiumPaise: 0,
+        premiumFrequency: "yearly",
+        startDate: null,
+        renewalDate: null,
+        maturityDate: null,
+        nominee: "",
+        nomineePersonId: null,
+        coveredMembers: [],
+        // deductiblePaise only applies to health — schema should reject this combination
+        deductiblePaise: 5000,
+        notes: "",
+      } as never),
+    );
   });
 });
 
