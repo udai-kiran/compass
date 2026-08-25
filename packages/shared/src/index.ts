@@ -8,6 +8,7 @@ export * from "./schemas/imports.ts";
 export * from "./schemas/budgets.ts";
 export * from "./schemas/goals.ts";
 export * from "./schemas/sips.ts";
+export * from "./schemas/harvesting.ts";
 export * from "./schemas/wealth.ts";
 export * from "./schemas/insurance.ts";
 export * from "./schemas/resources.ts";

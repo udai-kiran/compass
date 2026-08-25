@@ -949,3 +949,381 @@ export type GetDeductionBasketQuery = z.infer<typeof GetDeductionBasketQuerySche
 /** Query parameters for GET /api/tax/deductions/entries */
 export const GetDeductionEntriesQuerySchema = z.object({ fy: FySchema });
 export type GetDeductionEntriesQuery = z.infer<typeof GetDeductionEntriesQuerySchema>;
+
+// ─── Regime comparison (task 13.8) ───────────────────────────────────────────
+
+/** Taxpayer classification for old-regime slab selection. */
+export const TaxpayerTypeSchema = z.enum(["ordinary", "senior", "super_senior"]);
+export type TaxpayerType = z.infer<typeof TaxpayerTypeSchema>;
+
+/**
+ * Tax-liability breakdown for one regime.
+ * effectiveRateBps = totalLiabilityPaise * 10000 / grossIncomePaise (0 when gross = 0).
+ */
+export const RegimeLiabilitySchema = z.object({
+  regime: RegimeSchema,
+  deductions: z.object({
+    standardDeductionPaise: z.number().int(),
+    hraExemptionPaise: z.number().int(),
+    eightyCEligiblePaise: z.number().int(),
+    eightyCcd1bEligiblePaise: z.number().int(),
+    eightyCcd2EligiblePaise: z.number().int(),
+    eightyDEligiblePaise: z.number().int(),
+    homeLoanInterest24bPaise: z.number().int(),
+    totalDeductionsPaise: z.number().int(),
+  }),
+  taxableIncomePaise: z.number().int(),
+  taxOnSlabsPaise: z.number().int(),
+  rebate87APaise: z.number().int(),
+  taxAfterRebatePaise: z.number().int(),
+  surchargePaise: z.number().int(),
+  marginalReliefPaise: z.number().int(),
+  taxAfterSurchargePaise: z.number().int(),
+  cessPaise: z.number().int(),
+  totalLiabilityPaise: z.number().int(),
+  effectiveRateBps: z.number().int(),
+});
+export type RegimeLiability = z.infer<typeof RegimeLiabilitySchema>;
+
+/**
+ * Full old-vs-new regime comparison result.
+ *
+ * crossoverDeductionPaise: the total old-regime deduction level (including standard
+ * deduction) at which old-regime tax = new-regime tax. null if old regime never beats
+ * new (even with maximum deductions) or grossIncomePaise = 0.
+ */
+export const RegimeComparisonSchema = z.object({
+  fy: FySchema,
+  taxpayerType: TaxpayerTypeSchema,
+  grossIncomePaise: z.number().int(),
+  old: RegimeLiabilitySchema,
+  new: RegimeLiabilitySchema,
+  crossoverDeductionPaise: z.number().int().nullable(),
+  recommendation: z.enum(["old", "new", "indifferent"]),
+  savingPaise: z.number().int(),
+  savingRegime: RegimeSchema,
+  assumptions: z.array(z.string()),
+  isEstimate: z.literal(true),
+  generatedAt: z.string(),
+});
+export type RegimeComparison = z.infer<typeof RegimeComparisonSchema>;
+
+/** Query parameters for GET /api/tax/regime-comparison. */
+export const GetRegimeComparisonQuerySchema = z.object({
+  fy: FySchema,
+  taxpayerType: TaxpayerTypeSchema.optional(),
+  /** HRA exemption already computed by the user u/s 10(13A), in paise. Defaults to 0. */
+  hraExemptionPaise: z.coerce.number().int().min(0).optional(),
+  /** Home-loan interest u/s 24(b), in paise. Capped internally at ₹2L (20,000,000 paise). Defaults to 0. */
+  homeLoanInterestPaise: z.coerce.number().int().min(0).optional(),
+});
+export type GetRegimeComparisonQuery = z.infer<typeof GetRegimeComparisonQuerySchema>;
+
+// ── 13.11 Capital loss carry-forward ─────────────────────────────────────────
+
+export const LossKindSchema = z.enum(["STCL", "LTCL"]);
+export type LossKind = z.infer<typeof LossKindSchema>;
+
+export const CapitalLossEntrySchema = z.object({
+  id: z.string().uuid(),
+  userId: z.string().uuid(),
+  originFy: FySchema,
+  lossKind: LossKindSchema,
+  originalPaise: z.number().int().positive(),
+  remainingPaise: z.number().int().min(0),
+  expiresFy: FySchema,
+  returnFiled: z.boolean(),
+  note: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type CapitalLossEntry = z.infer<typeof CapitalLossEntrySchema>;
+
+export const CreateCapitalLossEntrySchema = z
+  .object({
+    originFy: FySchema,
+    lossKind: LossKindSchema,
+    originalPaise: z.number().int().positive(),
+    remainingPaise: z.number().int().min(0),
+    returnFiled: z.boolean().default(false),
+    note: z.string().max(500).nullable().optional(),
+  })
+  .refine((d) => d.remainingPaise <= d.originalPaise, {
+    message: "remainingPaise must not exceed originalPaise",
+    path: ["remainingPaise"],
+  });
+export type CreateCapitalLossEntry = z.infer<typeof CreateCapitalLossEntrySchema>;
+
+// Upper bound on remainingPaise (≤ originalPaise) is enforced by a DB CHECK constraint;
+// the update schema cannot reference the row's original without a DB lookup.
+export const UpdateCapitalLossEntrySchema = z.object({
+  remainingPaise: z.number().int().min(0).optional(),
+  returnFiled: z.boolean().optional(),
+  note: z.string().max(500).nullable().optional(),
+});
+export type UpdateCapitalLossEntry = z.infer<typeof UpdateCapitalLossEntrySchema>;
+
+export const LossSetoffResultSchema = z.object({
+  /** Net STCG after applying STCL set-off (≥ 0). */
+  netStcgPaise: z.number().int().min(0),
+  /** Net LTCG after applying all eligible set-off (≥ 0). */
+  netLtcgPaise: z.number().int().min(0),
+  /** Residual STCL not absorbed this FY (carries forward). */
+  residualStclPaise: z.number().int().min(0),
+  /** Residual LTCL not absorbed this FY (carries forward). */
+  residualLtclPaise: z.number().int().min(0),
+  /** STCL applied to STCG this FY. */
+  stclAgainstStcgPaise: z.number().int().min(0),
+  /** STCL applied to LTCG this FY. */
+  stclAgainstLtcgPaise: z.number().int().min(0),
+  /** LTCL applied to LTCG this FY. */
+  ltclAgainstLtcgPaise: z.number().int().min(0),
+});
+export type LossSetoffResult = z.infer<typeof LossSetoffResultSchema>;
+
+export const CapitalPositionSchema = z.object({
+  fy: FySchema,
+  /** Gross gains from capital_gains service (before set-off). */
+  grossStcgPaise: z.number().int(),
+  grossLtcgPaise: z.number().int(),
+  /** Brought-forward losses applied this FY (from prior years). */
+  broughtForwardLossesApplied: z.array(z.object({
+    entryId: z.string().uuid(),
+    originFy: FySchema,
+    lossKind: LossKindSchema,
+    absorbedPaise: z.number().int().min(0),
+  })),
+  setoff: LossSetoffResultSchema,
+  /**
+   * Current-year losses that could not be absorbed this FY (Sec 74 carry-forward).
+   * Reported separately because they arise from this FY's realised trades, not from
+   * the capital_loss_carryforward ledger — the user must create a carry-forward
+   * entry to track them into next year.
+   */
+  currentYearResidualStclPaise: z.number().int().min(0),
+  currentYearResidualLtclPaise: z.number().int().min(0),
+  /** Losses expiring within 2 FYs from now — needs attention. */
+  expiringLosses: z.array(z.object({
+    originFy: FySchema,
+    lossKind: LossKindSchema,
+    remainingPaise: z.number().int().min(0),
+    expiresFy: FySchema,
+  })),
+  /** Assumptions and caveats. */
+  assumptions: z.array(z.string()),
+  isEstimate: z.literal(true),
+  generatedAt: z.string(),
+});
+export type CapitalPosition = z.infer<typeof CapitalPositionSchema>;
+
+export const GetCapitalPositionQuerySchema = z.object({
+  fy: FySchema.optional(),
+});
+
+// ── 13.10 Advance tax & Sec 234B/234C interest ───────────────────────────────
+
+export const AdvanceTaxInstalmentStatusSchema = z.object({
+  /** Statutory instalment due date (ISO). */
+  dueDate: z.string(),
+  /** Cumulative percentage of assessed tax due by this date (15/45/75/100). */
+  cumulativePct: z.number().int().min(0).max(100),
+  /** Cumulative TDS credited through this due date (accepted income events). */
+  cumulativeTdsPaise: z.number().int().min(0),
+  /**
+   * Capital-gains tax attributable through this date — the Sec 234C timing
+   * exception: gains arising after a due date do not burden earlier instalments.
+   */
+  cumulativeCgTaxPaise: z.number().int().min(0),
+  /**
+   * Cumulative advance tax required by this date:
+   * floor(pct% × max(0, ordinaryLiability + CG-through-date − TDS-through-date)).
+   */
+  requiredCumulativePaise: z.number().int().min(0),
+  /**
+   * Shortfall vs the required cumulative amount. Advance-tax PAYMENTS are not
+   * tracked in v1, so this equals requiredCumulativePaise (worst case).
+   */
+  shortfallPaise: z.number().int().min(0),
+  /** Months of deferment for Sec 234C: 3 for Jun/Sep/Dec, 1 for Mar. */
+  defermentMonths: z.number().int().min(0),
+  /**
+   * Sec 234C interest for this instalment = ceil(shortfall × 1%) × months.
+   * Zero for instalments whose due date is still in the future.
+   */
+  interest234CPaise: z.number().int().min(0),
+});
+export type AdvanceTaxInstalmentStatus = z.infer<typeof AdvanceTaxInstalmentStatusSchema>;
+
+export const AdvanceTaxPositionSchema = z.object({
+  fy: FySchema,
+  /** Senior citizens (≥60 on FY end, no business income) are exempt — Sec 207. */
+  seniorCitizenExempt: z.boolean(),
+  income: z.object({
+    /** Accepted income-event gross by kind (all five kinds always present). */
+    grossByKind: z.record(z.string(), z.number().int().min(0)),
+    totalGrossPaise: z.number().int().min(0),
+    totalTdsPaise: z.number().int().min(0),
+  }),
+  /** Net capital gains after brought-forward set-off (full-year view). */
+  netStcgPaise: z.number().int().min(0),
+  netLtcgPaise: z.number().int().min(0),
+  /** Flat-rate tax on the net full-year gains. */
+  cgTaxFullYearPaise: z.number().int().min(0),
+  /** Tax on ordinary (non-CG) income via slabs/rebates/cess. */
+  ordinaryLiabilityPaise: z.number().int().min(0),
+  /** Total assessed tax = ordinary + CG. */
+  assessedTaxPaise: z.number().int().min(0),
+  instalments: z.array(AdvanceTaxInstalmentStatusSchema),
+  interest234CTotalPaise: z.number().int().min(0),
+  /**
+   * Sec 234B: 1%/month from April when <90% of assessed tax is paid by year end.
+   * Advance-tax payments are untracked, so TDS credits stand in for "paid".
+   */
+  interest234BPaise: z.number().int().min(0),
+  interestTotalPaise: z.number().int().min(0),
+  assumptions: z.array(z.string()),
+  isEstimate: z.literal(true),
+  generatedAt: z.string(),
+});
+export type AdvanceTaxPosition = z.infer<typeof AdvanceTaxPositionSchema>;
+
+export const GetAdvanceTaxQuerySchema = z.object({
+  fy: FySchema.optional(),
+});
+
+// ─── 13.13 — AIS / 26AS / Form-16 staged reconciliation ──────────────────────
+
+/** Which tax document a staged import came from. */
+export const TaxStatementKindSchema = z.enum(["ais", "26as", "form16"]);
+export type TaxStatementKind = z.infer<typeof TaxStatementKindSchema>;
+
+/** Review lifecycle, identical to payslips: pending → accepted | rejected. */
+export const TaxStatementStatusSchema = z.enum(["pending", "accepted", "rejected"]);
+export type TaxStatementStatus = z.infer<typeof TaxStatementStatusSchema>;
+
+/** Per-line reconciliation verdict against the income-events ledger. */
+export const TaxLineMatchStatusSchema = z.enum(["matched", "unmatched", "amount_mismatch"]);
+export type TaxLineMatchStatus = z.infer<typeof TaxLineMatchStatusSchema>;
+
+/**
+ * One reported line of a staged statement. `category` reuses the income-event
+ * enumeration so matching is a same-shape comparison.
+ */
+export const TaxStatementLineSchema = z.object({
+  id: z.string().uuid(),
+  statementId: z.string().uuid(),
+  section: z.string().max(16).nullable(),
+  category: IncomeKindSchema,
+  payerName: z.string().nullable(),
+  payerTan: z.string().max(16).nullable(),
+  period: z.string().max(32).nullable(),
+  accrualDate: z.string().nullable(),
+  grossPaise: z.number().int().min(0),
+  tdsPaise: z.number().int().min(0),
+  matchStatus: TaxLineMatchStatusSchema,
+  matchedIncomeEventId: z.string().uuid().nullable(),
+});
+export type TaxStatementLine = z.infer<typeof TaxStatementLineSchema>;
+
+export const TaxStatementSummarySchema = z.object({
+  id: z.string().uuid(),
+  fy: FySchema,
+  docKind: TaxStatementKindSchema,
+  status: TaxStatementStatusSchema,
+  /** Raw document present in object storage (never its contents). */
+  hasDocument: z.boolean(),
+  sourceLabel: z.string().nullable(),
+  lineCount: z.number().int().min(0),
+  grossTotalPaise: z.number().int().min(0),
+  tdsTotalPaise: z.number().int().min(0),
+  matchedCount: z.number().int().min(0),
+  unmatchedCount: z.number().int().min(0),
+  amountMismatchCount: z.number().int().min(0),
+  /** Ledger events for this FY that no reported line accounted for. */
+  unmatchedLedgerCount: z.number().int().min(0),
+  note: z.string().nullable(),
+  createdAt: z.string(),
+});
+export type TaxStatementSummary = z.infer<typeof TaxStatementSummarySchema>;
+
+/**
+ * Reviewable summary of a ledger income event this statement's lines never
+ * accounted for — its id appears in no line's `matchedIncomeEventId`. This is
+ * the line-item detail behind `unmatchedLedgerCount`; deriving it needs no
+ * schema change since it's computed from data already persisted per line.
+ */
+export const UnmatchedLedgerEventSchema = z.object({
+  id: z.string().uuid(),
+  incomeKind: IncomeKindSchema,
+  payerName: z.string().nullable(),
+  grossPaise: z.number().int().min(0),
+  tdsPaise: z.number().int().min(0),
+  accrualDate: z.string(),
+});
+export type UnmatchedLedgerEvent = z.infer<typeof UnmatchedLedgerEventSchema>;
+
+/**
+ * Full statement with lines. The assessee's own PAN is only ever surfaced as
+ * its last 4 characters — the API never echoes more.
+ */
+export const TaxStatementDetailSchema = TaxStatementSummarySchema.extend({
+  /** Last 4 digits of the assessee PAN when stated at import; null otherwise. */
+  panLast4: z.string().length(4).regex(/^\d{4}$/).nullable(),
+  lines: z.array(TaxStatementLineSchema),
+  /**
+   * Ledger events for this FY that no reported line accounted for — the
+   * reviewable list backing `unmatchedLedgerCount`. Detail-only: the list
+   * endpoint (`TaxStatementSummary`) keeps just the count.
+   */
+  unmatchedLedgerEvents: z.array(UnmatchedLedgerEventSchema),
+});
+export type TaxStatementDetail = z.infer<typeof TaxStatementDetailSchema>;
+
+export const TaxStatementListSchema = z.object({
+  fy: FySchema,
+  statements: z.array(TaxStatementSummarySchema),
+});
+export type TaxStatementList = z.infer<typeof TaxStatementListSchema>;
+
+/** One typed-in/pasted row of a manual import. */
+export const CreateTaxStatementLineSchema = z
+  .object({
+    section: z.string().max(16).nullish(),
+    category: IncomeKindSchema,
+    payerName: z.string().max(200).nullish(),
+    payerTan: z
+      .string()
+      .max(16)
+      .regex(/^[A-Za-z0-9]*$/, "alphanumeric only")
+      .nullish(),
+    period: z.string().max(32).nullish(),
+    accrualDate: z.iso.date().nullish(),
+    grossPaise: z.number().int().min(0),
+    tdsPaise: z.number().int().min(0).default(0),
+  })
+  .refine((data) => (data.tdsPaise ?? 0) <= data.grossPaise, {
+    message: "tdsPaise cannot exceed grossPaise",
+    path: ["tdsPaise"],
+  });
+export type CreateTaxStatementLine = z.infer<typeof CreateTaxStatementLineSchema>;
+
+/**
+ * Manual/staged import body — the deterministic path (no AI). The raw PDF/JSON
+ * from TRACES/AIS portal can be attached afterwards via POST /:id/document;
+ * rows are entered by hand or pasted as JSON.
+ */
+export const CreateTaxStatementBodySchema = z.object({
+  fy: FySchema,
+  docKind: TaxStatementKindSchema,
+  /** Last 4 digits of the assessee PAN as printed; full PAN is never accepted. */
+  panLast4: z.string().length(4).regex(/^\d{4}$/).optional(),
+  sourceLabel: z.string().max(200).optional(),
+  note: z.string().max(500).optional(),
+  lines: z.array(CreateTaxStatementLineSchema).max(1000).default([]),
+});
+export type CreateTaxStatementBody = z.infer<typeof CreateTaxStatementBodySchema>;
+
+export const GetTaxStatementsQuerySchema = z.object({
+  fy: FySchema,
+});
+

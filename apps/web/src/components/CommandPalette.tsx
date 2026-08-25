@@ -28,6 +28,7 @@ const PAGES: Array<{ label: string; to: string }> = [
   { label: "Shopping Cart", to: "/shopping/cart" },
   { label: "Pantry", to: "/shopping/pantry" },
   { label: "Price Watch", to: "/shopping/price-watch" },
+  { label: "Tax", to: "/tax" },
 ];
 
 type Item = { key: string; group: string; label: string; hint?: string; to: string };

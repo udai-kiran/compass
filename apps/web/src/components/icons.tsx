@@ -36,7 +36,8 @@ export type IconName =
   | "shopping"
   | "cart"
   | "pantry"
-  | "pricewatch";
+  | "pricewatch"
+  | "tax";
 
 /** SVG inner markup per icon (paths use fill=none + stroke via the <svg>). */
 const PATHS: Record<IconName, React.ReactNode> = {
@@ -227,6 +228,15 @@ const PATHS: Record<IconName, React.ReactNode> = {
     <>
       <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
       <circle cx="12" cy="12" r="3" />
+    </>
+  ),
+  tax: (
+    <>
+      <path d="M6 3h12" />
+      <path d="M6 8h12" />
+      <path d="m6 13 8.5 8" />
+      <path d="M6 13h3" />
+      <path d="M9 13c6.667 0 6.667-10 0-10" />
     </>
   ),
 };

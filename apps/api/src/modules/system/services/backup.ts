@@ -52,6 +52,8 @@ export const ALL_TABLES = [
   "income_events",
   "epf_contributions",
   "deduction_entries",
+  "capital_loss_carryforward",
+  "tax_statements", "tax_statement_lines",
 ] as const;
 
 /** Tables that carry a user_id directly — scoped by that column in the export. */
@@ -84,6 +86,8 @@ export const USER_TABLES: Record<string, string> = {
   income_events: "user_id",
   epf_contributions: "user_id",
   deduction_entries: "user_id",
+  capital_loss_carryforward: "user_id",
+  tax_statements: "user_id",
 };
 
 /**
@@ -106,6 +110,7 @@ export const LINKED_TABLES: Record<string, { fk: string; parent: string; parentU
   cart_draft_items: { fk: "cart_draft_id", parent: "cart_drafts" },
   receipt_lines: { fk: "receipt_id", parent: "receipts" },
   payslip_components: { fk: "payslip_id", parent: "payslips" },
+  tax_statement_lines: { fk: "statement_id", parent: "tax_statements" },
 };
 
 /**
@@ -237,6 +242,7 @@ export const FILE_COLUMNS: ReadonlyArray<{ table: string; column: string }> = [
   { table: "card_statements", column: "stored_path" },
   { table: "receipts", column: "stored_path" },
   { table: "payslips", column: "document_key" },
+  { table: "tax_statements", column: "document_key" },
 ];
 
 /** File references found in an exported per-user dump, in FILE_COLUMNS order. */

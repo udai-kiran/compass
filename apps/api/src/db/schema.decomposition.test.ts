@@ -87,6 +87,7 @@ const taxResidents = new Set([
   "incomeEvents", "incomeEventStatus", "incomeKind", "incomeSourceKind",
   "epfContributions",
   "deductionEntries", "deductionSection", "deductionKind", "eightyDGroup",
+  "capitalLossCarryforward",
 ]);
 
 const protectionResidents = new Set([
@@ -125,8 +126,8 @@ const shoppingResidents = new Set([
 
 describe("db/schema.ts decomposition", () => {
 
-  // T3c: barrel exports exactly 79 tables + 64 enums + users, no duplicates
-  it("exports exactly 79 tables + 64 enums + users with no duplicates", () => {
+  // T3c: barrel exports exactly 82 tables + 67 enums + users, no duplicates
+  it("exports exactly 82 tables + 67 enums + users with no duplicates", () => {
     const tables: string[] = [];
     const enums: string[] = [];
     // Postgres-level object names — JS export keys are unique by construction,
@@ -158,8 +159,8 @@ describe("db/schema.ts decomposition", () => {
       `duplicate enum DB names: ${enumDbNames.filter((n, i) => enumDbNames.indexOf(n) !== i)}`,
     );
 
-    assert.equal(tables.length, 79, `expected 79 tables, got ${tables.length}: ${tables.join(", ")}`);
-    assert.equal(enums.length, 64, `expected 64 enums, got ${enums.length}: ${enums.join(", ")}`);
+    assert.equal(tables.length, 82, `expected 82 tables, got ${tables.length}: ${tables.join(", ")}`);
+    assert.equal(enums.length, 67, `expected 67 enums, got ${enums.length}: ${enums.join(", ")}`);
 
     // users is also in the barrel
     assert.ok(isPgTable(barrel.users), "users should be a pgTable in the barrel");

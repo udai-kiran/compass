@@ -4,6 +4,7 @@ import { sipRoutes } from "./routes/sips.ts";
 import { netWorthRoutes } from "./routes/networth.ts";
 import { accountNpsRoutes } from "./routes/account-nps.ts";
 import { depositDetailRoutes } from "./routes/deposit-details.ts";
+import { taxHarvestRoutes } from "./routes/tax-harvesting.ts";
 
 /**
  * `modules/investments/` — third of 8 Phase-1 module migrations (task 1.3),
@@ -30,4 +31,5 @@ export async function investmentsRoutes(app: FastifyInstance): Promise<void> {
   await app.register(netWorthRoutes);
   await app.register(accountNpsRoutes);
   await app.register(depositDetailRoutes);
+  await app.register(taxHarvestRoutes);
 }

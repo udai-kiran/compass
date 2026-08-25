@@ -156,4 +156,10 @@ export {
   deductionSection,
   deductionKind,
   eightyDGroup,
+  capitalLossCarryforward,
+  taxStatements,
+  taxStatementKind,
+  taxStatementStatus,
+  taxLineMatchStatus,
+  taxStatementLines,
 } from "../modules/tax/schema.ts";

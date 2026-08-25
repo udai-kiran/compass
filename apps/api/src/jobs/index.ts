@@ -16,6 +16,7 @@ import {
 import { createEncryptedBackup } from "../modules/system/services/backup.ts";
 import { evaluateLargeTransactions, evaluateLowBalance, prefEnabled } from "../modules/system/services/prefs.ts";
 import { materializeDue } from "../modules/ledger/services/recurring.ts";
+import { runTaxDeadlineNudges } from "../modules/tax/services/deadline-nudges.ts";
 
 export interface Queues {
   system: Queue;
@@ -146,6 +147,7 @@ export const LEDGER_DAY_SCHEDULERS = [
   "networth.snapshot.close",
   "autopilot.review",
   "autopilot.goals",
+  "tax.deadline-nudges",
 ] as const;
 
 /** Schedulers with no ledger-date dependency, deliberately left on local time. */
@@ -225,6 +227,14 @@ export async function startJobs(app: FastifyInstance): Promise<void> {
     "autopilot.goals",
     { pattern: "0 6 * * 1", tz: LEDGER_DAY_TZ },
     { name: "autopilot.goals" },
+  );
+  // Tax deadline nudges: 80C/80D headroom escalation and advance-tax reminders.
+  // Pinned to LEDGER_DAY_TZ: derives today's UTC date and must agree with the
+  // FY boundary (31 March) computed from that same date string.
+  await system.upsertJobScheduler(
+    "tax.deadline-nudges",
+    { pattern: "35 0 * * *", tz: LEDGER_DAY_TZ },
+    { name: "tax.deadline-nudges" },
   );
 
   const alerts = new Queue("alerts", { connection });
@@ -330,6 +340,21 @@ export async function startJobs(app: FastifyInstance): Promise<void> {
           if (res.fired > 0) app.log.info({ fired: res.fired }, "autopilot: goal proposals sent");
           if (res.processed > 0 && res.errors.length === res.processed) {
             throw new Error(`autopilot goal review failed for all ${res.processed} users`);
+          }
+          return;
+        }
+        case "tax.deadline-nudges": {
+          const res = await runTaxDeadlineNudges(app.db);
+          for (const e of res.errors) {
+            app.log.error(
+              { userId: e.userId, err: e.error },
+              "tax deadline nudges: evaluation failed for user",
+            );
+          }
+          if (res.fired > 0) app.log.info({ fired: res.fired }, "tax deadline nudges sent");
+          // Every user failing is systemic — fail the job so it shows red in BullMQ.
+          if (res.processed > 0 && res.errors.length === res.processed) {
+            throw new Error(`tax deadline nudges failed for all ${res.processed} users`);
           }
           return;
         }
