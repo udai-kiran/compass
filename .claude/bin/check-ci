@@ -1,0 +1,140 @@
+#!/usr/bin/env bash
+# check-ci — resolve a GitHub Actions run for a commit, record its conclusion,
+# and extract the test-job summary lines from the run log. Read-only. Non-zero
+# exit if the run's conclusion is not success (or cannot be determined).
+set -uo pipefail
+
+usage() {
+    cat >&2 <<'EOF'
+Usage: check-ci <report-path> [-c <commit>] [-r <run-id>] [-w <workflow>]
+                [-b <branch>] [-g <grep-pattern>]
+
+  <report-path>  file the literal CI evidence is written to (repo-root-relative
+                 unless absolute). Append-only: an existing file is never overwritten.
+  -c <commit>    commit SHA to find the CI run for (default: HEAD).
+  -r <run-id>    use this workflow run id directly (overrides -c resolution).
+  -w <workflow>  workflow name to match (default: CI).
+  -b <branch>    branch to list runs from (default: current branch).
+  -g <pattern>   extra ERE; matching run-log lines are extracted into the report
+                 (e.g. 'lists.route'). node:test summary lines are always extracted.
+
+Records the run's conclusion and extracts the test summary (# / U+2139 tests,
+pass, fail, skipped; check/cross marks; 'not ok') plus any -g matches from
+`gh run view <id> --log`. Exit codes: 0 success; 3 gh unauthenticated;
+4 no run found; 5 conclusion unknown/incomplete; 6 conclusion not success.
+EOF
+}
+
+if [[ $# -lt 1 || -z "${1:-}" ]]; then usage; exit 2; fi
+case "$1" in -h|--help) usage; exit 0 ;; esac
+dest="$1"; shift
+commit=""; runid=""; workflow="CI"; branch=""; pattern=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -c) commit="${2:-}"; shift 2 ;;
+        -r) runid="${2:-}"; shift 2 ;;
+        -w) workflow="${2:-}"; shift 2 ;;
+        -b) branch="${2:-}"; shift 2 ;;
+        -g) pattern="${2:-}"; shift 2 ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo "error: unknown argument: $1" >&2; usage; exit 2 ;;
+    esac
+done
+
+command -v git >/dev/null 2>&1 || { echo "error: git not found on PATH" >&2; exit 127; }
+command -v gh  >/dev/null 2>&1 || { echo "error: gh CLI not found on PATH" >&2; exit 127; }
+gh auth status >/dev/null 2>&1 || { echo "error: gh is not authenticated (run: gh auth login)" >&2; exit 3; }
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || { echo "error: not inside a git repository" >&2; exit 1; }
+cd "$repo_root"
+
+[[ "$dest" == /* ]] || dest="$repo_root/$dest"
+if [[ -e "$dest" ]]; then
+    echo "error: report path already exists: $dest" >&2
+    echo "       CI reports are append-only; use the next iteration number" >&2
+    exit 1
+fi
+mkdir -p "$(dirname "$dest")" || { echo "error: cannot create report directory: $(dirname "$dest")" >&2; exit 1; }
+
+[[ -z "$branch" ]] && branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+[[ -z "$commit" ]] && commit="$(git rev-parse HEAD 2>/dev/null)"
+
+tmp="$(mktemp "${TMPDIR:-/tmp}/check-ci.XXXXXX")" || { echo "error: mktemp failed" >&2; exit 1; }
+logtmp="$(mktemp "${TMPDIR:-/tmp}/check-ci-log.XXXXXX")" || { echo "error: mktemp failed" >&2; exit 1; }
+trap 'rm -f "$tmp" "$logtmp"' EXIT
+
+echo "ci report target: $dest" >&2
+
+if [[ -z "$runid" ]]; then
+    echo "resolving run: workflow=$workflow branch=$branch commit=${commit:0:12}" >&2
+    runid="$(gh run list --workflow "$workflow" --branch "$branch" --limit 40 \
+        --json databaseId,headSha,status,conclusion \
+        --jq "map(select(.headSha==\"$commit\")) | .[0].databaseId" 2>/dev/null)"
+fi
+if [[ -z "$runid" || "$runid" == "null" ]]; then
+    echo "error: no '$workflow' run found for commit $commit on branch $branch" >&2
+    echo "       (try -r <run-id>, -b <branch>, or a different -w <workflow>)" >&2
+    exit 4
+fi
+echo "using run id: $runid" >&2
+
+gv() { gh run view "$runid" --json "$1" --jq ".$1" 2>/dev/null; }
+conclusion="$(gv conclusion)"
+status="$(gv status)"
+title="$(gv displayTitle)"
+headsha="$(gv headSha)"
+url="$(gv url)"
+event="$(gv event)"
+created="$(gv createdAt)"
+
+{
+    echo "check-ci report"
+    echo "repo:           $repo_root"
+    echo "workflow:       $workflow"
+    echo "branch:         $branch"
+    echo "target commit:  $commit"
+    echo "run id:         $runid"
+    echo "run title:      $title"
+    echo "run head sha:   $headsha"
+    echo "run event:      $event"
+    echo "run created:    $created"
+    echo "run url:        $url"
+    echo "run status:     $status"
+    echo "run conclusion: $conclusion"
+    echo "date checked:   $(date -u +%FT%TZ)"
+    echo
+} >>"$tmp"
+
+if [[ -n "$headsha" && -n "$commit" && "$headsha" != "$commit" ]]; then
+    echo "WARNING: resolved run head sha ($headsha) != target commit ($commit)" | tee -a "$tmp" >&2
+fi
+
+echo "fetching run log (this can be large)..." >&2
+if gh run view "$runid" --log >"$logtmp" 2>/dev/null; then
+    {
+        echo "=== node:test summary lines ==="
+        grep -nE '(#|'$'ℹ'')[[:space:]]+(tests|pass|fail|skipped|todo|cancelled|duration)|^(not ok|ok)[[:space:]]|'$'✔''|'$'✖''|'$'✗' "$logtmp" || echo "(no summary lines matched)"
+        echo
+        if [[ -n "$pattern" ]]; then
+            echo "=== lines matching -g pattern: $pattern ==="
+            grep -nE "$pattern" "$logtmp" || echo "(no lines matched pattern)"
+            echo
+        fi
+        echo "=== failure markers ==="
+        grep -nE 'Process completed with exit code [1-9]|##\[error\]|AssertionError|not ok [0-9]' "$logtmp" || echo "(no failure markers matched)"
+    } >>"$tmp"
+else
+    echo "NOTE: could not fetch full run log (run may be in progress); metadata only." | tee -a "$tmp" >&2
+fi
+
+if ! cp "$tmp" "$dest"; then
+    echo "error: cannot write report to $dest; report kept at $tmp" >&2
+    trap - EXIT
+    exit 1
+fi
+echo "ci report written to: $dest" >&2
+
+case "$conclusion" in
+    success)   echo "run conclusion: success" >&2; exit 0 ;;
+    ""|null)   echo "run conclusion: UNKNOWN/incomplete (status=$status)" >&2; exit 5 ;;
+    *)         echo "run conclusion: $conclusion (NOT success)" >&2; exit 6 ;;
+esac

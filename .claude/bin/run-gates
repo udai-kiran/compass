@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+# run-gates — run the repo's typecheck/lint/test gates and capture literal output.
+# Read-only w.r.t. source; writes only the named report file. Non-zero exit if any gate failed.
+set -uo pipefail
+
+usage() {
+    cat >&2 <<'EOF'
+Usage: run-gates <report-path> [-w <workspace>] [-t <test-target>]
+
+  <report-path>   file the literal gate output is written to (repo-root-relative
+                  unless absolute), e.g. tasks/<task>/gates-1.txt.
+                  Append-only: an existing file is never overwritten.
+  -w <workspace>  narrow typecheck+test to one npm workspace (e.g. apps/api).
+  -t <target>     run `node --test <target>` for the test gate instead of the
+                  npm script (a single file or dir). Note: bare `node --test`
+                  does not pass apps/api's --experimental-test-module-mocks flag.
+
+Runs, from the repo root, in order:
+  1. typecheck   (npm run typecheck [-w WS])
+  2. lint        (npm run lint)                # root eslint, always full
+  3. test        (npm run test [-w WS] | node --test TARGET)
+
+Each gate's exact command line, combined stdout+stderr, and exit code are
+written verbatim to the report. Overall exit is non-zero if ANY gate failed.
+EOF
+}
+
+if [[ $# -lt 1 || -z "${1:-}" ]]; then usage; exit 2; fi
+case "$1" in -h|--help) usage; exit 0 ;; esac
+dest="$1"; shift
+ws=""; target=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -w) ws="${2:-}"; shift 2 ;;
+        -t) target="${2:-}"; shift 2 ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo "error: unknown argument: $1" >&2; usage; exit 2 ;;
+    esac
+done
+
+command -v git >/dev/null 2>&1 || { echo "error: git not found on PATH" >&2; exit 127; }
+command -v npm >/dev/null 2>&1 || { echo "error: npm not found on PATH" >&2; exit 127; }
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || { echo "error: not inside a git repository" >&2; exit 1; }
+
+[[ "$dest" == /* ]] || dest="$repo_root/$dest"
+if [[ -e "$dest" ]]; then
+    echo "error: report path already exists: $dest" >&2
+    echo "       gate reports are append-only; use the next iteration number" >&2
+    exit 1
+fi
+mkdir -p "$(dirname "$dest")" || { echo "error: cannot create report directory: $(dirname "$dest")" >&2; exit 1; }
+
+tmp="$(mktemp "${TMPDIR:-/tmp}/run-gates.XXXXXX")" || { echo "error: mktemp failed" >&2; exit 1; }
+trap 'rm -f "$tmp"' EXIT
+
+echo "gates report target: $dest" >&2
+
+{
+    echo "run-gates report"
+    echo "repo:      $repo_root"
+    echo "commit:    $(cd "$repo_root" && git rev-parse HEAD 2>/dev/null)"
+    echo "branch:    $(cd "$repo_root" && git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+    echo "date:      $(date -u +%FT%TZ)"
+    echo "workspace: ${ws:-<all>}"
+    echo "test-tgt:  ${target:-<npm run test>}"
+    echo
+} >>"$tmp"
+
+overall=0
+run_gate() {
+    local name="$1"; shift
+    echo "running gate: $name -> $*" >&2
+    {
+        echo "=== gate: $name ==="
+        echo "\$ $*"
+        echo "--- output ---"
+    } >>"$tmp"
+    local status=0
+    ( cd "$repo_root" && "$@" ) >>"$tmp" 2>&1 || status=$?
+    {
+        echo "--- exit code: $status ---"
+        echo
+    } >>"$tmp"
+    [[ $status -ne 0 ]] && overall=1
+    echo "gate $name exit: $status" >&2
+    return 0
+}
+
+if [[ -n "$ws" ]]; then
+    run_gate typecheck npm run typecheck -w "$ws"
+else
+    run_gate typecheck npm run typecheck
+fi
+
+run_gate lint npm run lint
+
+if [[ -n "$target" ]]; then
+    run_gate test node --test "$target"
+elif [[ -n "$ws" ]]; then
+    run_gate test npm run test -w "$ws"
+else
+    run_gate test npm run test
+fi
+
+if ! cp "$tmp" "$dest"; then
+    echo "error: cannot write report to $dest; report kept at $tmp" >&2
+    trap - EXIT
+    exit 1
+fi
+echo "gates report written to: $dest" >&2
+if [[ $overall -eq 0 ]]; then
+    echo "all gates passed" >&2
+else
+    echo "one or more gates FAILED" >&2
+fi
+exit "$overall"
