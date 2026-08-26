@@ -1,6 +1,8 @@
 import type { FastifyInstance } from "fastify";
 import { retirementRoutes } from "./routes/retirement.ts";
 import { insuranceRoutes } from "./routes/insurance.ts";
+import { calendarRoutes } from "./routes/calendar.ts";
+import { dossierRoutes } from "./routes/dossier.ts";
 
 /**
  * `modules/protection/` — fourth of 8 Phase-1 module migrations (task 1.4),
@@ -20,4 +22,6 @@ import { insuranceRoutes } from "./routes/insurance.ts";
 export async function protectionRoutes(app: FastifyInstance): Promise<void> {
   await app.register(retirementRoutes);
   await app.register(insuranceRoutes);
+  await app.register(calendarRoutes);
+  await app.register(dossierRoutes);
 }

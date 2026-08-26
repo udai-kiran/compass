@@ -53,6 +53,8 @@ function makeAccount(overrides: {
     goalId: null,
     linkedAccountId: null,
     schemeOpenedDate: overrides.schemeOpenedDate ?? null,
+    nominee: "",
+    nomineePersonId: null,
     sortOrder: 0,
     archivedAt: null,
     systemKind: null,

@@ -202,6 +202,9 @@ export const AccountSchema = z.object({
    * window) report 'data_missing' rather than guessing.
    */
   schemeOpenedDate: z.string().nullable(),
+  /** Nominee name; "" when unset. Nomination ≠ inheritance. */
+  nominee: z.string(),
+  nomineePersonId: z.uuid().nullable(),
   sortOrder: z.number().int(),
   archivedAt: z.string().nullable(),
 });
@@ -258,6 +261,8 @@ export const CreateAccountSchema = z.object({
   openingBalancePaise: z.number().int().default(0),
   /** PPF/SSY/NPS opening date (YYYY-MM-DD); null for non-scheme accounts. */
   schemeOpenedDate: z.iso.date().nullable().default(null),
+  nominee: z.string().max(120).default(""),
+  nomineePersonId: z.uuid().nullable().default(null),
 });
 export type CreateAccount = z.infer<typeof CreateAccountSchema>;
 
@@ -276,6 +281,8 @@ export const UpdateAccountSchema = z.object({
   schemeOpenedDate: z.iso.date().nullable().optional(),
   sortOrder: z.number().int().optional(),
   archived: z.boolean().optional(),
+  nominee: z.string().max(120).optional(),
+  nomineePersonId: z.uuid().nullable().optional(),
 });
 export type UpdateAccount = z.infer<typeof UpdateAccountSchema>;
 export type UpdateAccountInput = z.input<typeof UpdateAccountSchema>;

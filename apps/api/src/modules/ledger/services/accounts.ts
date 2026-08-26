@@ -148,6 +148,8 @@ function toAccount(row: AccountRow): Account {
     goalId: row.goalId,
     linkedAccountId: row.linkedAccountId ?? null,
     schemeOpenedDate: row.schemeOpenedDate ?? null,
+    nominee: row.nominee,
+    nomineePersonId: row.nomineePersonId ?? null,
     sortOrder: row.sortOrder,
     archivedAt: row.archivedAt?.toISOString() ?? null,
   };

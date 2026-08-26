@@ -36,6 +36,8 @@ function toHolding(h: HoldingRow): Holding {
     goalId: h.goalId,
     archived: h.archivedAt !== null,
     isElss: h.isElss,
+    nominee: h.nominee,
+    nomineePersonId: h.nomineePersonId ?? null,
   };
 }
 

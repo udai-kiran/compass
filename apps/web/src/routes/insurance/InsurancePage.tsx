@@ -15,6 +15,7 @@ import {
 import { usePolicies, usePolicyMutations } from "../../lib/insurance-queries.ts";
 import { toast } from "../../lib/toast.tsx";
 import { PremiumsPanel } from "./PremiumsPanel.tsx";
+import { AdequacyPanel } from "./AdequacyPanel.tsx";
 import { useResources } from "../../lib/resource-queries.ts";
 import { DateField } from "../../components/DateField.tsx";
 
@@ -85,6 +86,8 @@ export function InsurancePage() {
           {adding ? "Close" : "Add policy"}
         </button>
       </header>
+
+      <AdequacyPanel />
 
       <div className="mb-4 flex gap-1 rounded-lg border border-slate-200 bg-white p-1">
         {KIND_ORDER.map((k) => (

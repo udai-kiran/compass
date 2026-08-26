@@ -481,6 +481,9 @@ export const HoldingSchema = z.object({
   archived: z.boolean(),
   /** Whether this mutual-fund holding is an ELSS (Section 80C deduction eligible). */
   isElss: z.boolean(),
+  /** Nominee name; "" when unset. Nomination ≠ inheritance. */
+  nominee: z.string(),
+  nomineePersonId: z.uuid().nullable(),
 });
 export type Holding = z.infer<typeof HoldingSchema>;
 
@@ -496,6 +499,8 @@ export const CreateHoldingSchema = z.object({
   gainsTaxClass: GainsTaxClassSchema.optional(),
   /** Whether this mutual-fund holding is an ELSS (Section 80C deduction eligible). Defaults to false. */
   isElss: z.boolean().default(false),
+  nominee: z.string().max(120).default(""),
+  nomineePersonId: z.uuid().nullable().default(null),
 });
 export type CreateHolding = z.input<typeof CreateHoldingSchema>;
 
@@ -512,6 +517,8 @@ export const UpdateHoldingSchema = z.object({
   archived: z.boolean().optional(),
   /** Whether this mutual-fund holding is an ELSS (Section 80C deduction eligible). */
   isElss: z.boolean().optional(),
+  nominee: z.string().max(120).optional(),
+  nomineePersonId: z.uuid().nullable().optional(),
 });
 export type UpdateHolding = z.infer<typeof UpdateHoldingSchema>;
 

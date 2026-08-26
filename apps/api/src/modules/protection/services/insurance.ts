@@ -2,6 +2,7 @@ import { and, desc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
 import type {
   CreateInsurancePolicy,
   HealthCard,
+  InsuranceAdequacyReport,
   InsurancePolicy,
   LogPremium,
   PolicyPremiums,
@@ -24,6 +25,8 @@ import { assertUploadable } from "../../ledger/services/attachments.ts";
 import { createTransaction } from "../../ledger/services/transactions.ts";
 import { assertOwnedResource } from "../../ledger/services/resources.ts";
 import { computeClaimReadiness, computeWaitingPeriodEndDates } from "./claim-readiness.ts";
+import { getIncomeSurplus } from "../../planning/services/income-surplus.ts";
+import { computeInsuranceAdequacy } from "./insurance-adequacy.ts";
 
 type PolicyRow = typeof insurancePolicies.$inferSelect;
 type HealthCardRow = typeof insuranceHealthCards.$inferSelect;
@@ -555,4 +558,136 @@ export async function logPremium(
     resourceId: policy.resourceId,
   });
   return listPolicyPremiums(db, userId, policyId);
+}
+
+/**
+ * Compute the insurance adequacy report for a user.
+ * Gathers income, family members, account balances, and policies from the DB,
+ * then delegates to the pure computeInsuranceAdequacy function.
+ */
+export async function getAdequacyReport(
+  db: Db,
+  userId: string,
+  assumptions: {
+    incomeReplacementYears: number;
+    medicalInflationBps: number;
+    healthProjectionYears: number;
+  },
+): Promise<InsuranceAdequacyReport> {
+  const today = todayInIST();
+
+  // Fetch income data from the last 12 months of ledger history
+  const incomeSurplus = await getIncomeSurplus(db, userId, 12);
+
+  // Compute annual income: median of non-bonus months × 12
+  let annualIncomePaise: number | null = null;
+  if (incomeSurplus.historyMonths >= 3) {
+    const nonBonusMonths = incomeSurplus.months.filter((m) => !m.likelyBonus);
+    if (nonBonusMonths.length > 0) {
+      // Use the total surplus + committed outflows to recover median income
+      // Simpler: sum all non-bonus income, divide by count, multiply by 12
+      const totalNonBonus = nonBonusMonths.reduce((s, m) => s + m.incomePaise, 0);
+      const meanMonthlyIncome = totalNonBonus / nonBonusMonths.length;
+      annualIncomePaise = Math.round(meanMonthlyIncome * 12);
+    }
+  }
+
+  // Fetch family members
+  const members = await db
+    .select({
+      id: familyMembers.id,
+      name: familyMembers.name,
+      relationship: familyMembers.relationship,
+      dateOfBirth: familyMembers.dateOfBirth,
+      educationStage: familyMembers.educationStage,
+    })
+    .from(familyMembers)
+    .where(eq(familyMembers.userId, userId));
+
+  // Fetch account balances for liquid assets and liabilities
+  const accountBalanceRows = await db.execute(sql`
+    select a.type,
+           coalesce(p.total, 0)::bigint as posting_total
+    from accounts a
+    left join (
+      select po.account_id, sum(po.amount_paise) as total
+      from postings po
+      join transactions t on t.id = po.transaction_id
+      where t.user_id = ${userId} and t.deleted_at is null and t.date <= ${today}
+      group by po.account_id
+    ) p on p.account_id = a.id
+    where a.user_id = ${userId}
+      and a.archived_at is null
+      and a.system_kind is null
+      and a.type in ('bank', 'cash', 'investment', 'loan', 'home_loan_od', 'overdraft', 'credit_card')
+  `);
+
+  let liquidAssetsPaise = 0;
+  let outstandingLiabilitiesPaise = 0;
+  const LIABILITY_TYPES = new Set(["loan", "home_loan_od", "overdraft", "credit_card"]);
+
+  for (const row of accountBalanceRows.rows as Array<{ type: string; posting_total: string }>) {
+    const balance = Number(row.posting_total);
+    if (LIABILITY_TYPES.has(row.type)) {
+      // Liabilities have negative balances in the ledger; take absolute value
+      outstandingLiabilitiesPaise += Math.abs(balance);
+    } else {
+      // Liquid assets: bank, cash, investment — positive balances only
+      if (balance > 0) liquidAssetsPaise += balance;
+    }
+  }
+
+  // Fetch insurance policies (all kinds, for the user)
+  const policyRows = await db
+    .select({
+      kind: insurancePolicies.kind,
+      sumAssuredPaise: insurancePolicies.sumAssuredPaise,
+      ownership: insurancePolicies.ownership,
+      healthType: insurancePolicies.healthType,
+      deductiblePaise: insurancePolicies.deductiblePaise,
+      coPayBps: insurancePolicies.coPayBps,
+      roomRentLimitPaise: insurancePolicies.roomRentLimitPaise,
+      roomRentLimitBps: insurancePolicies.roomRentLimitBps,
+      archivedAt: insurancePolicies.archivedAt,
+    })
+    .from(insurancePolicies)
+    .where(eq(insurancePolicies.userId, userId));
+
+  const lifePolicies = policyRows
+    .filter((p) => p.kind === "life")
+    .map((p) => ({
+      sumAssuredPaise: p.sumAssuredPaise,
+      ownership: p.ownership as "personal" | "employer",
+      archived: p.archivedAt !== null,
+    }));
+
+  const healthPolicies = policyRows
+    .filter((p) => p.kind === "health")
+    .map((p) => ({
+      sumAssuredPaise: p.sumAssuredPaise,
+      ownership: p.ownership as "personal" | "employer",
+      healthType: p.healthType,
+      deductiblePaise: p.deductiblePaise,
+      coPayBps: p.coPayBps,
+      roomRentLimitPaise: p.roomRentLimitPaise,
+      roomRentLimitBps: p.roomRentLimitBps,
+      archived: p.archivedAt !== null,
+    }));
+
+  return computeInsuranceAdequacy({
+    annualIncomePaise,
+    dependents: members.map((m) => ({
+      id: m.id,
+      name: m.name,
+      relationship: m.relationship,
+      dateOfBirth: m.dateOfBirth ?? null,
+      educationStage: m.educationStage ?? null,
+    })),
+    outstandingLiabilitiesPaise,
+    liquidAssetsPaise,
+    lifePolicies,
+    healthPolicies,
+    today,
+    assumptions,
+  });
 }

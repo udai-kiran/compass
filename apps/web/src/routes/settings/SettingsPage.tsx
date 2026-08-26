@@ -136,6 +136,8 @@ function AccountsPanel() {
         openingBalancePaise:
           isOverdraft ? -availedPaise : Math.round(parseFloat(opening || "0") * 100),
         schemeOpenedDate: null,
+        nominee: "",
+        nomineePersonId: null,
       });
       if (isOverdraft) {
         await apiPut(

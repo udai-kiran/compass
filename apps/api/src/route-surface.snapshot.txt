@@ -106,6 +106,7 @@ GET /api/inbox
 GET /api/inbox/count
 GET /api/inbox/orphaned
 GET /api/insights
+GET /api/insurance/adequacy
 GET /api/insurance/health-cards/:cardId
 GET /api/insurance/policies
 GET /api/insurance/policies/:id/document
@@ -125,6 +126,8 @@ GET /api/planning/multi-goal-allocation
 GET /api/portfolio
 GET /api/profile
 GET /api/projection-settings
+GET /api/protection/calendar
+GET /api/protection/dossier
 GET /api/recurring
 GET /api/reports
 GET /api/reports.csv
@@ -250,6 +253,7 @@ HEAD /api/inbox
 HEAD /api/inbox/count
 HEAD /api/inbox/orphaned
 HEAD /api/insights
+HEAD /api/insurance/adequacy
 HEAD /api/insurance/health-cards/:cardId
 HEAD /api/insurance/policies
 HEAD /api/insurance/policies/:id/document
@@ -269,6 +273,8 @@ HEAD /api/planning/multi-goal-allocation
 HEAD /api/portfolio
 HEAD /api/profile
 HEAD /api/projection-settings
+HEAD /api/protection/calendar
+HEAD /api/protection/dossier
 HEAD /api/recurring
 HEAD /api/reports
 HEAD /api/reports.csv
