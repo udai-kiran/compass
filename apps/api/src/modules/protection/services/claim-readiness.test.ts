@@ -34,6 +34,18 @@ describe("computeWaitingPeriodEndDates", () => {
     );
   });
 
+  it("returns null per-field when that waiting period is explicitly zero (matches the checklist's omission rule)", () => {
+    assert.deepEqual(
+      computeWaitingPeriodEndDates({
+        startDate: "2025-01-01",
+        initialWaitingDays: 0,
+        preExistingWaitingMonths: 0,
+        maternityWaitingMonths: 0,
+      }),
+      { initialWaitingEndDate: null, preExistingWaitingEndDate: null, maternityWaitingEndDate: null },
+    );
+  });
+
   it("adds days for the initial waiting period", () => {
     const { initialWaitingEndDate } = computeWaitingPeriodEndDates({
       startDate: "2025-06-01",
@@ -84,7 +96,9 @@ const baseHealthInput = {
   hasDocument: true,
   healthCardCount: 1,
   tpaName: "MediAssist",
+  tpaContactPhone: "1800-000-0000",
   renewalDate: "2027-01-01",
+  premiumFrequency: "yearly" as const,
   disclosuresComplete: true,
   nominee: "Spouse",
   nomineePersonId: null,
@@ -109,13 +123,27 @@ describe("computeClaimReadiness", () => {
   });
 
   it("names the specific missing artifact for a document-less, TPA-less policy", () => {
-    const items = computeClaimReadiness({ ...baseHealthInput, hasDocument: false, tpaName: "" });
+    const items = computeClaimReadiness({ ...baseHealthInput, hasDocument: false, tpaName: "", tpaContactPhone: "" });
     const doc = items.find((i) => i.key === "document")!;
     assert.equal(doc.ready, false);
     assert.equal(doc.missingArtifact, "Policy document (PDF/scan)");
     const tpa = items.find((i) => i.key === "tpa-contact")!;
     assert.equal(tpa.ready, false);
     assert.equal(tpa.missingArtifact, "TPA name and contact");
+  });
+
+  it("a TPA name with no contact phone is not ready, and names just the phone as missing", () => {
+    const items = computeClaimReadiness({ ...baseHealthInput, tpaContactPhone: "" });
+    const tpa = items.find((i) => i.key === "tpa-contact")!;
+    assert.equal(tpa.ready, false);
+    assert.equal(tpa.missingArtifact, "TPA contact phone");
+  });
+
+  it("a contact phone with no TPA name is not ready, and names just the name as missing", () => {
+    const items = computeClaimReadiness({ ...baseHealthInput, tpaName: "" });
+    const tpa = items.find((i) => i.key === "tpa-contact")!;
+    assert.equal(tpa.ready, false);
+    assert.equal(tpa.missingArtifact, "TPA name");
   });
 
   it("flags an un-elapsed waiting period with its end date named", () => {
@@ -141,9 +169,26 @@ describe("computeClaimReadiness", () => {
     assert.equal(r.missingArtifact, "Renewal payment (was due 2026-01-01)");
   });
 
-  it("treats a null renewal date (single-premium policy) as always current", () => {
-    const items = computeClaimReadiness({ ...baseHealthInput, renewalDate: null });
+  it("treats a null renewal date as current only for a single-premium policy", () => {
+    const items = computeClaimReadiness({ ...baseHealthInput, renewalDate: null, premiumFrequency: "single" });
     assert.equal(items.find((i) => i.key === "renewal")!.ready, true);
+  });
+
+  it("flags a null renewal date on a recurring-premium policy as a gap, not always-current", () => {
+    const items = computeClaimReadiness({ ...baseHealthInput, renewalDate: null, premiumFrequency: "yearly" });
+    const r = items.find((i) => i.key === "renewal")!;
+    assert.equal(r.ready, false);
+    assert.equal(r.missingArtifact, "Renewal date on file");
+  });
+
+  it("names the missing policy start date, not a literal null, when a wait is set but there's no start date to count from", () => {
+    const items = computeClaimReadiness({
+      ...baseHealthInput,
+      waitingEndDates: { initialWaitingEndDate: null, preExistingWaitingEndDate: null, maternityWaitingEndDate: null },
+    });
+    const w = items.find((i) => i.key === "waiting-initial")!;
+    assert.equal(w.ready, false);
+    assert.equal(w.missingArtifact, "Policy start date");
   });
 
   it("accepts a linked family member in place of a free-text nominee", () => {
@@ -158,7 +203,9 @@ describe("computeClaimReadiness", () => {
       hasDocument: false,
       healthCardCount: 0,
       tpaName: "",
+      tpaContactPhone: "",
       renewalDate: null,
+      premiumFrequency: "single",
       disclosuresComplete: false,
       nominee: "",
       nomineePersonId: null,
@@ -178,7 +225,9 @@ describe("computeClaimReadiness", () => {
       hasDocument: true,
       healthCardCount: 0,
       tpaName: "",
+      tpaContactPhone: "",
       renewalDate: "2027-01-01",
+      premiumFrequency: "yearly",
       disclosuresComplete: false,
       nominee: "Self",
       nomineePersonId: null,

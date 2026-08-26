@@ -12,7 +12,7 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { createPolicy, sumPolicyPremiumsInRange } from "./insurance.ts";
+import { createPolicy, sumPolicyPremiumsInRange, updatePolicy } from "./insurance.ts";
 import { HttpError } from "../../../lib/errors.ts";
 
 // ─── DB stub helpers ──────────────────────────────────────────────────────────
@@ -54,6 +54,16 @@ function deleteBuilder() {
   };
 }
 
+/** An update builder that records every .set() payload into `captured` for the test to inspect. */
+function updateBuilder(captured: Record<string, unknown>[]) {
+  return {
+    set: (vals: Record<string, unknown>) => {
+      captured.push(vals);
+      return { where: () => Promise.resolve([]) };
+    },
+  };
+}
+
 /**
  * Minimal DB stub. Callers provide per-call results via queues:
  *   `selectResults` — each `db.select()` call consumes the next entry.
@@ -69,9 +79,12 @@ function makeDb(options: {
   insertResults?: unknown[][];
   findFirstPolicy?: Record<string, unknown> | null;
   findManyCards?: unknown[];
+  /** every db.update(insurancePolicies).set(vals) call's `vals`, in order */
+  capturedUpdates?: Record<string, unknown>[];
 } = {}): unknown {
   let selectIdx = 0;
   let insertIdx = 0;
+  const capturedUpdates = options.capturedUpdates ?? [];
   const db: Record<string, unknown> = {
     select: (_fields?: unknown) => {
       const rows = (options.selectResults ?? [])[selectIdx++] ?? [];
@@ -81,6 +94,7 @@ function makeDb(options: {
       const rows = (options.insertResults ?? [])[insertIdx++] ?? [];
       return insertBuilder(rows);
     },
+    update: (_table: unknown) => updateBuilder(capturedUpdates),
     delete: (_table: unknown) => deleteBuilder(),
     transaction: async (cb: (tx: unknown) => Promise<unknown>) => {
       // Reset indices at transaction start so inner calls use the same queue
@@ -363,6 +377,131 @@ describe("createPolicy: structured terms, waiting periods & claim-readiness", ()
         notes: "",
       } as never),
     );
+  });
+});
+
+// ─── updatePolicy: structured terms preserved/cleared correctly (Codex review fixes) ──
+
+describe("updatePolicy: omitted structured-term fields are preserved, not defaulted away", () => {
+  it("does not overwrite deductible/co-pay/TPA/ownership when the update body omits them (mirrors the current web form, which doesn't send these fields)", async () => {
+    const existingRow = makePolicyRow({
+      kind: "health",
+      deductiblePaise: 50_000,
+      coPayBps: 2000,
+      tpaName: "MediAssist",
+      tpaContactPhone: "1800-000-0000",
+      ownership: "employer",
+      employerName: "Acme Corp",
+    });
+    const capturedUpdates: Record<string, unknown>[] = [];
+    const db = makeDb({ findFirstPolicy: existingRow, capturedUpdates });
+
+    // Exactly what apps/web's PolicyForm sends today — no new-field keys at all.
+    await updatePolicy(db as never, "user-1", "policy-1", {
+      name: "Test Policy",
+      kind: "health",
+      vehicleType: null,
+      vehicleRegNo: "",
+      resourceId: null,
+      healthType: "indemnity",
+      insurer: "",
+      policyNumber: "",
+      policyWordingUrl: "",
+      sumAssuredPaise: 0,
+      bonusPaise: 0,
+      premiumPaise: 0,
+      premiumFrequency: "yearly",
+      startDate: null,
+      renewalDate: null,
+      maturityDate: null,
+      nominee: "",
+      coveredMembers: [],
+      notes: "",
+    });
+
+    assert.equal(capturedUpdates.length, 1);
+    const set = capturedUpdates[0]!;
+    for (const key of ["deductiblePaise", "coPayBps", "tpaName", "tpaContactPhone", "ownership", "employerName"]) {
+      assert.equal(key in set, false, `${key} must be absent from the SET clause (left unchanged), not defaulted`);
+    }
+  });
+
+  it("force-clears health-only fields when this request changes the policy's kind away from health, even though it doesn't mention them", async () => {
+    const existingRow = makePolicyRow({
+      kind: "health",
+      deductiblePaise: 50_000,
+      coPayBps: 2000,
+      tpaName: "MediAssist",
+      tpaContactPhone: "1800-000-0000",
+      restorationBenefit: true,
+      ncbBps: 1000,
+      subLimits: [{ label: "Cataract", capPaise: 400000 }],
+    });
+    const capturedUpdates: Record<string, unknown>[] = [];
+    const db = makeDb({ findFirstPolicy: existingRow, capturedUpdates });
+
+    await updatePolicy(db as never, "user-1", "policy-1", {
+      name: "Term Life",
+      kind: "life", // switching away from health; body says nothing about the health fields
+      vehicleType: null,
+      vehicleRegNo: "",
+      resourceId: null,
+      healthType: null,
+      insurer: "",
+      policyNumber: "",
+      policyWordingUrl: "",
+      sumAssuredPaise: 0,
+      bonusPaise: 0,
+      premiumPaise: 0,
+      premiumFrequency: "yearly",
+      startDate: null,
+      renewalDate: null,
+      maturityDate: null,
+      nominee: "",
+      coveredMembers: [],
+      notes: "",
+    } as never);
+
+    const set = capturedUpdates[0]!;
+    assert.equal(set.deductiblePaise, null);
+    assert.equal(set.coPayBps, null);
+    assert.equal(set.tpaName, "");
+    assert.equal(set.tpaContactPhone, "");
+    assert.equal(set.restorationBenefit, false);
+    assert.equal(set.ncbBps, 0);
+    assert.deepEqual(set.subLimits, []);
+  });
+
+  it("force-clears employerName when this request changes ownership away from employer, even though it doesn't mention employerName", async () => {
+    const existingRow = makePolicyRow({ kind: "health", ownership: "employer", employerName: "Acme Corp" });
+    const capturedUpdates: Record<string, unknown>[] = [];
+    const db = makeDb({ findFirstPolicy: existingRow, capturedUpdates });
+
+    await updatePolicy(db as never, "user-1", "policy-1", {
+      name: "Health Plan",
+      kind: "health",
+      vehicleType: null,
+      vehicleRegNo: "",
+      resourceId: null,
+      healthType: "indemnity",
+      insurer: "",
+      policyNumber: "",
+      policyWordingUrl: "",
+      sumAssuredPaise: 0,
+      bonusPaise: 0,
+      premiumPaise: 0,
+      premiumFrequency: "yearly",
+      startDate: null,
+      renewalDate: null,
+      maturityDate: null,
+      nominee: "",
+      coveredMembers: [],
+      ownership: "personal", // switching away from employer
+      notes: "",
+    });
+
+    const set = capturedUpdates[0]!;
+    assert.equal(set.employerName, "");
   });
 });
 

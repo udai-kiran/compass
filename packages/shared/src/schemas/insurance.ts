@@ -222,17 +222,23 @@ type PolicyConsistency = {
   vehicleRegNo: string;
   healthType: HealthType | null;
   maturityDate: string | null;
-  ownership: PolicyOwnership;
-  employerName: string;
-  deductiblePaise: number | null;
-  coPayBps: number | null;
-  roomRentLimitPaise: number | null;
-  roomRentLimitBps: number | null;
-  icuLimitPaise: number | null;
-  icuLimitBps: number | null;
-  initialWaitingDays: number | null;
-  preExistingWaitingMonths: number | null;
-  maternityWaitingMonths: number | null;
+  ownership?: PolicyOwnership;
+  employerName?: string;
+  deductiblePaise?: number | null;
+  coPayBps?: number | null;
+  roomRentLimitPaise?: number | null;
+  roomRentLimitBps?: number | null;
+  icuLimitPaise?: number | null;
+  icuLimitBps?: number | null;
+  initialWaitingDays?: number | null;
+  preExistingWaitingMonths?: number | null;
+  maternityWaitingMonths?: number | null;
+  subLimits?: SubLimit[];
+  restorationBenefit?: boolean;
+  ncbBps?: number;
+  ncbMaxBps?: number;
+  tpaName?: string;
+  tpaContactPhone?: string;
 };
 /** Fields that only mean something for a health policy — must be null otherwise. */
 const HEALTH_ONLY_NULLABLE_FIELDS = [
@@ -246,6 +252,16 @@ const HEALTH_ONLY_NULLABLE_FIELDS = [
   "preExistingWaitingMonths",
   "maternityWaitingMonths",
 ] as const;
+/**
+ * On update, an omitted field (`undefined`) means "leave unchanged" — see
+ * updateFieldOverrides below — so it can't be validated against the rest of
+ * this same request (the resulting kind/ownership might match the field's
+ * requirement once merged with the untouched DB row). Only a field the
+ * caller actually supplied is checked against the rest of the request.
+ * insurance.ts's updatePolicy() additionally re-nulls health-only fields
+ * server-side whenever the *effective* kind isn't "health", so a leftover
+ * stale value can never persist even if this request doesn't touch them.
+ */
 function checkPolicyConsistency(value: PolicyConsistency, issues: z.core.$ZodRawIssue[]) {
   if (value.kind !== "vehicle" && value.vehicleType !== null) {
     issues.push({
@@ -281,7 +297,7 @@ function checkPolicyConsistency(value: PolicyConsistency, issues: z.core.$ZodRaw
   }
   if (value.kind !== "health") {
     for (const field of HEALTH_ONLY_NULLABLE_FIELDS) {
-      if (value[field] !== null) {
+      if (value[field] !== null && value[field] !== undefined) {
         issues.push({
           code: "custom",
           path: [field],
@@ -291,13 +307,33 @@ function checkPolicyConsistency(value: PolicyConsistency, issues: z.core.$ZodRaw
       }
     }
   }
-  if (value.ownership !== "employer" && value.employerName !== "") {
+  if (value.ownership !== "employer" && value.employerName !== "" && value.employerName !== undefined) {
     issues.push({
       code: "custom",
       path: ["employerName"],
       message: "employerName only applies when ownership is \"employer\"",
       input: value.employerName,
     });
+  }
+  if (value.kind !== "health") {
+    if (value.subLimits !== undefined && value.subLimits.length > 0) {
+      issues.push({ code: "custom", path: ["subLimits"], message: "subLimits only applies to a health policy", input: value.subLimits });
+    }
+    if (value.restorationBenefit !== undefined && value.restorationBenefit !== false) {
+      issues.push({ code: "custom", path: ["restorationBenefit"], message: "restorationBenefit only applies to a health policy", input: value.restorationBenefit });
+    }
+    if (value.ncbBps !== undefined && value.ncbBps !== 0) {
+      issues.push({ code: "custom", path: ["ncbBps"], message: "ncbBps only applies to a health policy", input: value.ncbBps });
+    }
+    if (value.ncbMaxBps !== undefined && value.ncbMaxBps !== 0) {
+      issues.push({ code: "custom", path: ["ncbMaxBps"], message: "ncbMaxBps only applies to a health policy", input: value.ncbMaxBps });
+    }
+    if (value.tpaName !== undefined && value.tpaName !== "") {
+      issues.push({ code: "custom", path: ["tpaName"], message: "tpaName only applies to a health policy", input: value.tpaName });
+    }
+    if (value.tpaContactPhone !== undefined && value.tpaContactPhone !== "") {
+      issues.push({ code: "custom", path: ["tpaContactPhone"], message: "tpaContactPhone only applies to a health policy", input: value.tpaContactPhone });
+    }
   }
 }
 
@@ -306,8 +342,39 @@ export const CreateInsurancePolicySchema = z
   .check((ctx) => checkPolicyConsistency(ctx.value, ctx.issues));
 export type CreateInsurancePolicy = z.input<typeof CreateInsurancePolicySchema>;
 
+/**
+ * On update, an omitted structured-term field means "leave the stored value
+ * unchanged" — NOT "reset to its create-time default". The web form (still
+ * pre-14.5) doesn't send these fields at all, so defaulting them on every
+ * edit would silently erase deductible/co-pay/limits/waiting periods/etc.
+ * `.optional()` (no `.default()`) makes `undefined` pass through as
+ * `undefined`, which insurance.ts's updatePolicy() then treats as "don't
+ * touch this column" rather than spreading it into the SQL SET clause.
+ */
+const updateFieldOverrides = {
+  ownership: PolicyOwnershipSchema.optional(),
+  employerName: z.string().max(120).optional(),
+  deductiblePaise: z.number().int().min(0).nullable().optional(),
+  coPayBps: z.number().int().min(0).max(10000).nullable().optional(),
+  roomRentLimitPaise: z.number().int().min(0).nullable().optional(),
+  roomRentLimitBps: z.number().int().min(0).max(10000).nullable().optional(),
+  icuLimitPaise: z.number().int().min(0).nullable().optional(),
+  icuLimitBps: z.number().int().min(0).max(10000).nullable().optional(),
+  subLimits: z.array(SubLimitSchema).max(30).optional(),
+  initialWaitingDays: z.number().int().min(0).nullable().optional(),
+  preExistingWaitingMonths: z.number().int().min(0).nullable().optional(),
+  maternityWaitingMonths: z.number().int().min(0).nullable().optional(),
+  restorationBenefit: z.boolean().optional(),
+  ncbBps: z.number().int().min(0).max(10000).optional(),
+  ncbMaxBps: z.number().int().min(0).max(10000).optional(),
+  tpaName: z.string().max(120).optional(),
+  tpaContactPhone: z.string().max(30).optional(),
+  exclusions: z.array(z.string().min(1).max(200)).max(30).optional(),
+  disclosuresComplete: z.boolean().optional(),
+};
+
 export const UpdateInsurancePolicySchema = z
-  .object({ ...policyFields, archived: z.boolean().default(false) })
+  .object({ ...policyFields, ...updateFieldOverrides, archived: z.boolean().default(false) })
   .check((ctx) => checkPolicyConsistency(ctx.value, ctx.issues));
 export type UpdateInsurancePolicy = z.input<typeof UpdateInsurancePolicySchema>;
 

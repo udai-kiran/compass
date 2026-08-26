@@ -34,7 +34,9 @@ export type WaitingPeriodEndDates = {
 /**
  * The date each waiting period lapses, from the policy's start date. Null
  * when the policy has no start date, or the particular waiting period isn't
- * set (non-health policies leave all three null).
+ * positively set (non-health policies leave all three null) — 0/negative and
+ * unset are treated the same as "nothing to wait out", matching
+ * computeClaimReadiness's item-omission rule below.
  */
 export function computeWaitingPeriodEndDates(input: {
   startDate: string | null;
@@ -47,11 +49,16 @@ export function computeWaitingPeriodEndDates(input: {
     return { initialWaitingEndDate: null, preExistingWaitingEndDate: null, maternityWaitingEndDate: null };
   }
   return {
-    initialWaitingEndDate: initialWaitingDays != null ? addDaysIso(startDate, initialWaitingDays) : null,
+    initialWaitingEndDate:
+      initialWaitingDays != null && initialWaitingDays > 0 ? addDaysIso(startDate, initialWaitingDays) : null,
     preExistingWaitingEndDate:
-      preExistingWaitingMonths != null ? addMonthsIso(startDate, preExistingWaitingMonths) : null,
+      preExistingWaitingMonths != null && preExistingWaitingMonths > 0
+        ? addMonthsIso(startDate, preExistingWaitingMonths)
+        : null,
     maternityWaitingEndDate:
-      maternityWaitingMonths != null ? addMonthsIso(startDate, maternityWaitingMonths) : null,
+      maternityWaitingMonths != null && maternityWaitingMonths > 0
+        ? addMonthsIso(startDate, maternityWaitingMonths)
+        : null,
   };
 }
 
@@ -70,7 +77,10 @@ export type ClaimReadinessInput = {
   hasDocument: boolean;
   healthCardCount: number;
   tpaName: string;
+  tpaContactPhone: string;
   renewalDate: string | null;
+  /** "single" = one-time premium — the only case where no renewal date is expected */
+  premiumFrequency: "monthly" | "quarterly" | "half_yearly" | "yearly" | "single";
   disclosuresComplete: boolean;
   nominee: string;
   nomineePersonId: string | null;
@@ -104,12 +114,21 @@ export function computeClaimReadiness(input: ClaimReadinessInput): ClaimReadines
     missingArtifact: hasNominee ? null : "Nominee name or linked family member",
   });
 
-  const renewalCurrent = input.renewalDate === null || input.renewalDate >= input.today;
+  // A null renewal date is only expected — and thus fine — for a single-premium
+  // policy; any recurring frequency without one is a gap of its own.
+  const renewalCurrent =
+    input.renewalDate !== null
+      ? input.renewalDate >= input.today
+      : input.premiumFrequency === "single";
   items.push({
     key: "renewal",
     label: "Renewal current",
     ready: renewalCurrent,
-    missingArtifact: renewalCurrent ? null : `Renewal payment (was due ${input.renewalDate})`,
+    missingArtifact: renewalCurrent
+      ? null
+      : input.renewalDate === null
+        ? "Renewal date on file"
+        : `Renewal payment (was due ${input.renewalDate})`,
   });
 
   if (input.kind !== "health") return items;
@@ -121,12 +140,19 @@ export function computeClaimReadiness(input: ClaimReadinessInput): ClaimReadines
     missingArtifact: input.healthCardCount > 0 ? null : "Health/e-card upload",
   });
 
-  const hasTpa = input.tpaName.trim() !== "";
+  // A name with no way to reach them isn't a usable contact, and vice versa.
+  const hasTpa = input.tpaName.trim() !== "" && input.tpaContactPhone.trim() !== "";
   items.push({
     key: "tpa-contact",
     label: "TPA / network contact on file",
     ready: hasTpa,
-    missingArtifact: hasTpa ? null : "TPA name and contact",
+    missingArtifact: hasTpa
+      ? null
+      : input.tpaName.trim() === "" && input.tpaContactPhone.trim() === ""
+        ? "TPA name and contact"
+        : input.tpaName.trim() === ""
+          ? "TPA name"
+          : "TPA contact phone",
   });
 
   items.push({
@@ -171,7 +197,12 @@ export function computeClaimReadiness(input: ClaimReadinessInput): ClaimReadines
       key: w.key,
       label: w.label,
       ready,
-      missingArtifact: ready ? null : `Waiting period runs to ${w.endDate}`,
+      missingArtifact: ready
+        ? null
+        // w.set > 0 but endDate is null only happens with no policy start date to count from.
+        : w.endDate === null
+          ? "Policy start date"
+          : `Waiting period runs to ${w.endDate}`,
     });
   }
 

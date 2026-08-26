@@ -50,7 +50,9 @@ function toPolicy(
     hasDocument: p.documentPath !== null,
     healthCardCount: cards.length,
     tpaName: p.tpaName,
+    tpaContactPhone: p.tpaContactPhone,
     renewalDate: p.renewalDate,
+    premiumFrequency: p.premiumFrequency,
     disclosuresComplete: p.disclosuresComplete,
     nominee: p.nominee,
     nomineePersonId: p.nomineePersonId ?? null,
@@ -229,15 +231,65 @@ export async function createPolicy(
   return getPolicyWithCards(db, userId, policyId);
 }
 
+/**
+ * Health-only fields, reset to their empty value. Applied whenever the
+ * policy's *effective* kind (this request's, or the existing row's if this
+ * request doesn't touch `kind`) isn't "health" — so a value set while the
+ * policy was health-kind can never linger as a stale leftover after it's
+ * edited to life/vehicle, even if that same request doesn't mention these
+ * fields at all (the Zod schema alone can't catch that case — see
+ * checkPolicyConsistency's comment in packages/shared).
+ */
+const HEALTH_ONLY_RESET: Record<string, unknown> = {
+  deductiblePaise: null,
+  coPayBps: null,
+  roomRentLimitPaise: null,
+  roomRentLimitBps: null,
+  icuLimitPaise: null,
+  icuLimitBps: null,
+  subLimits: [] as SubLimit[],
+  initialWaitingDays: null,
+  preExistingWaitingMonths: null,
+  maternityWaitingMonths: null,
+  restorationBenefit: false,
+  ncbBps: 0,
+  ncbMaxBps: 0,
+  tpaName: "",
+  tpaContactPhone: "",
+};
+
 export async function updatePolicy(
   db: Db,
   userId: string,
   id: string,
   input: UpdateInsurancePolicy,
 ): Promise<InsurancePolicy> {
-  await ownedPolicy(db, userId, id);
-  const { archived, coveredPersonIds, ...fields } = UpdateInsurancePolicySchema.parse(input);
-  await assertOwnedResource(db, userId, fields.resourceId);
+  const existing = await ownedPolicy(db, userId, id);
+  const { archived, coveredPersonIds, ...parsedFields } = UpdateInsurancePolicySchema.parse(input);
+  await assertOwnedResource(db, userId, parsedFields.resourceId);
+
+  // Omitted structured-term fields mean "leave unchanged" (see the schema's
+  // doc comment) — drop the `undefined` entries so they never reach the SQL
+  // SET clause, rather than relying on driver-specific undefined handling.
+  const fields: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(parsedFields)) {
+    if (v !== undefined) fields[k] = v;
+  }
+
+  // Force-clear health-only fields / employerName once the *effective*
+  // kind/ownership (this request's, else the existing row's) rules them out
+  // — closes the gap a same-request kind/ownership change would otherwise
+  // leave: a caller resending old health terms while switching to "life",
+  // or omitting them entirely and having them silently persist.
+  const effectiveKind = fields.kind ?? existing.kind;
+  if (effectiveKind !== "health") {
+    Object.assign(fields, HEALTH_ONLY_RESET);
+  }
+  const effectiveOwnership = fields.ownership ?? existing.ownership;
+  if (effectiveOwnership !== "employer") {
+    fields.employerName = "";
+  }
+
   await db.transaction(async (tx) => {
     await tx
       .update(insurancePolicies)
