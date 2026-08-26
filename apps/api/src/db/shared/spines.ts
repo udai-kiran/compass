@@ -6,6 +6,7 @@ import {
   date,
   index,
   integer,
+  jsonb,
   pgEnum,
   pgTable,
   primaryKey,
@@ -115,6 +116,8 @@ export const premiumFrequency = pgEnum("premium_frequency", [
   "yearly",
   "single",
 ]);
+/** Employer cover ends with the job — the distinction adequacy (14.2) flags as a continuity risk. */
+export const policyOwnership = pgEnum("policy_ownership", ["personal", "employer"]);
 
 /**
  * An insurance policy — a standalone record, not an account. It carries its own
@@ -167,6 +170,46 @@ export const insurancePolicies = pgTable(
       .array()
       .notNull()
       .default(sql`'{}'::text[]`),
+    /** employer-provided cover ends with the job — flagged as a continuity risk by 14.2. */
+    ownership: policyOwnership("ownership").notNull().default("personal"),
+    /** employer providing the cover; "" unless ownership = "employer" */
+    employerName: text("employer_name").notNull().default(""),
+    /** amount payable by the insured before the insurer pays, in paise. Health only; null for life/vehicle. */
+    deductiblePaise: bigint("deductible_paise", { mode: "number" }),
+    /** insured's share of every claim, in basis points (2000 = 20%). Health only; null for life/vehicle. */
+    coPayBps: integer("co_pay_bps"),
+    /** flat per-day room-rent cap, in paise. Mutually exclusive with roomRentLimitBps in practice — policies quote one or the other. Health only. */
+    roomRentLimitPaise: bigint("room_rent_limit_paise", { mode: "number" }),
+    /** room-rent cap as basis points of sum insured per day (e.g. 100 = 1%/day). Health only. */
+    roomRentLimitBps: integer("room_rent_limit_bps"),
+    /** flat per-day ICU cap, in paise. Health only. */
+    icuLimitPaise: bigint("icu_limit_paise", { mode: "number" }),
+    /** ICU cap as basis points of sum insured per day. Health only. */
+    icuLimitBps: integer("icu_limit_bps"),
+    /** disease/procedure sub-limits, e.g. cataract or maternity caps — [{label, capPaise}]. Health only; '[]' elsewhere. */
+    subLimits: jsonb("sub_limits").notNull().default(sql`'[]'::jsonb`),
+    /** days from startDate before any illness (non-accident) claim is admissible. Health only; null for life/vehicle. */
+    initialWaitingDays: integer("initial_waiting_days"),
+    /** months from startDate before a pre-existing-disease claim is admissible. Health only; null for life/vehicle. */
+    preExistingWaitingMonths: integer("pre_existing_waiting_months"),
+    /** months from startDate before a maternity claim is admissible. Health only; null for life/vehicle. */
+    maternityWaitingMonths: integer("maternity_waiting_months"),
+    /** sum insured is reinstated after an exhausting claim. Health only. */
+    restorationBenefit: boolean("restoration_benefit").notNull().default(false),
+    /** currently accrued no-claim-bonus loading on the sum insured, in basis points. Health only. */
+    ncbBps: integer("ncb_bps").notNull().default(0),
+    /** cap on ncbBps this policy allows. Health only. */
+    ncbMaxBps: integer("ncb_max_bps").notNull().default(0),
+    /** third-party administrator handling claims for this policy; "" if unset. Health only. */
+    tpaName: text("tpa_name").notNull().default(""),
+    tpaContactPhone: text("tpa_contact_phone").notNull().default(""),
+    /** named exclusions, e.g. "cosmetic surgery", "pre-existing diabetes (2 yrs)" */
+    exclusions: text("exclusions")
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    /** user attests all proposal-form disclosures (medical history, habits, etc.) were made truthfully and completely */
+    disclosuresComplete: boolean("disclosures_complete").notNull().default(false),
     /** uploaded policy document (single file, stored like an attachment); null when none. */
     documentPath: text("document_path"),
     documentName: text("document_name"),

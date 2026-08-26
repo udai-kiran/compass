@@ -161,7 +161,7 @@ describe("db/schema.ts decomposition", () => {
     );
 
     assert.equal(tables.length, 83, `expected 83 tables, got ${tables.length}: ${tables.join(", ")}`);
-    assert.equal(enums.length, 67, `expected 67 enums, got ${enums.length}: ${enums.join(", ")}`);
+    assert.equal(enums.length, 68, `expected 68 enums, got ${enums.length}: ${enums.join(", ")}`);
 
     // users is also in the barrel
     assert.ok(isPgTable(barrel.users), "users should be a pgTable in the barrel");
@@ -256,7 +256,7 @@ describe("db/schema.ts decomposition", () => {
       { name: "hubs", mod: hubs as unknown as Record<string, unknown>, keys: ["accountType", "emailClass", "emailIngestStatus", "accountSystemKind"] },
       { name: "persons", mod: persons as unknown as Record<string, unknown>, keys: ["familyRelationship", "educationStage"] },
       { name: "recurring", mod: recurring as unknown as Record<string, unknown>, keys: ["recurringFrequency", "recurringKind"] },
-      { name: "spines", mod: spines as unknown as Record<string, unknown>, keys: ["assetClass", "gainsTaxClass", "insuranceKind", "vehicleKind", "healthType", "premiumFrequency", "sipTargetKind", "sipStatus", "sipFundingSource", "sipFrequency"] },
+      { name: "spines", mod: spines as unknown as Record<string, unknown>, keys: ["assetClass", "gainsTaxClass", "insuranceKind", "vehicleKind", "healthType", "premiumFrequency", "policyOwnership", "sipTargetKind", "sipStatus", "sipFundingSource", "sipFrequency"] },
       { name: "ledger", mod: ledgerShared as unknown as Record<string, unknown>, keys: ["transactionSource"] },
     ];
 

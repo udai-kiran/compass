@@ -5,11 +5,13 @@ import type {
   InsurancePolicy,
   LogPremium,
   PolicyPremiums,
+  SubLimit,
   UpdateInsurancePolicy,
 } from "@compass/shared";
 import {
   CreateInsurancePolicySchema,
   LogPremiumSchema,
+  todayInIST,
   UpdateInsurancePolicySchema,
 } from "@compass/shared";
 import type { Db, DbOrTx } from "../../../db/index.ts";
@@ -21,6 +23,7 @@ import type { Storage } from "../../../lib/storage.ts";
 import { assertUploadable } from "../../ledger/services/attachments.ts";
 import { createTransaction } from "../../ledger/services/transactions.ts";
 import { assertOwnedResource } from "../../ledger/services/resources.ts";
+import { computeClaimReadiness, computeWaitingPeriodEndDates } from "./claim-readiness.ts";
 
 type PolicyRow = typeof insurancePolicies.$inferSelect;
 type HealthCardRow = typeof insuranceHealthCards.$inferSelect;
@@ -33,7 +36,31 @@ function toPolicy(
   p: PolicyRow,
   cards: HealthCardRow[] = [],
   coveredPersonIds: string[] = [],
+  today: string = todayInIST(),
 ): InsurancePolicy {
+  const waitingEndDates = computeWaitingPeriodEndDates({
+    startDate: p.startDate,
+    initialWaitingDays: p.initialWaitingDays,
+    preExistingWaitingMonths: p.preExistingWaitingMonths,
+    maternityWaitingMonths: p.maternityWaitingMonths,
+  });
+  const claimReadiness = computeClaimReadiness({
+    kind: p.kind,
+    today,
+    hasDocument: p.documentPath !== null,
+    healthCardCount: cards.length,
+    tpaName: p.tpaName,
+    tpaContactPhone: p.tpaContactPhone,
+    renewalDate: p.renewalDate,
+    premiumFrequency: p.premiumFrequency,
+    disclosuresComplete: p.disclosuresComplete,
+    nominee: p.nominee,
+    nomineePersonId: p.nomineePersonId ?? null,
+    initialWaitingDays: p.initialWaitingDays,
+    preExistingWaitingMonths: p.preExistingWaitingMonths,
+    maternityWaitingMonths: p.maternityWaitingMonths,
+    waitingEndDates,
+  });
   return {
     id: p.id,
     name: p.name,
@@ -56,6 +83,29 @@ function toPolicy(
     nomineePersonId: p.nomineePersonId ?? null,
     coveredMembers: p.coveredMembers,
     coveredPersonIds,
+    ownership: p.ownership,
+    employerName: p.employerName,
+    deductiblePaise: p.deductiblePaise,
+    coPayBps: p.coPayBps,
+    roomRentLimitPaise: p.roomRentLimitPaise,
+    roomRentLimitBps: p.roomRentLimitBps,
+    icuLimitPaise: p.icuLimitPaise,
+    icuLimitBps: p.icuLimitBps,
+    subLimits: p.subLimits as SubLimit[],
+    initialWaitingDays: p.initialWaitingDays,
+    preExistingWaitingMonths: p.preExistingWaitingMonths,
+    maternityWaitingMonths: p.maternityWaitingMonths,
+    initialWaitingEndDate: waitingEndDates.initialWaitingEndDate,
+    preExistingWaitingEndDate: waitingEndDates.preExistingWaitingEndDate,
+    maternityWaitingEndDate: waitingEndDates.maternityWaitingEndDate,
+    restorationBenefit: p.restorationBenefit,
+    ncbBps: p.ncbBps,
+    ncbMaxBps: p.ncbMaxBps,
+    tpaName: p.tpaName,
+    tpaContactPhone: p.tpaContactPhone,
+    exclusions: p.exclusions,
+    disclosuresComplete: p.disclosuresComplete,
+    claimReadiness,
     documentName: p.documentName,
     documentMime: p.documentMime,
     documentSizeBytes: p.documentSizeBytes,
@@ -155,8 +205,9 @@ export async function listPolicies(db: Db, userId: string): Promise<InsurancePol
     list.push(cp.personId);
     byCoveredPolicy.set(cp.policyId, list);
   }
+  const today = todayInIST();
   return rows.map((r) =>
-    toPolicy(r, byPolicy.get(r.id) ?? [], byCoveredPolicy.get(r.id) ?? []),
+    toPolicy(r, byPolicy.get(r.id) ?? [], byCoveredPolicy.get(r.id) ?? [], today),
   );
 }
 
@@ -180,15 +231,65 @@ export async function createPolicy(
   return getPolicyWithCards(db, userId, policyId);
 }
 
+/**
+ * Health-only fields, reset to their empty value. Applied whenever the
+ * policy's *effective* kind (this request's, or the existing row's if this
+ * request doesn't touch `kind`) isn't "health" — so a value set while the
+ * policy was health-kind can never linger as a stale leftover after it's
+ * edited to life/vehicle, even if that same request doesn't mention these
+ * fields at all (the Zod schema alone can't catch that case — see
+ * checkPolicyConsistency's comment in packages/shared).
+ */
+const HEALTH_ONLY_RESET: Record<string, unknown> = {
+  deductiblePaise: null,
+  coPayBps: null,
+  roomRentLimitPaise: null,
+  roomRentLimitBps: null,
+  icuLimitPaise: null,
+  icuLimitBps: null,
+  subLimits: [] as SubLimit[],
+  initialWaitingDays: null,
+  preExistingWaitingMonths: null,
+  maternityWaitingMonths: null,
+  restorationBenefit: false,
+  ncbBps: 0,
+  ncbMaxBps: 0,
+  tpaName: "",
+  tpaContactPhone: "",
+};
+
 export async function updatePolicy(
   db: Db,
   userId: string,
   id: string,
   input: UpdateInsurancePolicy,
 ): Promise<InsurancePolicy> {
-  await ownedPolicy(db, userId, id);
-  const { archived, coveredPersonIds, ...fields } = UpdateInsurancePolicySchema.parse(input);
-  await assertOwnedResource(db, userId, fields.resourceId);
+  const existing = await ownedPolicy(db, userId, id);
+  const { archived, coveredPersonIds, ...parsedFields } = UpdateInsurancePolicySchema.parse(input);
+  await assertOwnedResource(db, userId, parsedFields.resourceId);
+
+  // Omitted structured-term fields mean "leave unchanged" (see the schema's
+  // doc comment) — drop the `undefined` entries so they never reach the SQL
+  // SET clause, rather than relying on driver-specific undefined handling.
+  const fields: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(parsedFields)) {
+    if (v !== undefined) fields[k] = v;
+  }
+
+  // Force-clear health-only fields / employerName once the *effective*
+  // kind/ownership (this request's, else the existing row's) rules them out
+  // — closes the gap a same-request kind/ownership change would otherwise
+  // leave: a caller resending old health terms while switching to "life",
+  // or omitting them entirely and having them silently persist.
+  const effectiveKind = fields.kind ?? existing.kind;
+  if (effectiveKind !== "health") {
+    Object.assign(fields, HEALTH_ONLY_RESET);
+  }
+  const effectiveOwnership = fields.ownership ?? existing.ownership;
+  if (effectiveOwnership !== "employer") {
+    fields.employerName = "";
+  }
+
   await db.transaction(async (tx) => {
     await tx
       .update(insurancePolicies)

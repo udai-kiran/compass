@@ -28,7 +28,7 @@ import { accounts } from "../../db/shared/hubs.ts";
 import { insurancePolicies } from "../../db/shared/spines.ts";
 
 // Re-export shared symbols (including those imported above for FKs).
-export { insurancePolicies, insuranceKind, vehicleKind, healthType, premiumFrequency, policyCoveredPersons } from "../../db/shared/spines.ts";
+export { insurancePolicies, insuranceKind, vehicleKind, healthType, premiumFrequency, policyOwnership, policyCoveredPersons } from "../../db/shared/spines.ts";
 
 export const retirementDetails = pgTable("retirement_details", {
   accountId: uuid("account_id")

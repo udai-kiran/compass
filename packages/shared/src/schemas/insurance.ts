@@ -46,6 +46,27 @@ export const PremiumFrequencySchema = z.enum([
 ]);
 export type PremiumFrequency = z.infer<typeof PremiumFrequencySchema>;
 
+/** Employer cover ends with the job — flagged as a continuity risk by adequacy (14.2). */
+export const PolicyOwnershipSchema = z.enum(["personal", "employer"]);
+export type PolicyOwnership = z.infer<typeof PolicyOwnershipSchema>;
+
+/** A disease/procedure sub-limit, e.g. cataract or maternity caps within a health policy. */
+export const SubLimitSchema = z.object({
+  label: z.string().min(1).max(120),
+  capPaise: z.number().int().min(0),
+});
+export type SubLimit = z.infer<typeof SubLimitSchema>;
+
+/** One item on a policy's claim-readiness checklist, with the specific gap named. */
+export const ClaimReadinessItemSchema = z.object({
+  key: z.string(),
+  label: z.string(),
+  ready: z.boolean(),
+  /** the specific missing artifact or action — null once ready */
+  missingArtifact: z.string().nullable(),
+});
+export type ClaimReadinessItem = z.infer<typeof ClaimReadinessItemSchema>;
+
 /** An uploaded health card (family-floater: one per covered member). */
 export const HealthCardSchema = z.object({
   id: z.uuid(),
@@ -93,6 +114,49 @@ export const InsurancePolicySchema = z.object({
   coveredPersonIds: z.array(z.uuid()),
   /** people covered by the policy (e.g. a family-floater's members) */
   coveredMembers: z.array(z.string()),
+  /** employer-provided cover ends with the job — see PolicyOwnershipSchema */
+  ownership: PolicyOwnershipSchema,
+  /** employer providing the cover; "" unless ownership = "employer" */
+  employerName: z.string(),
+  /** amount payable by the insured before the insurer pays, in paise. Health only; null otherwise. */
+  deductiblePaise: z.number().int().nullable(),
+  /** insured's share of every claim, in basis points (2000 = 20%). Health only; null otherwise. */
+  coPayBps: z.number().int().nullable(),
+  /** flat per-day room-rent cap, in paise. Health only; null otherwise. */
+  roomRentLimitPaise: z.number().int().nullable(),
+  /** room-rent cap as basis points of sum insured per day (100 = 1%/day). Health only; null otherwise. */
+  roomRentLimitBps: z.number().int().nullable(),
+  /** flat per-day ICU cap, in paise. Health only; null otherwise. */
+  icuLimitPaise: z.number().int().nullable(),
+  /** ICU cap as basis points of sum insured per day. Health only; null otherwise. */
+  icuLimitBps: z.number().int().nullable(),
+  /** disease/procedure sub-limits, e.g. cataract or maternity caps */
+  subLimits: z.array(SubLimitSchema),
+  /** days from startDate before an illness (non-accident) claim is admissible. Health only; null otherwise. */
+  initialWaitingDays: z.number().int().nullable(),
+  /** months from startDate before a pre-existing-disease claim is admissible. Health only; null otherwise. */
+  preExistingWaitingMonths: z.number().int().nullable(),
+  /** months from startDate before a maternity claim is admissible. Health only; null otherwise. */
+  maternityWaitingMonths: z.number().int().nullable(),
+  /** the date each waiting period lapses, computed from startDate; null if unset or no startDate */
+  initialWaitingEndDate: z.iso.date().nullable(),
+  preExistingWaitingEndDate: z.iso.date().nullable(),
+  maternityWaitingEndDate: z.iso.date().nullable(),
+  /** sum insured is reinstated after an exhausting claim. Health only. */
+  restorationBenefit: z.boolean(),
+  /** currently accrued no-claim-bonus loading on the sum insured, in basis points */
+  ncbBps: z.number().int(),
+  /** cap on ncbBps this policy allows */
+  ncbMaxBps: z.number().int(),
+  /** third-party administrator handling claims; "" if unset */
+  tpaName: z.string(),
+  tpaContactPhone: z.string(),
+  /** named exclusions, e.g. "cosmetic surgery", "pre-existing diabetes (2 yrs)" */
+  exclusions: z.array(z.string()),
+  /** user attests all proposal-form disclosures were made truthfully and completely */
+  disclosuresComplete: z.boolean(),
+  /** claim-readiness checklist, computed as of today — see computeClaimReadiness */
+  claimReadiness: z.array(ClaimReadinessItemSchema),
   /** uploaded policy document metadata; null fields when no file is attached */
   documentName: z.string().nullable(),
   documentMime: z.string().nullable(),
@@ -128,6 +192,25 @@ const policyFields = {
   coveredPersonIds: z.array(z.uuid()).optional(),
   /** covered members, each a non-empty name; up to 20 */
   coveredMembers: z.array(z.string().min(1).max(120)).max(20).default([]),
+  ownership: PolicyOwnershipSchema.default("personal"),
+  employerName: z.string().max(120).default(""),
+  deductiblePaise: z.number().int().min(0).nullable().default(null),
+  coPayBps: z.number().int().min(0).max(10000).nullable().default(null),
+  roomRentLimitPaise: z.number().int().min(0).nullable().default(null),
+  roomRentLimitBps: z.number().int().min(0).max(10000).nullable().default(null),
+  icuLimitPaise: z.number().int().min(0).nullable().default(null),
+  icuLimitBps: z.number().int().min(0).max(10000).nullable().default(null),
+  subLimits: z.array(SubLimitSchema).max(30).default([]),
+  initialWaitingDays: z.number().int().min(0).nullable().default(null),
+  preExistingWaitingMonths: z.number().int().min(0).nullable().default(null),
+  maternityWaitingMonths: z.number().int().min(0).nullable().default(null),
+  restorationBenefit: z.boolean().default(false),
+  ncbBps: z.number().int().min(0).max(10000).default(0),
+  ncbMaxBps: z.number().int().min(0).max(10000).default(0),
+  tpaName: z.string().max(120).default(""),
+  tpaContactPhone: z.string().max(30).default(""),
+  exclusions: z.array(z.string().min(1).max(200)).max(30).default([]),
+  disclosuresComplete: z.boolean().default(false),
   notes: z.string().max(1000).default(""),
 };
 
@@ -139,7 +222,46 @@ type PolicyConsistency = {
   vehicleRegNo: string;
   healthType: HealthType | null;
   maturityDate: string | null;
+  ownership?: PolicyOwnership;
+  employerName?: string;
+  deductiblePaise?: number | null;
+  coPayBps?: number | null;
+  roomRentLimitPaise?: number | null;
+  roomRentLimitBps?: number | null;
+  icuLimitPaise?: number | null;
+  icuLimitBps?: number | null;
+  initialWaitingDays?: number | null;
+  preExistingWaitingMonths?: number | null;
+  maternityWaitingMonths?: number | null;
+  subLimits?: SubLimit[];
+  restorationBenefit?: boolean;
+  ncbBps?: number;
+  ncbMaxBps?: number;
+  tpaName?: string;
+  tpaContactPhone?: string;
 };
+/** Fields that only mean something for a health policy — must be null otherwise. */
+const HEALTH_ONLY_NULLABLE_FIELDS = [
+  "deductiblePaise",
+  "coPayBps",
+  "roomRentLimitPaise",
+  "roomRentLimitBps",
+  "icuLimitPaise",
+  "icuLimitBps",
+  "initialWaitingDays",
+  "preExistingWaitingMonths",
+  "maternityWaitingMonths",
+] as const;
+/**
+ * On update, an omitted field (`undefined`) means "leave unchanged" — see
+ * updateFieldOverrides below — so it can't be validated against the rest of
+ * this same request (the resulting kind/ownership might match the field's
+ * requirement once merged with the untouched DB row). Only a field the
+ * caller actually supplied is checked against the rest of the request.
+ * insurance.ts's updatePolicy() additionally re-nulls health-only fields
+ * server-side whenever the *effective* kind isn't "health", so a leftover
+ * stale value can never persist even if this request doesn't touch them.
+ */
 function checkPolicyConsistency(value: PolicyConsistency, issues: z.core.$ZodRawIssue[]) {
   if (value.kind !== "vehicle" && value.vehicleType !== null) {
     issues.push({
@@ -173,6 +295,46 @@ function checkPolicyConsistency(value: PolicyConsistency, issues: z.core.$ZodRaw
       input: value.maturityDate,
     });
   }
+  if (value.kind !== "health") {
+    for (const field of HEALTH_ONLY_NULLABLE_FIELDS) {
+      if (value[field] !== null && value[field] !== undefined) {
+        issues.push({
+          code: "custom",
+          path: [field],
+          message: `${field} only applies to a health policy`,
+          input: value[field],
+        });
+      }
+    }
+  }
+  if (value.ownership !== "employer" && value.employerName !== "" && value.employerName !== undefined) {
+    issues.push({
+      code: "custom",
+      path: ["employerName"],
+      message: "employerName only applies when ownership is \"employer\"",
+      input: value.employerName,
+    });
+  }
+  if (value.kind !== "health") {
+    if (value.subLimits !== undefined && value.subLimits.length > 0) {
+      issues.push({ code: "custom", path: ["subLimits"], message: "subLimits only applies to a health policy", input: value.subLimits });
+    }
+    if (value.restorationBenefit !== undefined && value.restorationBenefit !== false) {
+      issues.push({ code: "custom", path: ["restorationBenefit"], message: "restorationBenefit only applies to a health policy", input: value.restorationBenefit });
+    }
+    if (value.ncbBps !== undefined && value.ncbBps !== 0) {
+      issues.push({ code: "custom", path: ["ncbBps"], message: "ncbBps only applies to a health policy", input: value.ncbBps });
+    }
+    if (value.ncbMaxBps !== undefined && value.ncbMaxBps !== 0) {
+      issues.push({ code: "custom", path: ["ncbMaxBps"], message: "ncbMaxBps only applies to a health policy", input: value.ncbMaxBps });
+    }
+    if (value.tpaName !== undefined && value.tpaName !== "") {
+      issues.push({ code: "custom", path: ["tpaName"], message: "tpaName only applies to a health policy", input: value.tpaName });
+    }
+    if (value.tpaContactPhone !== undefined && value.tpaContactPhone !== "") {
+      issues.push({ code: "custom", path: ["tpaContactPhone"], message: "tpaContactPhone only applies to a health policy", input: value.tpaContactPhone });
+    }
+  }
 }
 
 export const CreateInsurancePolicySchema = z
@@ -180,8 +342,39 @@ export const CreateInsurancePolicySchema = z
   .check((ctx) => checkPolicyConsistency(ctx.value, ctx.issues));
 export type CreateInsurancePolicy = z.input<typeof CreateInsurancePolicySchema>;
 
+/**
+ * On update, an omitted structured-term field means "leave the stored value
+ * unchanged" — NOT "reset to its create-time default". The web form (still
+ * pre-14.5) doesn't send these fields at all, so defaulting them on every
+ * edit would silently erase deductible/co-pay/limits/waiting periods/etc.
+ * `.optional()` (no `.default()`) makes `undefined` pass through as
+ * `undefined`, which insurance.ts's updatePolicy() then treats as "don't
+ * touch this column" rather than spreading it into the SQL SET clause.
+ */
+const updateFieldOverrides = {
+  ownership: PolicyOwnershipSchema.optional(),
+  employerName: z.string().max(120).optional(),
+  deductiblePaise: z.number().int().min(0).nullable().optional(),
+  coPayBps: z.number().int().min(0).max(10000).nullable().optional(),
+  roomRentLimitPaise: z.number().int().min(0).nullable().optional(),
+  roomRentLimitBps: z.number().int().min(0).max(10000).nullable().optional(),
+  icuLimitPaise: z.number().int().min(0).nullable().optional(),
+  icuLimitBps: z.number().int().min(0).max(10000).nullable().optional(),
+  subLimits: z.array(SubLimitSchema).max(30).optional(),
+  initialWaitingDays: z.number().int().min(0).nullable().optional(),
+  preExistingWaitingMonths: z.number().int().min(0).nullable().optional(),
+  maternityWaitingMonths: z.number().int().min(0).nullable().optional(),
+  restorationBenefit: z.boolean().optional(),
+  ncbBps: z.number().int().min(0).max(10000).optional(),
+  ncbMaxBps: z.number().int().min(0).max(10000).optional(),
+  tpaName: z.string().max(120).optional(),
+  tpaContactPhone: z.string().max(30).optional(),
+  exclusions: z.array(z.string().min(1).max(200)).max(30).optional(),
+  disclosuresComplete: z.boolean().optional(),
+};
+
 export const UpdateInsurancePolicySchema = z
-  .object({ ...policyFields, archived: z.boolean().default(false) })
+  .object({ ...policyFields, ...updateFieldOverrides, archived: z.boolean().default(false) })
   .check((ctx) => checkPolicyConsistency(ctx.value, ctx.issues));
 export type UpdateInsurancePolicy = z.input<typeof UpdateInsurancePolicySchema>;
 

@@ -7,7 +7,7 @@ import * as protectionSchema from "./schema.ts";
 // resident tables/enums and re-exports the shared symbols that complete its
 // schema surface. The test asserts the module's export is the exact same
 // object as the barrel's (identity through the barrel): every one of the 3
-// tables and 4 enums on the module's export surface — residents plus
+// tables and 5 enums on the module's export surface — residents plus
 // re-exported shared symbols — must be the identical object from db/schema.ts,
 // not just structurally equal. Mirrors modules/ledger/schema.smoke.test.ts exactly.
 
@@ -17,7 +17,7 @@ const TABLE_NAMES = [
   "insuranceHealthCards",
 ] as const;
 
-const ENUM_NAMES = ["insuranceKind", "vehicleKind", "healthType", "premiumFrequency"] as const;
+const ENUM_NAMES = ["insuranceKind", "vehicleKind", "healthType", "premiumFrequency", "policyOwnership"] as const;
 
 test("modules/protection/schema.ts re-exports the same 3 table objects as db/schema.ts", () => {
   for (const name of TABLE_NAMES) {
@@ -29,7 +29,7 @@ test("modules/protection/schema.ts re-exports the same 3 table objects as db/sch
   }
 });
 
-test("modules/protection/schema.ts re-exports the same 4 owned enum objects as db/schema.ts", () => {
+test("modules/protection/schema.ts re-exports the same 5 owned enum objects as db/schema.ts", () => {
   for (const name of ENUM_NAMES) {
     assert.strictEqual(
       (protectionSchema as Record<string, unknown>)[name],
