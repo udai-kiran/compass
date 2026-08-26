@@ -23,6 +23,7 @@ import { InstrumentPanel } from "./InstrumentPanel.tsx";
 import { RebalancePanel } from "./RebalancePanel.tsx";
 import { AllocationPanel } from "./AllocationPanel.tsx";
 import { LeverPanel } from "./LeverPanel.tsx";
+import { WindfallPanel } from "./WindfallPanel.tsx";
 
 const GOAL_TYPES: Array<{ value: GoalType; label: string }> = [
   { value: "savings", label: "Savings" },
@@ -97,6 +98,8 @@ export function GoalsPage() {
           <LeverPanel />
         </>
       )}
+
+      <WindfallPanel />
 
       {archived.length > 0 && (
         <details className="mt-6">

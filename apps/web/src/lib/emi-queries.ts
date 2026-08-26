@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
-import { EmiInstallmentSchema, EmiSummarySchema, type CreateEmi } from "@compass/shared";
+import { EmiInstallmentSchema, EmiSummarySchema, type CreateEmi, RateResetImpactSchema, PrepayVsInvestResultSchema } from "@compass/shared";
 import { apiGet, apiPost } from "./api.ts";
 
 const OkSchema = z.object({ ok: z.boolean() });
@@ -59,4 +59,36 @@ export function useEmiMutations() {
     onSuccess: invalidate,
   });
   return { create, remove, setPaused };
+}
+
+// ---------- prepay vs invest (Phase 15) ----------
+
+export function useRateResetImpact(templateId: string, newRateBps: number | null) {
+  return useQuery({
+    queryKey: ["rate-reset", templateId, newRateBps],
+    queryFn: () =>
+      apiGet(`/api/emis/${templateId}/rate-reset?newRateBps=${newRateBps}`, RateResetImpactSchema),
+    enabled: newRateBps !== null && newRateBps > 0,
+    staleTime: 60_000,
+  });
+}
+
+export function usePrepayVsInvest(
+  templateId: string,
+  body: { lumpSumPaise: number; prepaymentChargesPaise?: number; investReturnBps?: number; isHomeLoan?: boolean } | null,
+) {
+  const params = new URLSearchParams();
+  if (body) {
+    params.set("lumpSumPaise", String(body.lumpSumPaise));
+    if (body.prepaymentChargesPaise !== undefined) params.set("prepaymentChargesPaise", String(body.prepaymentChargesPaise));
+    if (body.investReturnBps !== undefined) params.set("investReturnBps", String(body.investReturnBps));
+    if (body.isHomeLoan !== undefined) params.set("isHomeLoan", String(body.isHomeLoan));
+  }
+  return useQuery({
+    queryKey: ["prepay-vs-invest", templateId, body],
+    queryFn: () =>
+      apiGet(`/api/emis/${templateId}/prepay-vs-invest?${params}`, PrepayVsInvestResultSchema),
+    enabled: body !== null && body.lumpSumPaise > 0,
+    staleTime: 60_000,
+  });
 }
