@@ -50,6 +50,8 @@ const NAV_GROUPS: NavGroup[] = [
       { to: "/investments", label: "Investments", icon: "investments" },
       { to: "/net-worth", label: "Net Worth", icon: "networth" },
       { to: "/insurance", label: "Insurance", icon: "insurance" },
+      { to: "/protection/calendar", label: "Calendar", icon: "activity" },
+      { to: "/protection/dossier", label: "Dossier", icon: "book" },
     ],
   },
   {

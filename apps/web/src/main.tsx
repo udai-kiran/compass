@@ -126,6 +126,12 @@ const ShoppingPantryPage = lazy(() =>
 const ShoppingPriceWatchPage = lazy(() =>
   import("./routes/shopping/PriceWatchPage.tsx").then((m) => ({ default: m.PriceWatchPage })),
 );
+const CalendarPage = lazy(() =>
+  import("./routes/protection/CalendarPage.tsx").then((m) => ({ default: m.CalendarPage })),
+);
+const DossierPage = lazy(() =>
+  import("./routes/protection/DossierPage.tsx").then((m) => ({ default: m.DossierPage })),
+);
 
 function onApiError(err: unknown) {
   // 401s are handled by redirecting to /login — don't toast them.
@@ -170,6 +176,8 @@ const router = createBrowserRouter([
       { path: "emis", element: <EMIsPage /> },
       { path: "bills", element: <BillsPage /> },
       { path: "insurance", element: <InsurancePage /> },
+      { path: "protection/calendar", element: <CalendarPage /> },
+      { path: "protection/dossier", element: <DossierPage /> },
       { path: "resources", element: <ResourcesPage /> },
       { path: "tasks", element: <TasksPage /> },
       { path: "insights", element: <InsightsPage /> },

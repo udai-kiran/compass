@@ -29,6 +29,9 @@ const PAGES: Array<{ label: string; to: string }> = [
   { label: "Pantry", to: "/shopping/pantry" },
   { label: "Price Watch", to: "/shopping/price-watch" },
   { label: "Tax", to: "/tax" },
+  { label: "Insurance", to: "/insurance" },
+  { label: "Maturity Calendar", to: "/protection/calendar" },
+  { label: "Continuity Dossier", to: "/protection/dossier" },
 ];
 
 type Item = { key: string; group: string; label: string; hint?: string; to: string };

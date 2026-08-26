@@ -18,6 +18,8 @@ const account = (overrides: Partial<AccountWithBalance> = {}): AccountWithBalanc
   goalId: null,
   linkedAccountId: null,
   schemeOpenedDate: null,
+  nominee: "",
+  nomineePersonId: null,
   sortOrder: 0,
   archivedAt: null,
   balancePaise: 0,

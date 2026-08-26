@@ -175,6 +175,8 @@ async function createCardAccount(
     currency: "INR",
     openingBalancePaise,
     schemeOpenedDate: null,
+    nominee: "",
+    nomineePersonId: null,
   }, openingDate);
   return account.id;
 }

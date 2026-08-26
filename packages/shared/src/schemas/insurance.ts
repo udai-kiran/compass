@@ -410,3 +410,99 @@ export const LogPremiumSchema = z.object({
   note: z.string().max(200).default(""),
 });
 export type LogPremium = z.input<typeof LogPremiumSchema>;
+
+// ---------- Insurance adequacy (task 14.2) ----------
+
+/** Configurable assumptions for the adequacy computation. */
+export const AdequacyAssumptionsSchema = z.object({
+  /** Income replacement years (how many years of income the cover should replace) */
+  incomeReplacementYears: z.number().int().min(1).max(50).default(15),
+  /** Annual medical inflation rate in basis points (e.g. 1200 = 12%) */
+  medicalInflationBps: z.number().int().min(0).max(5000).default(1200),
+  /** Years to project health cover erosion */
+  healthProjectionYears: z.number().int().min(1).max(30).default(10),
+});
+export type AdequacyAssumptions = z.infer<typeof AdequacyAssumptionsSchema>;
+
+/** A single dependent factored into the term-life calculation. */
+export const DependentSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  relationship: z.string(),
+  /** age in years; null if DOB not recorded */
+  age: z.number().int().nullable(),
+  educationStage: z.string().nullable(),
+  /** estimated years of financial dependency remaining; null if cannot be computed */
+  dependencyYearsRemaining: z.number().int().nullable(),
+});
+export type Dependent = z.infer<typeof DependentSchema>;
+
+/** Term-life adequacy: Human Life Value approach. */
+export const TermLifeAdequacySchema = z.object({
+  /** Annual income used for the calculation, in paise */
+  annualIncomePaise: z.number().int().nullable(),
+  /** Dependents used in the calculation */
+  dependents: z.array(DependentSchema),
+  /** Income replacement need = income × years, in paise */
+  incomeReplacementNeedPaise: z.number().int(),
+  /** Outstanding liabilities to be covered, in paise */
+  outstandingLiabilitiesPaise: z.number().int(),
+  /** Liquid assets that offset the need, in paise */
+  liquidAssetsPaise: z.number().int(),
+  /** Existing life cover (sum of all active personal life policy sum-assured), in paise */
+  existingCoverPaise: z.number().int(),
+  /** Employer-provided life cover (flagged separately as a continuity risk), in paise */
+  employerCoverPaise: z.number().int(),
+  /** Total need = incomeReplacement + liabilities − liquidAssets, in paise */
+  totalNeedPaise: z.number().int(),
+  /** Gap = totalNeed − existingCover (positive means underinsured; 0 means adequate) */
+  gapPaise: z.number().int(),
+  /** Assumptions used */
+  assumptions: z.object({
+    incomeReplacementYears: z.number().int(),
+  }),
+  /** "adequate" | "underinsured" | "insufficient_data" */
+  verdict: z.enum(["adequate", "underinsured", "insufficient_data"]),
+});
+export type TermLifeAdequacy = z.infer<typeof TermLifeAdequacySchema>;
+
+/** Health cover adequacy per policy group. */
+export const HealthAdequacySchema = z.object({
+  /** Total health cover (sum insured across active health policies), in paise */
+  totalCoverPaise: z.number().int(),
+  /** Usable cover after deductibles, co-pay, room-rent caps (lower bound estimate), in paise */
+  usableCoverPaise: z.number().int(),
+  /** Employer-only health cover (continuity risk), in paise */
+  employerOnlyCoverPaise: z.number().int(),
+  /** Projected cover value after medical inflation erosion, in paise */
+  projectedCoverPaise: z.number().int(),
+  /** Coverage gaps identified */
+  gaps: z.array(z.object({
+    type: z.string(),
+    description: z.string(),
+  })),
+  /** Assumptions used */
+  assumptions: z.object({
+    medicalInflationBps: z.number().int(),
+    healthProjectionYears: z.number().int(),
+  }),
+  /** "adequate" | "review_needed" | "insufficient_data" */
+  verdict: z.enum(["adequate", "review_needed", "insufficient_data"]),
+});
+export type HealthAdequacy = z.infer<typeof HealthAdequacySchema>;
+
+/** Suggested cover amount and type — never names an insurer or product. */
+export const CoverSuggestionSchema = z.object({
+  coverType: z.string(),
+  suggestedAmountPaise: z.number().int(),
+  rationale: z.string(),
+});
+export type CoverSuggestion = z.infer<typeof CoverSuggestionSchema>;
+
+/** Full adequacy report. */
+export const InsuranceAdequacyReportSchema = z.object({
+  termLife: TermLifeAdequacySchema,
+  health: HealthAdequacySchema,
+  suggestions: z.array(CoverSuggestionSchema),
+});
+export type InsuranceAdequacyReport = z.infer<typeof InsuranceAdequacyReportSchema>;

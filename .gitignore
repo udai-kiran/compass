@@ -15,7 +15,11 @@ data/
 *.log
 .DS_Store
 
-.claude/
+.claude/*
+!.claude/agents/
+!.claude/agents/**
+!.claude/bin/
+!.claude/bin/**
 
 .idea/
 *.pdf

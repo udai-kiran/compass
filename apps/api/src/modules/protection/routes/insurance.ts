@@ -2,7 +2,9 @@ import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
 import {
+  AdequacyAssumptionsSchema,
   CreateInsurancePolicySchema,
+  InsuranceAdequacyReportSchema,
   InsurancePolicySchema,
   LogPremiumSchema,
   PolicyPremiumsSchema,
@@ -16,6 +18,7 @@ import {
   deleteHealthCard,
   deletePolicy,
   deletePolicyDocument,
+  getAdequacyReport,
   listPolicies,
   listPolicyPremiums,
   logPremium,
@@ -162,5 +165,23 @@ export async function insuranceRoutes(app: FastifyInstance) {
       },
     },
     async (req) => logPremium(app.db, req.session!.userId, req.params.id, req.body),
+  );
+
+  r.get(
+    "/api/insurance/adequacy",
+    {
+      schema: {
+        querystring: AdequacyAssumptionsSchema.partial(),
+        response: { 200: InsuranceAdequacyReportSchema },
+      },
+    },
+    async (req) => {
+      const assumptions = {
+        incomeReplacementYears: req.query.incomeReplacementYears ?? 15,
+        medicalInflationBps: req.query.medicalInflationBps ?? 1200,
+        healthProjectionYears: req.query.healthProjectionYears ?? 10,
+      };
+      return getAdequacyReport(app.db, req.session!.userId, assumptions);
+    },
   );
 }

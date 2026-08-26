@@ -86,6 +86,10 @@ export const holdings = pgTable(
      *  qualifying for deduction under Section 80C. Only meaningful for mutual_fund
      *  asset class; enforced by a DB check constraint. */
     isElss: boolean("is_elss").notNull().default(false),
+    /** Free-text nominee name; "" when unset. Nomination ≠ inheritance. */
+    nominee: text("nominee").notNull().default(""),
+    /** Linked family member as nominee; null when unset or name-only. */
+    nomineePersonId: uuid("nominee_person_id").references(() => familyMembers.id, { onDelete: "set null" }),
     archivedAt: timestamp("archived_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

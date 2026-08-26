@@ -87,6 +87,8 @@ async function createAcct(
     currency: "INR",
     openingBalancePaise,
     schemeOpenedDate: null,
+    nominee: "",
+    nomineePersonId: null,
   }, openingDate);
   return { id: account.id, type };
 }

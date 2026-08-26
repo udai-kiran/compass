@@ -124,6 +124,10 @@ export const accounts = pgTable(
      * guess.
      */
     schemeOpenedDate: date("scheme_opened_date"),
+    /** Free-text nominee name; "" when unset. Nomination ≠ inheritance. */
+    nominee: text("nominee").notNull().default(""),
+    /** Linked family member as nominee; null when unset or name-only. */
+    nomineePersonId: uuid("nominee_person_id").references(() => familyMembers.id, { onDelete: "set null" }),
     archivedAt: timestamp("archived_at", { withTimezone: true }),
     /**
      * Non-null only for the small set of per-user system accounts the
