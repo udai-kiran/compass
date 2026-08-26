@@ -7,6 +7,7 @@ import { revolvingDebtRoutes } from "./routes/revolving-debt.ts";
 import { cardOfferRoutes } from "./routes/card-offers.ts";
 import { rewardRuleRoutes } from "./routes/reward-rules.ts";
 import { rewardLotRoutes } from "./routes/reward-lots.ts";
+import { prepayVsInvestRoutes } from "./routes/prepay-vs-invest.ts";
 
 /**
  * `modules/credit/` — second of 8 Phase-1 module migrations (task 1.2),
@@ -36,4 +37,5 @@ export async function creditRoutes(app: FastifyInstance): Promise<void> {
   await app.register(cardOfferRoutes);
   await app.register(rewardRuleRoutes);
   await app.register(rewardLotRoutes);
+  await app.register(prepayVsInvestRoutes);
 }

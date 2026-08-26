@@ -7,6 +7,7 @@ import {
   TaxAwareRebalancingPlanSchema,
   MultiGoalAllocationPlanSchema,
   IncomeAdequacyReportSchema,
+  WindfallAllocationResultSchema,
 } from "@compass/shared";
 import { apiGet } from "./api.ts";
 
@@ -74,5 +75,18 @@ export function useIncomeAdequacy() {
   return useQuery({
     queryKey: ["income-adequacy"],
     queryFn: () => apiGet("/api/planning/income-adequacy", IncomeAdequacyReportSchema),
+  });
+}
+
+export function useWindfallAllocation(windfallPaise: number | null, isWindfallTaxable = false) {
+  return useQuery({
+    queryKey: ["windfall-allocation", windfallPaise, isWindfallTaxable],
+    queryFn: () =>
+      apiGet(
+        `/api/planning/windfall?windfallPaise=${windfallPaise}&isWindfallTaxable=${isWindfallTaxable}`,
+        WindfallAllocationResultSchema,
+      ),
+    enabled: windfallPaise !== null && windfallPaise > 0,
+    staleTime: 60_000,
   });
 }

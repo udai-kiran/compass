@@ -75,6 +75,8 @@ GET /api/credit/reward-rules
 GET /api/dashboard
 GET /api/emis
 GET /api/emis/:templateId/installments
+GET /api/emis/:templateId/prepay-vs-invest
+GET /api/emis/:templateId/rate-reset
 GET /api/export.json
 GET /api/export/transactions.csv
 GET /api/family
@@ -123,6 +125,7 @@ GET /api/planning/data-completeness
 GET /api/planning/income-adequacy
 GET /api/planning/income-surplus
 GET /api/planning/multi-goal-allocation
+GET /api/planning/windfall
 GET /api/portfolio
 GET /api/profile
 GET /api/projection-settings
@@ -222,6 +225,8 @@ HEAD /api/credit/reward-rules
 HEAD /api/dashboard
 HEAD /api/emis
 HEAD /api/emis/:templateId/installments
+HEAD /api/emis/:templateId/prepay-vs-invest
+HEAD /api/emis/:templateId/rate-reset
 HEAD /api/export.json
 HEAD /api/export/transactions.csv
 HEAD /api/family
@@ -270,6 +275,7 @@ HEAD /api/planning/data-completeness
 HEAD /api/planning/income-adequacy
 HEAD /api/planning/income-surplus
 HEAD /api/planning/multi-goal-allocation
+HEAD /api/planning/windfall
 HEAD /api/portfolio
 HEAD /api/profile
 HEAD /api/projection-settings

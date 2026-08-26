@@ -13,6 +13,7 @@ import { toast } from "../../lib/toast.tsx";
 import { useAccounts, useCategories } from "../../lib/queries.ts";
 import { useEmiInstallments, useEmiMutations, useEmis } from "../../lib/emi-queries.ts";
 import { DateField } from "../../components/DateField.tsx";
+import { PrepayPanel } from "./PrepayPanel.tsx";
 
 export function EMIsPage() {
   const { data: emis, isLoading } = useEmis();
@@ -131,6 +132,8 @@ function EmiRow({ emi, accounts }: { emi: EmiSummary; accounts: AccountWithBalan
           <InstallmentHistory templateId={emi.templateId} open={historyOpen} />
         </div>
       </details>
+
+      {emi.remainingInstallments > 0 && !emi.paused && <PrepayPanel emi={emi} />}
     </section>
   );
 }
