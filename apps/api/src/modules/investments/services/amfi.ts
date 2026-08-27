@@ -27,23 +27,26 @@ export function parseAmfiDate(s: string): string | null {
 
 /**
  * Parses AMFI's NAVAll master. Format is `;`-delimited with a header, blank
- * lines, and scheme-category banner lines interleaved between scheme rows:
- *   Scheme Code;ISIN Div Payout/Growth;ISIN Div Reinvestment;Scheme Name;NAV;Date
- * Only lines whose first field is a number and whose NAV parses are kept, so
- * banners and blanks fall away. Later duplicate codes (shouldn't happen) win.
+ * lines, and scheme-category banner lines interleaved between scheme rows.
+ * The feed started as   Code;ISINs;Scheme Name;NAV;Date   and grew an extra
+ * Plan and Option column ahead of the NAV, so column counts vary — NAV and
+ * Date are therefore read anchored to the END of the row, while Code (first)
+ * and Scheme Name (fourth) are read from the FRONT, the two ends that have
+ * stayed put. Only lines whose first field is a number and whose NAV parses
+ * are kept, so banners and blanks fall away. Later duplicate codes win.
  */
 export function parseNavAll(text: string): Map<number, SchemeNav> {
   const out = new Map<number, SchemeNav>();
   for (const line of text.split("\n")) {
-    const parts = line.split(";");
+    const parts = line.split(";").map((part) => part.trim());
     if (parts.length < 6) continue;
-    const code = Number(parts[0]!.trim());
+    const code = Number(parts[0]);
     if (!Number.isInteger(code)) continue;
-    const nav = Number(parts[4]!.trim());
+    const nav = Number(parts.at(-2));
     if (!Number.isFinite(nav) || nav <= 0) continue; // "N.A." / suspended schemes
-    const date = parseAmfiDate(parts[5]!);
+    const date = parseAmfiDate(parts.at(-1) ?? "");
     if (!date) continue;
-    out.set(code, { nav, date, name: parts[3]!.trim() });
+    out.set(code, { nav, date, name: parts[3] ?? "" });
   }
   return out;
 }
