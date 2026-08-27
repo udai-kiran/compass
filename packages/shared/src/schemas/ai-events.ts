@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { EmailIngestStatusSchema } from "./email.ts";
 
 /** The kinds of model call the event log records. */
 export const AiEventKindSchema = z.enum([
@@ -27,6 +28,8 @@ export const AiEventSummarySchema = z.object({
   model: z.string(),
   title: z.string(),
   ingestionId: z.uuid().nullable(),
+  /** Current status of the referenced email_ingestions row; null for non-ingestion events. */
+  ingestionStatus: EmailIngestStatusSchema.nullable(),
   accountId: z.uuid().nullable(),
   latencyMs: z.number().int().nullable(),
   createdAt: z.string(),

@@ -17,7 +17,12 @@ import type { AiEventKind, AiEventSummary } from "@compass/shared";
 const RETRYABLE_KINDS: ReadonlySet<AiEventKind> = new Set(["email_extract", "statement_parse"]);
 
 export function isRetryableEvent(
-  event: Pick<AiEventSummary, "status" | "ingestionId" | "kind">,
+  event: Pick<AiEventSummary, "status" | "ingestionId" | "kind" | "ingestionStatus">,
 ): boolean {
-  return event.status === "error" && event.ingestionId !== null && RETRYABLE_KINDS.has(event.kind);
+  return (
+    event.status === "error" &&
+    event.ingestionId !== null &&
+    RETRYABLE_KINDS.has(event.kind) &&
+    event.ingestionStatus === "failed"
+  );
 }

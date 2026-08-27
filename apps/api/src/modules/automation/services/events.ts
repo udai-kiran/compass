@@ -1,4 +1,4 @@
-import { and, desc, eq, lt, or, type SQL } from "drizzle-orm";
+import { and, desc, eq, inArray, lt, or, type SQL } from "drizzle-orm";
 import type {
   AiEventDetail,
   AiEventKind,
@@ -8,6 +8,7 @@ import type {
 } from "@compass/shared";
 import type { Db, DbOrTx } from "../../../db/index.ts";
 import { aiEvents } from "../schema.ts";
+import { emailIngestions } from "../../../db/schema.ts";
 import { HttpError } from "../../../lib/errors.ts";
 
 type Row = typeof aiEvents.$inferSelect;
@@ -56,7 +57,7 @@ export async function recordAiEvent(
   }
 }
 
-function toSummary(r: Row): AiEventSummary {
+function toSummary(r: Row, ingestionStatus: string | null): AiEventSummary {
   return {
     id: r.id,
     kind: r.kind,
@@ -65,6 +66,7 @@ function toSummary(r: Row): AiEventSummary {
     model: r.model,
     title: r.title,
     ingestionId: r.ingestionId,
+    ingestionStatus: ingestionStatus as AiEventSummary["ingestionStatus"],
     accountId: r.accountId,
     latencyMs: r.latencyMs,
     createdAt: r.createdAt.toISOString(),
@@ -113,8 +115,23 @@ export async function listAiEvents(
   const hasMore = rows.length > query.limit;
   const page = hasMore ? rows.slice(0, query.limit) : rows;
   const last = page[page.length - 1];
+
+  // Batch-fetch the current status for every ingestion referenced on this page (1 extra
+  // query per page load, no N+1). Events with no ingestionId get ingestionStatus: null.
+  const ingestionIds = page.flatMap((r) => (r.ingestionId ? [r.ingestionId] : []));
+  const ingestionStatusMap = new Map<string, string>();
+  if (ingestionIds.length > 0) {
+    const statuses = await db
+      .select({ id: emailIngestions.id, status: emailIngestions.status })
+      .from(emailIngestions)
+      .where(inArray(emailIngestions.id, ingestionIds));
+    for (const s of statuses) ingestionStatusMap.set(s.id, s.status);
+  }
+
   return {
-    items: page.map(toSummary),
+    items: page.map((r) =>
+      toSummary(r, r.ingestionId ? (ingestionStatusMap.get(r.ingestionId) ?? null) : null),
+    ),
     nextCursor: hasMore && last ? encodeCursor(last.createdAt, last.id) : null,
   };
 }
@@ -124,8 +141,16 @@ export async function getAiEvent(db: Db, userId: string, id: string): Promise<Ai
     where: and(eq(aiEvents.id, id), eq(aiEvents.userId, userId)),
   });
   if (!row) throw new HttpError(404, "Event not found");
+  let ingestionStatus: string | null = null;
+  if (row.ingestionId) {
+    const [ing] = await db
+      .select({ status: emailIngestions.status })
+      .from(emailIngestions)
+      .where(eq(emailIngestions.id, row.ingestionId));
+    ingestionStatus = ing?.status ?? null;
+  }
   return {
-    ...toSummary(row),
+    ...toSummary(row, ingestionStatus),
     requestContext: row.requestContext,
     responseRaw: row.responseRaw,
     error: row.error,
