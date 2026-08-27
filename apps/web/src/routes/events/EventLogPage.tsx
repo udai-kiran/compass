@@ -1,6 +1,11 @@
 import { useState } from "react";
 import { type AiEventKind, type AiEventSummary } from "@compass/shared";
 import { useAiEvents, useAiEvent } from "../../lib/ai-event-queries.ts";
+import { useRetryIngestion } from "../../lib/ai-event-queries.ts";
+import { toast } from "../../lib/toast.tsx";
+import { tryParseJson, isTreeable } from "../../components/json-tree.ts";
+import { JsonTree } from "../../components/JsonTree.tsx";
+import { isRetryableEvent } from "./retry-eligibility.ts";
 
 const KIND_LABELS: Record<AiEventKind, string> = {
   email_extract: "Email extracted",
@@ -49,8 +54,8 @@ export function EventLogPage() {
       <div className="mb-3">
         <h1 className="text-2xl font-semibold text-slate-800">Event Log</h1>
         <p className="mt-1 text-sm text-slate-500">
-          Every AI call — the exact context sent to the model and the raw response. Emails send
-          only the subject, sender, and stripped body; never the full headers.
+          Every AI call — the exact context sent to the model and the raw response. Emails send only
+          the subject, sender, and stripped body; never the full headers.
         </p>
       </div>
 
@@ -103,11 +108,14 @@ export function EventLogPage() {
 }
 
 function EventRow({ event, onOpen }: { event: AiEventSummary; onOpen: () => void }) {
+  const retry = useRetryIngestion();
+  const canRetry = isRetryableEvent(event);
+
   return (
-    <li>
+    <li className="flex w-full items-center gap-3 px-4 py-2.5 text-sm">
       <button
         onClick={onOpen}
-        className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm hover:bg-slate-50"
+        className="flex min-w-0 flex-1 items-center gap-3 text-left hover:bg-slate-50"
       >
         <span
           className={`h-2 w-2 shrink-0 rounded-full ${event.status === "ok" ? "bg-emerald-500" : "bg-rose-500"}`}
@@ -120,8 +128,23 @@ function EventRow({ event, onOpen }: { event: AiEventSummary; onOpen: () => void
         <span className="hidden shrink-0 text-xs text-slate-400 sm:inline">
           {[event.provider, event.model].filter(Boolean).join(" · ")}
         </span>
-        <span className="w-28 shrink-0 text-right text-xs text-slate-400">{fmtTime(event.createdAt)}</span>
+        <span className="w-28 shrink-0 text-right text-xs text-slate-400">
+          {fmtTime(event.createdAt)}
+        </span>
       </button>
+      {canRetry && (
+        <button
+          onClick={() =>
+            retry.mutate(event.ingestionId!, {
+              onSuccess: () => toast("Retry queued — re-checking shortly", "success"),
+            })
+          }
+          disabled={retry.isPending}
+          className="shrink-0 rounded-md border border-rose-300 px-2 py-0.5 text-[11px] font-medium text-rose-700 hover:bg-rose-50 disabled:opacity-40"
+        >
+          {retry.isPending ? "Retrying…" : "Retry"}
+        </button>
+      )}
     </li>
   );
 }
@@ -139,7 +162,11 @@ function EventDrawer({ id, onClose }: { id: string; onClose: () => void }) {
           <h2 className="text-base font-semibold text-slate-800">
             {data ? KIND_LABELS[data.kind] : "Event"}
           </h2>
-          <button onClick={onClose} aria-label="Close" className="rounded-md p-1 text-slate-400 hover:bg-slate-100">
+          <button
+            onClick={onClose}
+            aria-label="Close"
+            className="rounded-md p-1 text-slate-400 hover:bg-slate-100"
+          >
             ✕
           </button>
         </div>
@@ -153,7 +180,10 @@ function EventDrawer({ id, onClose }: { id: string; onClose: () => void }) {
               <Meta label="When" value={fmtTime(data.createdAt)} />
               <Meta label="Provider" value={data.provider || "—"} />
               <Meta label="Model" value={data.model || "—"} />
-              <Meta label="Latency" value={data.latencyMs !== null ? `${data.latencyMs} ms` : "—"} />
+              <Meta
+                label="Latency"
+                value={data.latencyMs !== null ? `${data.latencyMs} ms` : "—"}
+              />
               <Meta label="Title" value={data.title || "—"} />
             </dl>
 
@@ -163,8 +193,16 @@ function EventDrawer({ id, onClose }: { id: string; onClose: () => void }) {
               </div>
             )}
 
-            <Block title="Context sent to the model" body={data.requestContext} empty="Nothing recorded." />
-            <Block title="Response received" body={data.responseRaw} empty="No response (call failed)." />
+            <Block
+              title="Context sent to the model"
+              body={data.requestContext}
+              empty="Nothing recorded."
+            />
+            <Block
+              title="Response received"
+              body={data.responseRaw}
+              empty="No response (call failed)."
+            />
           </div>
         )}
       </div>
@@ -182,12 +220,20 @@ function Meta({ label, value }: { label: string; value: string }) {
 }
 
 function Block({ title, body, empty }: { title: string; body: string; empty: string }) {
+  const parsed = body ? tryParseJson(body) : ({ ok: false } as const);
+  const asTree = parsed.ok && isTreeable(parsed.value);
   return (
     <div>
       <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">{title}</h3>
-      <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-md border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">
-        {body || empty}
-      </pre>
+      {asTree ? (
+        <div className="max-h-96 overflow-auto rounded-md border border-slate-200 bg-slate-50 py-1">
+          <JsonTree value={(parsed as { ok: true; value: unknown }).value} />
+        </div>
+      ) : (
+        <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-md border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">
+          {body || empty}
+        </pre>
+      )}
     </div>
   );
 }

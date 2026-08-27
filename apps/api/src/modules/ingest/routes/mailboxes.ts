@@ -17,6 +17,7 @@ import {
   resetMailboxWatermark,
 } from "../services/mailboxes.ts";
 import { enqueueIngestorRun } from "../../../jobs/index.ts";
+import { retryIngestion } from "../services/ingestions.ts";
 
 /**
  * Per-user mailbox management for the email→transaction pipeline. Users onboard
@@ -47,7 +48,12 @@ export async function mailboxRoutes(app: FastifyInstance) {
 
   r.delete(
     "/api/mailboxes/:id",
-    { schema: { params: z.object({ id: z.uuid() }), response: { 200: z.object({ ok: z.literal(true) }) } } },
+    {
+      schema: {
+        params: z.object({ id: z.uuid() }),
+        response: { 200: z.object({ ok: z.literal(true) }) },
+      },
+    },
     async (req) => {
       await removeMailbox(app.db, req.session!.userId, req.params.id);
       return { ok: true as const };
@@ -68,9 +74,31 @@ export async function mailboxRoutes(app: FastifyInstance) {
 
   r.post(
     "/api/mailboxes/:id/reset-watermark",
-    { schema: { params: z.object({ id: z.uuid() }), response: { 200: z.object({ ok: z.literal(true) }) } } },
+    {
+      schema: {
+        params: z.object({ id: z.uuid() }),
+        response: { 200: z.object({ ok: z.literal(true) }) },
+      },
+    },
     async (req) => {
       await resetMailboxWatermark(app.db, req.session!.userId, req.params.id);
+      return { ok: true as const };
+    },
+  );
+
+  // Re-run extraction for one failed/errored ingestion, from the Event Log's
+  // Retry button. Safe to call more than once — see retryIngestion's own
+  // jobId-dedupe handling.
+  r.post(
+    "/api/mailboxes/ingestions/:id/retry",
+    {
+      schema: {
+        params: z.object({ id: z.uuid() }),
+        response: { 200: z.object({ ok: z.literal(true) }) },
+      },
+    },
+    async (req) => {
+      await retryIngestion(app.db, app.queues.extract, req.session!.userId, req.params.id);
       return { ok: true as const };
     },
   );
