@@ -1,9 +1,12 @@
 import { Queue, Worker } from "bullmq";
 import type { FastifyInstance } from "fastify";
-import { INGESTOR_QUEUE } from "@compass/shared";
+import { EXTRACT_QUEUE, INGESTOR_QUEUE } from "@compass/shared";
 import { evaluateBudgetAlerts } from "../modules/system/services/notifications.ts";
 import { evaluateBillReminders } from "../modules/planning/services/bills.ts";
-import { evaluateCardDueReminders, evaluateCardUtilization } from "../modules/credit/services/alerts.ts";
+import {
+  evaluateCardDueReminders,
+  evaluateCardUtilization,
+} from "../modules/credit/services/alerts.ts";
 import { materializeCardDueTasks } from "../modules/credit/services/card-due-tasks.ts";
 import { evaluateAnomalies } from "../modules/automation/services/anomaly.ts";
 import { runAutopilotReview, runGoalReview } from "../modules/automation/services/autopilot.ts";
@@ -14,7 +17,11 @@ import {
   type SnapshotPassResult,
 } from "../modules/investments/services/networth.ts";
 import { createEncryptedBackup } from "../modules/system/services/backup.ts";
-import { evaluateLargeTransactions, evaluateLowBalance, prefEnabled } from "../modules/system/services/prefs.ts";
+import {
+  evaluateLargeTransactions,
+  evaluateLowBalance,
+  prefEnabled,
+} from "../modules/system/services/prefs.ts";
 import { materializeDue } from "../modules/ledger/services/recurring.ts";
 import { runTaxDeadlineNudges } from "../modules/tax/services/deadline-nudges.ts";
 
@@ -23,6 +30,8 @@ export interface Queues {
   alerts: Queue;
   /** producer for the ingestor "run a sync pass now" signal; consumed by apps/ingestor */
   ingestor: Queue;
+  /** producer for the extractor "reprocess this ingestion" retry; consumed by apps/extractor */
+  extract: Queue;
 }
 
 /**
@@ -57,7 +66,12 @@ export async function enqueueBudgetEvaluation(app: FastifyInstance, userId: stri
     await app.queues.alerts.add(
       "evaluate",
       { userId },
-      { jobId: `eval-${userId}-${Math.floor(Date.now() / 5000)}`, delay: 5000, removeOnComplete: true, removeOnFail: true },
+      {
+        jobId: `eval-${userId}-${Math.floor(Date.now() / 5000)}`,
+        delay: 5000,
+        removeOnComplete: true,
+        removeOnFail: true,
+      },
     );
   } catch (err) {
     app.log.warn({ err }, "failed to enqueue budget evaluation");
@@ -79,7 +93,10 @@ const SNAPSHOT_FAILURE_LOG_LIMIT = 10;
  */
 function logSnapshotPass(app: FastifyInstance, pass: SnapshotPassResult, what: string): void {
   for (const f of pass.failures.slice(0, SNAPSHOT_FAILURE_LOG_LIMIT)) {
-    app.log.error({ userId: f.userId, date: f.date, err: f.error, pass: what }, "net-worth snapshot failed for user");
+    app.log.error(
+      { userId: f.userId, date: f.date, err: f.error, pass: what },
+      "net-worth snapshot failed for user",
+    );
   }
   if (pass.failures.length > 0) {
     app.log.warn(
@@ -244,6 +261,11 @@ export async function startJobs(app: FastifyInstance): Promise<void> {
   const ingestor = new Queue(INGESTOR_QUEUE, { connection });
   ingestor.on("error", (err) => app.log.error({ err }, "bullmq ingestor queue error"));
 
+  // Producer only — the extractor container runs the worker for this queue.
+  // Used to retry a failed ingestion from the Event Log (see modules/ingest/services/ingestions.ts).
+  const extract = new Queue(EXTRACT_QUEUE, { connection });
+  extract.on("error", (err) => app.log.error({ err }, "bullmq extract queue error"));
+
   const systemWorker = new Worker(
     "system",
     async (job) => {
@@ -287,7 +309,8 @@ export async function startJobs(app: FastifyInstance): Promise<void> {
         }
         case "networth.snapshot": {
           const pass = await snapshotAllUsers(app.db);
-          if (pass.written > 0) app.log.info({ written: pass.written }, "net-worth snapshots written");
+          if (pass.written > 0)
+            app.log.info({ written: pass.written }, "net-worth snapshots written");
           // Throws if every user failed, so report last — the successful writes are
           // worth logging either way.
           reportSnapshotPasses(app, [{ what: "net-worth snapshot", pass }]);
@@ -322,9 +345,13 @@ export async function startJobs(app: FastifyInstance): Promise<void> {
         case "autopilot.review": {
           const res = await runAutopilotReview(app.db, app.redis);
           for (const e of res.errors) {
-            app.log.error({ userId: e.userId, err: e.error }, "autopilot: cash-runway failed for user");
+            app.log.error(
+              { userId: e.userId, err: e.error },
+              "autopilot: cash-runway failed for user",
+            );
           }
-          if (res.fired > 0) app.log.info({ fired: res.fired }, "autopilot: cash-flow heads-ups sent");
+          if (res.fired > 0)
+            app.log.info({ fired: res.fired }, "autopilot: cash-flow heads-ups sent");
           // Every user failing is systemic (schema drift, forecast dep down) — fail
           // the job so it shows red, rather than logging a silent "success".
           if (res.processed > 0 && res.errors.length === res.processed) {
@@ -335,7 +362,10 @@ export async function startJobs(app: FastifyInstance): Promise<void> {
         case "autopilot.goals": {
           const res = await runGoalReview(app.db);
           for (const e of res.errors) {
-            app.log.error({ userId: e.userId, err: e.error }, "autopilot: goal review failed for user");
+            app.log.error(
+              { userId: e.userId, err: e.error },
+              "autopilot: goal review failed for user",
+            );
           }
           if (res.fired > 0) app.log.info({ fired: res.fired }, "autopilot: goal proposals sent");
           if (res.processed > 0 && res.errors.length === res.processed) {
@@ -384,10 +414,12 @@ export async function startJobs(app: FastifyInstance): Promise<void> {
     },
     { connection, concurrency: 2 },
   );
-  alertsWorker.on("failed", (job, err) => app.log.error({ job: job?.name, err }, "alert job failed"));
+  alertsWorker.on("failed", (job, err) =>
+    app.log.error({ job: job?.name, err }, "alert job failed"),
+  );
   alertsWorker.on("error", (err) => app.log.error({ err }, "bullmq alerts worker error"));
 
-  app.decorate("queues", { system, alerts, ingestor });
+  app.decorate("queues", { system, alerts, ingestor, extract });
 
   // catch up on recurring instances missed while the server was down
   const boot = await materializeDue(app.db).catch((err: unknown) => {
@@ -431,5 +463,7 @@ export async function startJobs(app: FastifyInstance): Promise<void> {
     await alertsWorker.close();
     await system.close();
     await alerts.close();
+    await ingestor.close();
+    await extract.close();
   });
 }

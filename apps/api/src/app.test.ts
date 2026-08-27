@@ -59,7 +59,7 @@ test("registerLedgerCacheSubscriber: ledger.mutated invalidates the user's cache
   const eventBus = new EventBus({ error: () => {} });
 
   app.decorate("redis", redis);
-  app.decorate("queues", { system: alerts, alerts, ingestor: alerts });
+  app.decorate("queues", { system: alerts, alerts, ingestor: alerts, extract: alerts });
   app.decorate("eventBus", eventBus);
 
   t.after(async () => {

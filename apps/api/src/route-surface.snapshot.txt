@@ -409,6 +409,7 @@ POST /api/insurance/policies/:id/health-cards
 POST /api/insurance/policies/:id/premiums
 POST /api/mailboxes
 POST /api/mailboxes/:id/reset-watermark
+POST /api/mailboxes/ingestions/:id/retry
 POST /api/mailboxes/sync
 POST /api/merchants/rename
 POST /api/net-worth/backfill
