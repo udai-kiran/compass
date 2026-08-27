@@ -79,11 +79,13 @@ export const userTasks = pgTable(
     /**
      * Who/what created the row. `'user'` for ordinary user-authored tasks;
      * `'card-due'` for tasks materialised from a credit-card due date (see
-     * services/card-due-tasks.ts). The check constraint is a storage-level
-     * guarantee — a strict Zod enum on the response schema combined with
-     * unconstrained DB text would otherwise turn one bad row into a 500 during
-     * serialization, including via the backup-restore path, which bypasses
-     * services entirely.
+     * services/card-due-tasks.ts); `'vehicle-service'` for tasks materialised
+     * from a vehicle's next-service-due window (see
+     * modules/vehicles/services/service-due-tasks.ts). The check constraint is
+     * a storage-level guarantee — a strict Zod enum on the response schema
+     * combined with unconstrained DB text would otherwise turn one bad row
+     * into a 500 during serialization, including via the backup-restore path,
+     * which bypasses services entirely.
      */
     source: text("source").notNull().default("user"),
     /**
@@ -99,7 +101,7 @@ export const userTasks = pgTable(
   (t) => [
     index("user_tasks_user_idx").on(t.userId),
     index("user_tasks_transaction_idx").on(t.transactionId),
-    check("user_tasks_source_check", sql`${t.source} in ('user', 'card-due')`),
+    check("user_tasks_source_check", sql`${t.source} in ('user', 'card-due', 'vehicle-service')`),
     uniqueIndex("user_tasks_source_key_idx")
       .on(t.userId, t.sourceKey)
       .where(sql`${t.sourceKey} is not null`),

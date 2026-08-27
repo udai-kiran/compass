@@ -27,3 +27,4 @@ export * from "./schemas/debt-windfall.ts";
 export * from "./schemas/shopping.ts";
 export * from "./schemas/tax.ts";
 export * from "./schemas/protection.ts";
+export * from "./schemas/vehicles.ts";

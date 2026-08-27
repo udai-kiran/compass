@@ -1,4 +1,5 @@
 import { useRef, useState, type FormEvent } from "react";
+import { Link } from "react-router";
 import type { Resource, ResourceKind } from "@compass/shared";
 import { toast } from "../../lib/toast.tsx";
 import { useResourceMutations, useResources } from "../../lib/resource-queries.ts";
@@ -122,6 +123,11 @@ export function ResourcesPage() {
                       <span className="badge bg-slate-100 text-slate-600">{group.label}</span>
                     </div>
                     <div className="mt-4 flex gap-3 text-xs">
+                      {item.kind === "vehicle" && (
+                        <Link to={`/vehicles/${item.id}`} className="font-medium text-brand-700 underline">
+                          Track
+                        </Link>
+                      )}
                       <button className="font-medium text-brand-700 underline" onClick={() => beginEdit(item)}>Edit</button>
                       <button className="text-slate-500 underline" onClick={() => archive(item)}>
                         {item.archived ? "Restore" : "Archive"}

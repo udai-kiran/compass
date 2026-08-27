@@ -40,6 +40,7 @@ DELETE /api/transaction-links/:id
 DELETE /api/transactions/:id
 DELETE /api/transfers/:id
 DELETE /api/user-tasks/:id
+DELETE /api/vehicles/:resourceId/readings/:id
 GET /api/accounts
 GET /api/accounts/:accountId/bank-details
 GET /api/accounts/:accountId/nps-details
@@ -189,6 +190,9 @@ GET /api/transfers/suggestions
 GET /api/trends
 GET /api/user-tasks
 GET /api/user-tasks/:id
+GET /api/vehicles
+GET /api/vehicles/:resourceId
+GET /api/vehicles/:resourceId/transactions
 GET /health
 HEAD /api/accounts
 HEAD /api/accounts/:accountId/bank-details
@@ -339,6 +343,10 @@ HEAD /api/transfers/suggestions
 HEAD /api/trends
 HEAD /api/user-tasks
 HEAD /api/user-tasks/:id
+HEAD /api/vehicles
+HEAD /api/vehicles/
+HEAD /api/vehicles/:resourceId
+HEAD /api/vehicles/:resourceId/transactions
 HEAD /health
 PATCH /api/accounts/:id
 PATCH /api/auth/profile
@@ -357,6 +365,7 @@ PATCH /api/splits/:id
 PATCH /api/tax/capital-losses/:id
 PATCH /api/transactions/:id
 PATCH /api/user-tasks/:id
+PATCH /api/vehicles/:resourceId/service-config
 POST /api/accounts
 POST /api/ai/categorize
 POST /api/ai/chat
@@ -471,6 +480,8 @@ POST /api/transactions/bulk
 POST /api/transfers
 POST /api/transfers/record
 POST /api/user-tasks
+POST /api/vehicles/:resourceId/readings
+POST /api/vehicles/:resourceId/service-done
 PUT /api/accounts/:accountId/bank-details
 PUT /api/accounts/:accountId/nps-details
 PUT /api/accounts/:accountId/overdraft-details
