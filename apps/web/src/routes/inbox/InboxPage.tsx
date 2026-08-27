@@ -6,6 +6,7 @@ import { toast } from "../../lib/toast.tsx";
 import { CategoryPicker } from "../../components/CategoryPicker.tsx";
 import { DateField } from "../../components/DateField.tsx";
 import { isRepaymentEligible } from "./repayment-eligibility.ts";
+import { INTENT_BADGE, isNonPaymentIntent } from "./credit-intent.ts";
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -292,11 +293,13 @@ function DraftCard({
             >
               {isDebit ? "Debit" : "Credit"}
             </span>
-            {/* Display-only: the model flagged this credit as a card bill payment,
-                not a merchant refund. No behaviour changes on the back of it. */}
-            {draft.intent === "repayment" && (
-              <span className="shrink-0 rounded bg-indigo-50 px-1.5 py-0.5 text-xs font-medium text-indigo-700">
-                Card payment
+            {/* Display-only: the model's best guess at this credit's purpose.
+                No behaviour changes on the back of it — see isRepaymentEligible. */}
+            {draft.intent && (
+              <span
+                className={`shrink-0 rounded px-1.5 py-0.5 text-xs font-medium ${INTENT_BADGE[draft.intent].className}`}
+              >
+                {INTENT_BADGE[draft.intent].label}
               </span>
             )}
           </div>
@@ -379,7 +382,17 @@ function DraftCard({
           <button
             onClick={onRecordRepayment}
             disabled={busy}
-            className="rounded-md bg-brand-600 px-4 py-1.5 text-sm text-white disabled:opacity-40"
+            // Steer, don't gate (isRepaymentEligible stays intent-blind by
+            // design): when the model flagged this credit as a refund/
+            // cashback/chargeback rather than a bill payment, this button
+            // stays clickable — the model can be wrong — but drops to the
+            // same secondary styling as Reject so Accept reads as the
+            // obvious next step instead of two equally-weighted actions.
+            className={`rounded-md px-4 py-1.5 text-sm disabled:opacity-40 ${
+              isNonPaymentIntent(draft.intent)
+                ? "border border-slate-300 text-slate-600 hover:bg-slate-50"
+                : "bg-brand-600 text-white"
+            }`}
           >
             {acceptRepayment.isPending ? "Recording…" : "Record as card payment"}
           </button>

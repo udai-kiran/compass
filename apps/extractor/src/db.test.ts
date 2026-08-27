@@ -136,7 +136,7 @@ test("saveResults: a null intent is passed through unchanged, not coerced or dro
   assertColumnPlaceholderParamMapping(insertQuery, "intent", null);
 });
 
-test("saveResults: refund and cashback intents also round-trip into the INSERT params", async () => {
+test("saveResults: refund, cashback and chargeback intents also round-trip into the INSERT params", async () => {
   const { pool, queries } = fakePool();
   await saveResults(pool, {
     ingestion,
@@ -145,10 +145,12 @@ test("saveResults: refund and cashback intents also round-trip into the INSERT p
     rows: [
       { ...baseRow, dedupeHash: "sig:test-intent-3", intent: "refund" },
       { ...baseRow, dedupeHash: "sig:test-intent-4", intent: "cashback" },
+      { ...baseRow, dedupeHash: "sig:test-intent-5", intent: "chargeback" },
     ],
   });
   const inserts = queries.filter((c) => /^insert into extracted_transactions/i.test(c.text.trim()));
-  assert.equal(inserts.length, 2);
+  assert.equal(inserts.length, 3);
   assertColumnPlaceholderParamMapping(inserts[0]!, "intent", "refund");
   assertColumnPlaceholderParamMapping(inserts[1]!, "intent", "cashback");
+  assertColumnPlaceholderParamMapping(inserts[2]!, "intent", "chargeback");
 });

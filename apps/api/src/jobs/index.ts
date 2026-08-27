@@ -8,6 +8,7 @@ import {
   evaluateCardUtilization,
 } from "../modules/credit/services/alerts.ts";
 import { materializeCardDueTasks } from "../modules/credit/services/card-due-tasks.ts";
+import { materializeVehicleServiceTasks } from "../modules/vehicles/services/service-due-tasks.ts";
 import { evaluateAnomalies } from "../modules/automation/services/anomaly.ts";
 import { runAutopilotReview, runGoalReview } from "../modules/automation/services/autopilot.ts";
 import {
@@ -165,6 +166,7 @@ export const LEDGER_DAY_SCHEDULERS = [
   "autopilot.review",
   "autopilot.goals",
   "tax.deadline-nudges",
+  "vehicles.service-remind",
 ] as const;
 
 /** Schedulers with no ledger-date dependency, deliberately left on local time. */
@@ -252,6 +254,15 @@ export async function startJobs(app: FastifyInstance): Promise<void> {
     "tax.deadline-nudges",
     { pattern: "35 0 * * *", tz: LEDGER_DAY_TZ },
     { name: "tax.deadline-nudges" },
+  );
+  // Vehicle next-service-due reminders (odometer or time interval, whichever
+  // comes first). No other job depends on its ordering — pinned to
+  // LEDGER_DAY_TZ only so its `today` date label agrees with the odometer
+  // readings' own dates, both derived the same way as the rest of this chain.
+  await system.upsertJobScheduler(
+    "vehicles.service-remind",
+    { pattern: "45 0 * * *", tz: LEDGER_DAY_TZ },
+    { name: "vehicles.service-remind" },
   );
 
   const alerts = new Queue("alerts", { connection });
@@ -388,6 +399,11 @@ export async function startJobs(app: FastifyInstance): Promise<void> {
           }
           return;
         }
+        case "vehicles.service-remind": {
+          const materialized = await materializeVehicleServiceTasks(app.db);
+          if (materialized > 0) app.log.info({ materialized }, "vehicle service tasks materialized");
+          return;
+        }
         default:
           app.log.warn({ job: job.name }, "unknown job — no handler");
       }
@@ -449,6 +465,15 @@ export async function startJobs(app: FastifyInstance): Promise<void> {
     })
     .catch((err: unknown) => {
       app.log.error({ err }, "boot card due task materialization failed");
+    });
+  // catch up on vehicle service-due task materialization too, same rationale
+  // as the card-due catch-up immediately above.
+  await materializeVehicleServiceTasks(app.db)
+    .then((materialized) => {
+      if (materialized > 0) app.log.info({ materialized }, "boot: materialized vehicle service tasks");
+    })
+    .catch((err: unknown) => {
+      app.log.error({ err }, "boot vehicle service task materialization failed");
     });
   // ensure today's net-worth snapshot exists
   // Boot must never be blocked by this, so an all-failed pass is logged, not thrown.

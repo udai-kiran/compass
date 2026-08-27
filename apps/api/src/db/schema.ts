@@ -164,3 +164,8 @@ export {
   taxLineMatchStatus,
   taxStatementLines,
 } from "../modules/tax/schema.ts";
+
+export {
+  vehicleDetails,
+  vehicleOdometerReadings,
+} from "../modules/vehicles/schema.ts";

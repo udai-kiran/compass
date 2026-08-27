@@ -24,7 +24,7 @@ export function toDto(row: {
   counterparty: string;
   suggestedAccountId: string | null;
   suggestedCategoryId: string | null;
-  intent: "repayment" | "refund" | "cashback" | null;
+  intent: "repayment" | "refund" | "cashback" | "chargeback" | null;
   bankRef: string | null;
   sourceQuote: string;
   confidence: number | null;

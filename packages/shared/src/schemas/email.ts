@@ -45,9 +45,10 @@ export type TxnDirection = z.infer<typeof TxnDirectionSchema>;
 /**
  * The model's classification of a credit draft's purpose. Captured so the
  * reviewer can see a card repayment for what it is, distinct from a genuine
- * refund or cashback — it does not suppress or alter any category suggestion.
+ * refund, cashback, or chargeback — it does not suppress or alter any
+ * category suggestion.
  */
-export const ExtractedTxnIntentSchema = z.enum(["repayment", "refund", "cashback"]);
+export const ExtractedTxnIntentSchema = z.enum(["repayment", "refund", "cashback", "chargeback"]);
 export type ExtractedTxnIntent = z.infer<typeof ExtractedTxnIntentSchema>;
 
 // ---------- Model I/O (the extractor's structured output) ----------
@@ -66,7 +67,7 @@ export const ExtractedTxnDraftSchema = z.object({
   /** verbatim snippet the figures came from, kept for review provenance */
   sourceQuote: z.string().default(""),
   confidence: z.number().min(0).max(1).default(0.5),
-  /** repayment/refund/cashback classification of a credit; absent or invalid normalizes to null */
+  /** repayment/refund/cashback/chargeback classification of a credit; absent or invalid normalizes to null */
   intent: ExtractedTxnIntentSchema.nullable().catch(null).default(null),
 });
 export type ExtractedTxnDraft = z.infer<typeof ExtractedTxnDraftSchema>;
@@ -101,7 +102,7 @@ export const ExtractedTransactionSchema = z.object({
   suggestedAccountId: z.uuid().nullable(),
   /** a category the AI guessed from the merchant; the reviewer confirms or changes it */
   suggestedCategoryId: z.uuid().nullable(),
-  /** the model's repayment/refund/cashback classification of a credit, or null */
+  /** the model's repayment/refund/cashback/chargeback classification of a credit, or null */
   intent: ExtractedTxnIntentSchema.nullable(),
   bankRef: z.string().nullable(),
   sourceQuote: z.string(),

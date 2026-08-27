@@ -303,6 +303,7 @@ test("classifyAndExtract: intent normalizes valid/absent/unknown/wrong-typed val
         { ...baseTxn, counterparty: "Card Payment", intent: "repayment" },
         { ...baseTxn, counterparty: "Amazon Refund", intent: "refund" },
         { ...baseTxn, counterparty: "Cashback Credit", intent: "cashback" },
+        { ...baseTxn, counterparty: "Dispute Reversal", intent: "chargeback" },
         { ...baseTxn, counterparty: "No Intent Field" }, // intent key absent entirely
         { ...baseTxn, counterparty: "Bogus String", intent: "not-a-real-intent" },
         { ...baseTxn, counterparty: "Wrong Type", intent: 42 },
@@ -311,14 +312,15 @@ test("classifyAndExtract: intent normalizes valid/absent/unknown/wrong-typed val
   );
   const result = await classifyAndExtract(email("..."), ai, [], { names: [], emails: [], upiIds: [] });
   // every row survives — a malformed `intent` on one row must not discard the extraction
-  assert.equal(result.transactions.length, 6);
+  assert.equal(result.transactions.length, 7);
   assert.equal(result.transactions[0]!.intent, "repayment");
   assert.equal(result.transactions[1]!.intent, "refund");
   assert.equal(result.transactions[2]!.intent, "cashback");
-  assert.equal(result.transactions[3]!.intent, null); // absent
+  assert.equal(result.transactions[3]!.intent, "chargeback");
+  assert.equal(result.transactions[4]!.intent, null); // absent
   // the malformed row itself survives, with intent normalized to null
-  assert.equal(result.transactions[4]!.intent, null); // unknown string
-  assert.equal(result.transactions[5]!.intent, null); // wrong type
+  assert.equal(result.transactions[5]!.intent, null); // unknown string
+  assert.equal(result.transactions[6]!.intent, null); // wrong type
 });
 
 test("runExtraction: intent threads through toInboxRow onto the persistable InboxRow", async () => {

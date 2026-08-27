@@ -1,0 +1,1 @@
+ALTER TYPE "public"."extracted_txn_intent" ADD VALUE 'chargeback';

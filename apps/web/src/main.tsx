@@ -70,6 +70,9 @@ const InsurancePage = lazy(() =>
 const ResourcesPage = lazy(() =>
   import("./routes/resources/ResourcesPage.tsx").then((m) => ({ default: m.ResourcesPage })),
 );
+const VehicleDetailPage = lazy(() =>
+  import("./routes/vehicles/VehicleDetailPage.tsx").then((m) => ({ default: m.VehicleDetailPage })),
+);
 const TasksPage = lazy(() =>
   import("./routes/tasks/TasksPage.tsx").then((m) => ({ default: m.TasksPage })),
 );
@@ -179,6 +182,7 @@ const router = createBrowserRouter([
       { path: "protection/calendar", element: <CalendarPage /> },
       { path: "protection/dossier", element: <DossierPage /> },
       { path: "resources", element: <ResourcesPage /> },
+      { path: "vehicles/:resourceId", element: <VehicleDetailPage /> },
       { path: "tasks", element: <TasksPage /> },
       { path: "insights", element: <InsightsPage /> },
       { path: "reports", element: <ReportsPage /> },

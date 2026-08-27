@@ -32,6 +32,7 @@ import * as automation from "../modules/automation/schema.ts";
 import * as household from "../modules/household/schema.ts";
 import * as shopping from "../modules/shopping/schema.ts";
 import * as tax from "../modules/tax/schema.ts";
+import * as vehicles from "../modules/vehicles/schema.ts";
 
 // The barrel itself
 import * as barrel from "../db/schema.ts";
@@ -95,6 +96,10 @@ const protectionResidents = new Set([
   "retirementDetails", "insuranceHealthCards",
 ]);
 
+const vehiclesResidents = new Set([
+  "vehicleDetails", "vehicleOdometerReadings",
+]);
+
 const planningResidents = new Set([
   "budgets", "budgetLines", "budgetAlerts", "subscriptionDismissals", "projectionSettings",
   "budgetPeriod",
@@ -127,8 +132,8 @@ const shoppingResidents = new Set([
 
 describe("db/schema.ts decomposition", () => {
 
-  // T3c: barrel exports exactly 83 tables + 67 enums + users, no duplicates
-  it("exports exactly 83 tables + 67 enums + users with no duplicates", () => {
+  // T3c: barrel exports exactly 85 tables + 67 enums + users, no duplicates
+  it("exports exactly 85 tables + 67 enums + users with no duplicates", () => {
     const tables: string[] = [];
     const enums: string[] = [];
     // Postgres-level object names — JS export keys are unique by construction,
@@ -160,7 +165,7 @@ describe("db/schema.ts decomposition", () => {
       `duplicate enum DB names: ${enumDbNames.filter((n, i) => enumDbNames.indexOf(n) !== i)}`,
     );
 
-    assert.equal(tables.length, 83, `expected 83 tables, got ${tables.length}: ${tables.join(", ")}`);
+    assert.equal(tables.length, 85, `expected 85 tables, got ${tables.length}: ${tables.join(", ")}`);
     assert.equal(enums.length, 68, `expected 68 enums, got ${enums.length}: ${enums.join(", ")}`);
 
     // users is also in the barrel
@@ -215,6 +220,10 @@ describe("db/schema.ts decomposition", () => {
     // Tax residents
     for (const k of taxResidents) {
       identityMap[k] = { module: tax as unknown as Record<string, unknown>, key: k };
+    }
+    // Vehicles residents
+    for (const k of vehiclesResidents) {
+      identityMap[k] = { module: vehicles as unknown as Record<string, unknown>, key: k };
     }
 
     // Shared tables in shared layers
