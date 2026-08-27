@@ -213,7 +213,7 @@ type DraftOverrides = Partial<{
   transactionId: string | null;
   matchedTransactionId: string | null;
   dedupeHash: string | null;
-  intent: "repayment" | "refund" | "cashback" | null;
+  intent: "repayment" | "refund" | "cashback" | "chargeback" | null;
 }>;
 
 async function createDraft(userId: string, ingestionId: string, over: DraftOverrides = {}): Promise<string> {
@@ -1017,6 +1017,7 @@ test("listInbox: intent round-trips onto the DTO for every value and validates a
   const repaymentId = await createDraft(userId, ingestionId, { direction: "credit", intent: "repayment" });
   const refundId = await createDraft(userId, ingestionId, { direction: "credit", intent: "refund" });
   const cashbackId = await createDraft(userId, ingestionId, { direction: "credit", intent: "cashback" });
+  const chargebackId = await createDraft(userId, ingestionId, { direction: "credit", intent: "chargeback" });
   const plainId = await createDraft(userId, ingestionId, { direction: "debit", intent: null });
 
   const pending = await listInbox(db, userId, "pending");
@@ -1025,9 +1026,10 @@ test("listInbox: intent round-trips onto the DTO for every value and validates a
   assert.equal(byId.get(repaymentId)?.intent, "repayment");
   assert.equal(byId.get(refundId)?.intent, "refund");
   assert.equal(byId.get(cashbackId)?.intent, "cashback");
+  assert.equal(byId.get(chargebackId)?.intent, "chargeback");
   assert.equal(byId.get(plainId)?.intent, null);
 
-  for (const id of [repaymentId, refundId, cashbackId, plainId]) {
+  for (const id of [repaymentId, refundId, cashbackId, chargebackId, plainId]) {
     const dto = byId.get(id);
     assert.ok(dto);
     ExtractedTransactionSchema.parse(dto); // throws on any mismatch with the response schema
@@ -1058,13 +1060,14 @@ test("listInbox: applyHistoryCategory still unconditionally overrides suggestedC
   const repaymentId = await createDraft(userId, ingestionId, { direction: "credit", intent: "repayment" });
   const refundId = await createDraft(userId, ingestionId, { direction: "credit", intent: "refund" });
   const cashbackId = await createDraft(userId, ingestionId, { direction: "credit", intent: "cashback" });
+  const chargebackId = await createDraft(userId, ingestionId, { direction: "credit", intent: "chargeback" });
   const noIntentId = await createDraft(userId, ingestionId, { direction: "credit", intent: null });
 
   const pending = await listInbox(db, userId, "pending");
   const byId = new Map(pending.map((d) => [d.id, d]));
 
   // History wins unconditionally, exactly as before this change, regardless of intent.
-  for (const id of [repaymentId, refundId, cashbackId, noIntentId]) {
+  for (const id of [repaymentId, refundId, cashbackId, chargebackId, noIntentId]) {
     assert.equal(byId.get(id)?.suggestedCategoryId, historyCategoryId);
   }
 });

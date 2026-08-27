@@ -141,10 +141,16 @@ export const extractedTxnStatus = pgEnum("extracted_txn_status", [
 export const txnDirection = pgEnum("txn_direction", ["debit", "credit"]);
 /**
  * The model's classification of a credit draft's purpose — repayment to a card,
- * genuine refund, or cashback. Null = ordinary or unknown; this only captures
- * the signal, it does not change any suggestion/history behaviour (see misc-01).
+ * genuine refund, cashback, or chargeback. Null = ordinary or unknown; this only
+ * captures the signal, it does not change any suggestion/history behaviour (see
+ * misc-01).
  */
-export const extractedTxnIntent = pgEnum("extracted_txn_intent", ["repayment", "refund", "cashback"]);
+export const extractedTxnIntent = pgEnum("extracted_txn_intent", [
+  "repayment",
+  "refund",
+  "cashback",
+  "chargeback",
+]);
 
 /**
  * A transaction the model pulled out of an email — a draft in the review inbox.
@@ -180,9 +186,10 @@ export const extractedTransactions = pgTable(
       onDelete: "set null",
     }),
     /**
-     * The model's classification of a credit's purpose (repayment/refund/cashback),
-     * or null for an ordinary/unclassified draft. Captured for the reviewer to see;
-     * does not suppress or alter `suggestedCategoryId` (see misc-01).
+     * The model's classification of a credit's purpose
+     * (repayment/refund/cashback/chargeback), or null for an ordinary/unclassified
+     * draft. Captured for the reviewer to see; does not suppress or alter
+     * `suggestedCategoryId` (see misc-01).
      */
     intent: extractedTxnIntent("intent"),
     bankRef: text("bank_ref"),
