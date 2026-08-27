@@ -124,7 +124,7 @@ export async function listAiEvents(
     const statuses = await db
       .select({ id: emailIngestions.id, status: emailIngestions.status })
       .from(emailIngestions)
-      .where(inArray(emailIngestions.id, ingestionIds));
+      .where(and(inArray(emailIngestions.id, ingestionIds), eq(emailIngestions.userId, userId)));
     for (const s of statuses) ingestionStatusMap.set(s.id, s.status);
   }
 
@@ -146,7 +146,7 @@ export async function getAiEvent(db: Db, userId: string, id: string): Promise<Ai
     const [ing] = await db
       .select({ status: emailIngestions.status })
       .from(emailIngestions)
-      .where(eq(emailIngestions.id, row.ingestionId));
+      .where(and(eq(emailIngestions.id, row.ingestionId), eq(emailIngestions.userId, userId)));
     ingestionStatus = ing?.status ?? null;
   }
   return {
