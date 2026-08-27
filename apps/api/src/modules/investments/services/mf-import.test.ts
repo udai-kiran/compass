@@ -303,3 +303,30 @@ test("NAVAll parser keeps scheme rows and drops banners, blanks, and N.A.", () =
   assert.equal(m.get(122639)?.date, "2026-07-15");
   assert.equal(m.has(999999), false);
 });
+
+test("NAVAll rows in the current eight-column format parse", () => {
+  // Aug 2026: AMFI added Plan and Option columns ahead of the NAV. With the
+  // old fixed index 4 for NAV this row parsed as garbage and every holding's
+  // refresh failed with "no parseable NAVs".
+  const feed = [
+    "Scheme Code;ISIN Div Payout/ ISIN Growth;ISIN Div Reinvestment;Scheme Name;Plan;Option;Net Asset Value;Date",
+    "",
+    "Open Ended Schemes(Debt Scheme - Banking and PSU Fund)",
+    "",
+    "Aditya Birla Sun Life Mutual Fund",
+    "",
+    "119551;INF209KA12Z1;INF209KA13Z9;Aditya Birla Sun Life Banking & PSU Debt Fund;Direct Plan;IDCW-Re-investment;106.9419;25-Aug-2026",
+    "999999;INF000000000;;Suspended Fund;Regular Plan;Growth;N.A.;25-Aug-2026",
+  ].join("\n");
+  const m = parseNavAll(feed);
+  assert.equal(m.size, 1);
+  assert.equal(m.get(119551)?.nav, 106.9419);
+  assert.equal(m.get(119551)?.date, "2026-08-25");
+  assert.equal(m.get(119551)?.name, "Aditya Birla Sun Life Banking & PSU Debt Fund");
+  assert.equal(m.has(999999), false); // N.A. NAV still dropped
+});
+
+test("an over-short or empty row never throws in the parser", () => {
+  assert.equal(parseNavAll("1;2;3").size, 0);
+  assert.equal(parseNavAll("").size, 0);
+});
