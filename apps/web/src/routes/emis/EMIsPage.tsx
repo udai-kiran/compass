@@ -49,7 +49,6 @@ function EmiRow({ emi, accounts }: { emi: EmiSummary; accounts: AccountWithBalan
   const [historyOpen, setHistoryOpen] = useState(false);
   const pct = Math.round((emi.paidInstallments / emi.totalInstallments) * 100);
   const account = accounts?.find((a) => a.id === emi.accountId);
-  const loanAccount = accounts?.find((a) => a.id === emi.loanAccountId);
 
   return (
     <section className="rounded-lg border border-slate-200 bg-white p-4">
@@ -77,14 +76,7 @@ function EmiRow({ emi, accounts }: { emi: EmiSummary; accounts: AccountWithBalan
           ) : (
             <p className="mt-0.5 text-xs text-slate-400">Account unavailable</p>
           )}
-          {loanAccount && (
-            <Link
-              to={`/accounts/${loanAccount.id}`}
-              className="mt-0.5 block text-xs text-slate-500 underline"
-            >
-              Loan account: {loanAccount.name}
-            </Link>
-          )}
+          <LoanAccountSection emi={emi} accounts={accounts} />
         </div>
         <div className="flex shrink-0 gap-2">
           <button
@@ -135,6 +127,111 @@ function EmiRow({ emi, accounts }: { emi: EmiSummary; accounts: AccountWithBalan
 
       {emi.remainingInstallments > 0 && !emi.paused && <PrepayPanel emi={emi} />}
     </section>
+  );
+}
+
+function LoanAccountSection({
+  emi,
+  accounts,
+}: {
+  emi: EmiSummary;
+  accounts: AccountWithBalance[] | undefined;
+}) {
+  const { linkLoanAccount } = useEmiMutations();
+  const [open, setOpen] = useState(false);
+  const [selectedId, setSelectedId] = useState("");
+
+  const loanAccount = accounts?.find((a) => a.id === emi.loanAccountId);
+  const eligible = accounts?.filter(
+    (a) =>
+      !a.archivedAt &&
+      (EMI_DESTINATION_TYPES as readonly string[]).includes(a.type) &&
+      a.id !== emi.accountId,
+  ) ?? [];
+
+  if (emi.loanAccountId) {
+    return (
+      <p className="mt-0.5 flex items-center gap-2 text-xs text-slate-500">
+        <Link
+          to={`/accounts/${emi.loanAccountId}`}
+          className="underline"
+        >
+          Loan account: {loanAccount?.name ?? "Unknown"}
+        </Link>
+        <button
+          onClick={() => {
+            if (!confirm("Unlink this loan account from the EMI?")) return;
+            linkLoanAccount.mutate(
+              { templateId: emi.templateId, loanAccountId: null },
+              { onSuccess: () => toast("Loan account unlinked", "success") },
+            );
+          }}
+          disabled={linkLoanAccount.isPending}
+          className="text-slate-400 hover:text-red-500 disabled:opacity-40"
+          title="Unlink loan account"
+        >
+          ×
+        </button>
+      </p>
+    );
+  }
+
+  const canLink = emi.paidInstallments === 0;
+
+  if (!open) {
+    return (
+      <button
+        onClick={() => { setOpen(true); setSelectedId(eligible[0]?.id ?? ""); }}
+        className="mt-0.5 text-xs text-brand-600 hover:underline disabled:text-slate-400 disabled:no-underline"
+        disabled={!canLink || eligible.length === 0}
+        title={
+          !canLink
+            ? "Can't link a loan account once installments have been paid"
+            : eligible.length === 0
+            ? "No eligible loan/OD accounts found"
+            : undefined
+        }
+      >
+        + Link loan account
+      </button>
+    );
+  }
+
+  return (
+    <div className="mt-1 flex items-center gap-2">
+      <select
+        value={selectedId}
+        onChange={(e) => setSelectedId(e.target.value)}
+        className="input text-xs py-0.5"
+      >
+        <option value="">Select…</option>
+        {eligible.map((a) => (
+          <option key={a.id} value={a.id}>{a.name}</option>
+        ))}
+      </select>
+      <button
+        onClick={() => {
+          if (!selectedId) return;
+          linkLoanAccount.mutate(
+            { templateId: emi.templateId, loanAccountId: selectedId },
+            {
+              onSuccess: () => { setOpen(false); toast("Loan account linked", "success"); },
+              onError: (err) => toast(err instanceof Error ? err.message : "Failed to link", "error"),
+            },
+          );
+        }}
+        disabled={!selectedId || linkLoanAccount.isPending}
+        className="rounded-md bg-brand-600 px-2 py-0.5 text-xs text-white disabled:opacity-40"
+      >
+        {linkLoanAccount.isPending ? "Linking…" : "Link"}
+      </button>
+      <button
+        onClick={() => setOpen(false)}
+        className="text-xs text-slate-400 hover:text-slate-600"
+      >
+        Cancel
+      </button>
+    </div>
   );
 }
 

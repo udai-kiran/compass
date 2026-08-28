@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
 import { CreateEmiSchema, EmiInstallmentSchema, EmiSummarySchema } from "@compass/shared";
-import { createEmi, deleteEmi, listEmiInstallments, listEmis } from "../services/emis.ts";
+import { createEmi, deleteEmi, getEmiDetail, listEmiInstallments, listEmis, upsertEmiDetails } from "../services/emis.ts";
 import { materializeDue } from "../../ledger/services/recurring.ts";
 import { invalidateUserCache } from "../../../lib/cache.ts";
 import { enqueueBudgetEvaluation } from "../../../jobs/index.ts";
@@ -47,5 +47,25 @@ export async function emiRoutes(app: FastifyInstance) {
     "/api/emis/:templateId/installments",
     { schema: { params: IdParams, response: { 200: z.array(EmiInstallmentSchema) } } },
     async (req) => listEmiInstallments(app.db, req.session!.userId, req.params.templateId),
+  );
+
+  r.patch(
+    "/api/emis/:templateId/loan-account",
+    {
+      schema: {
+        params: IdParams,
+        body: z.object({ loanAccountId: z.uuid().nullable() }),
+        response: { 200: EmiSummarySchema },
+      },
+    },
+    async (req) => {
+      const detail = await getEmiDetail(app.db, req.session!.userId, req.params.templateId);
+      const emi = await upsertEmiDetails(app.db, req.session!.userId, req.params.templateId, {
+        ...detail,
+        loanAccountId: req.body.loanAccountId,
+      });
+      await invalidateUserCache(app.redis, req.session!.userId);
+      return emi;
+    },
   );
 }

@@ -537,3 +537,31 @@ export async function getEmiInterestEstimateForFy(
   }
   return { estimatePaise, templateCount: emis.length };
 }
+
+/**
+ * Read-only probe: returns the stored schedule fields for a single EMI,
+ * needed by the loan-account PATCH route to supply the unchanged fields
+ * to upsertEmiDetails without forcing the caller to echo them back.
+ * Throws 404 if not found or not owned.
+ */
+export async function getEmiDetail(
+  db: Db,
+  userId: string,
+  templateId: string,
+): Promise<{
+  principalPaise: number;
+  annualRateBps: number;
+  totalInstallments: number;
+  startDate: string;
+}> {
+  const row = await db.query.emiDetails.findFirst({
+    where: and(eq(emiDetails.templateId, templateId), eq(emiDetails.userId, userId)),
+  });
+  if (!row) throw new HttpError(404, "EMI not found");
+  return {
+    principalPaise: row.principalPaise,
+    annualRateBps: row.annualRateBps,
+    totalInstallments: row.totalInstallments,
+    startDate: row.startDate,
+  };
+}

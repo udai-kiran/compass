@@ -58,7 +58,15 @@ export function useEmiMutations() {
       send("PATCH", `/api/recurring/${templateId}`, z.unknown(), { paused }),
     onSuccess: invalidate,
   });
-  return { create, remove, setPaused };
+  const linkLoanAccount = useMutation({
+    mutationFn: ({ templateId, loanAccountId }: { templateId: string; loanAccountId: string | null }) =>
+      send("PATCH", `/api/emis/${templateId}/loan-account`, EmiSummarySchema, { loanAccountId }),
+    onSuccess: () => {
+      invalidate();
+      void qc.invalidateQueries({ queryKey: ["accounts"] });
+    },
+  });
+  return { create, remove, setPaused, linkLoanAccount };
 }
 
 // ---------- prepay vs invest (Phase 15) ----------
