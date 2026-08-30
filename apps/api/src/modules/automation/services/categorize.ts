@@ -1,6 +1,12 @@
 import { sql } from "drizzle-orm";
 import type { AiProvider } from "@compass/ai";
-import { redactPii, type AiCategorySuggestion, type RedactionIdentity } from "@compass/shared";
+import {
+  redactPii,
+  type AiCategorySuggestion,
+  type MerchantSuggestion,
+  type RedactionIdentity,
+  type SmartFillResponse,
+} from "@compass/shared";
 import type { Db } from "../../../db/index.ts";
 import { hasCategoryDimension } from "../../../lib/ledger-sql.ts";
 
@@ -105,4 +111,120 @@ export async function suggestCategoriesFor(
         confidence: s.confidence,
       };
     });
+}
+
+/**
+ * History-based Smart Fill (no AI). Groups uncategorized transactions by
+ * merchant and returns one suggestion per merchant derived from the user's own
+ * past categorization choices. M merchant rows replaces N transaction rows,
+ * so the review panel scales to any transaction volume.
+ *
+ * Only transactions that have a category dimension (ordinary or split) are
+ * considered — transfers and opening entries are excluded.
+ */
+export async function suggestByMerchant(db: Db, userId: string): Promise<SmartFillResponse> {
+  // Step 1: best historical category per merchant (frequency-ranked)
+  const histRows = (
+    await db.execute(sql`
+      with history as (
+        select t.merchant, p.category_id, count(*) as freq
+        from transactions t
+        join postings p  on p.transaction_id = t.id
+        join accounts  a on a.id = p.account_id and a.system_kind is not null
+        where t.user_id = ${userId} and t.deleted_at is null and p.category_id is not null
+        group by t.merchant, p.category_id
+      ),
+      ranked as (
+        select merchant, category_id, freq,
+          sum(freq) over (partition by merchant) as total,
+          row_number() over (partition by merchant order by freq desc) as rnk
+        from history
+      )
+      select merchant, category_id,
+        freq::float / total as confidence,
+        freq::int          as history_count
+      from ranked
+      where rnk = 1
+    `)
+  ).rows as Array<{
+    merchant: string;
+    category_id: string;
+    confidence: number;
+    history_count: number;
+  }>;
+
+  if (histRows.length === 0) {
+    // No history at all — count uncovered merchants and return early.
+    const uncovRow = (
+      await db.execute(sql`
+        select count(distinct t.merchant)::int as cnt
+        from transactions t
+        join postings p on p.transaction_id = t.id
+        join accounts a on a.id = p.account_id and a.system_kind is not null
+        where t.user_id = ${userId} and t.deleted_at is null and p.category_id is null
+          and ${hasCategoryDimension()}
+      `)
+    ).rows[0] as { cnt: number } | undefined;
+    return { suggestions: [], uncoveredCount: uncovRow?.cnt ?? 0 };
+  }
+
+  // Build an in-memory lookup: merchant → best category info
+  const best = new Map(
+    histRows.map((r) => [
+      r.merchant,
+      { categoryId: r.category_id, confidence: r.confidence, historyCount: r.history_count },
+    ]),
+  );
+
+  // Step 2: all uncategorized transactions that have a category dimension, grouped by merchant
+  const pendingRows = (
+    await db.execute(sql`
+      select t.merchant,
+        array_agg(distinct t.id::text) as txn_ids,
+        count(distinct t.id)::int      as txn_count
+      from transactions t
+      join postings p on p.transaction_id = t.id
+      join accounts a on a.id = p.account_id and a.system_kind is not null
+      where t.user_id = ${userId} and t.deleted_at is null and p.category_id is null
+        and ${hasCategoryDimension()}
+      group by t.merchant
+    `)
+  ).rows as Array<{ merchant: string; txn_ids: string[]; txn_count: number }>;
+
+  if (pendingRows.length === 0) return { suggestions: [], uncoveredCount: 0 };
+
+  // Step 3: fetch category names for matched suggestions
+  const matchedMerchants = pendingRows.filter((r) => best.has(r.merchant));
+  const uncoveredCount = pendingRows.length - matchedMerchants.length;
+
+  if (matchedMerchants.length === 0) return { suggestions: [], uncoveredCount };
+
+  const categoryIds = [...new Set(matchedMerchants.map((r) => best.get(r.merchant)!.categoryId))];
+  const catRows = (
+    await db.execute(sql`
+      select id, name from categories
+      where user_id = ${userId} and id = any(${categoryIds}::uuid[]) and archived_at is null
+    `)
+  ).rows as Array<{ id: string; name: string }>;
+  const catName = new Map(catRows.map((c) => [c.id, c.name]));
+
+  const suggestions: MerchantSuggestion[] = matchedMerchants
+    .map((r) => {
+      const b = best.get(r.merchant)!;
+      const name = catName.get(b.categoryId);
+      if (!name) return null; // archived category — skip
+      return {
+        merchant: r.merchant,
+        txnIds: r.txn_ids,
+        txnCount: r.txn_count,
+        categoryId: b.categoryId,
+        categoryName: name,
+        confidence: b.confidence,
+        historyCount: b.historyCount,
+      };
+    })
+    .filter((s): s is MerchantSuggestion => s !== null)
+    .sort((a, b) => b.confidence - a.confidence || b.txnCount - a.txnCount);
+
+  return { suggestions, uncoveredCount };
 }

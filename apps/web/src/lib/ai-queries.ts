@@ -3,9 +3,11 @@ import {
   AiCategorizeResponseSchema,
   AiSettingsSchema,
   AiSummarySchema,
+  SmartFillResponseSchema,
   type AiCategorizeResponse,
   type AiChatMessage,
   type AiSummary,
+  type SmartFillResponse,
   type UpdateAiSettings,
 } from "@compass/shared";
 import { apiGet, apiPost } from "./api.ts";
@@ -41,6 +43,13 @@ export function useAiCategorize() {
   return useMutation({
     mutationFn: (transactionIds?: string[]): Promise<AiCategorizeResponse> =>
       apiPost("/api/ai/categorize", AiCategorizeResponseSchema, { transactionIds }),
+  });
+}
+
+export function useSmartFill() {
+  return useMutation({
+    mutationFn: (): Promise<SmartFillResponse> =>
+      apiPost("/api/transactions/smart-fill", SmartFillResponseSchema, {}),
   });
 }
 
