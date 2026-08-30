@@ -1,0 +1,16 @@
+check-ci report
+repo:           /work/personal/compass
+workflow:       CI
+branch:         fix/navall-parser-8col
+target commit:  a0634df193c1d70b479ba98a777a75b9462f386d
+run id:         33074042189
+run title:      fix(investments): parse AMFI NAVAll feed end-anchored so Refresh NAVs works
+run head sha:   a0634df193c1d70b479ba98a777a75b9462f386d
+run event:      pull_request
+run created:    2026-08-27T12:53:31Z
+run url:        https://github.com/udai-kiran/PennyPilot/actions/runs/33074042189
+run status:     in_progress
+run conclusion: 
+date checked:   2026-08-27T12:59:53Z
+
+NOTE: could not fetch full run log (run may be in progress); metadata only.

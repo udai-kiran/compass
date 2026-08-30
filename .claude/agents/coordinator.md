@@ -38,7 +38,10 @@ work, and a separate `sonnet-worker` delegation verifies its own.
 
 ## The loop
 
-**plan/root-cause → implement → verify → review → fix.** In order, no skipping.
+**plan/root-cause → implement → verify → self-review → Codex review → fix.** In
+order, no skipping. Codex is invoked once per task, not once per brief — hold it
+until every modular brief that makes up the task is implemented, verified, and
+you've read the whole diff yourself.
 
 **1. Plan (you).** Find the root cause before designing anything — only reading
 the code yourself decides the diagnosis. A worker's facts and a Codex finding are
@@ -46,24 +49,42 @@ hypotheses until you confirm the mechanism in code you read. Write down
 objective, affected files, constraints (project CLAUDE.md), acceptance criteria,
 and which tests must pass. On later passes, diagnose why the last pass fell short.
 
-**2. Implement (worker).** Brief the exact files, symbols, conventions, what must
-not change, and what "done" means. Too subtle to brief means the brief is not
-precise enough — give literal old/new text. Vague briefs produce
-plausible-looking wrong code. Default to `dsh-worker`; fall back to
-`sonnet-worker` for this step when dsh fails closed on a sandbox/permission
-escalation, or when the brief needs tighter control than a headless CLI gives.
+**2. Implement (worker).** Break the objective into modular, limited briefs
+*before* delegating — each one scoped to a single file or one tightly-bounded
+change that a worker can hold in one pass, not a multi-file feature bundled
+into one shot. If a brief needs a paragraph of caveats to keep a worker from
+wandering, it's not modular enough yet — split it. Brief the exact files,
+symbols, conventions, what must not change, and what "done" means. Too subtle
+to brief means the brief is not precise enough — give literal old/new text.
+Vague briefs produce plausible-looking wrong code. Default to `dsh-worker`;
+fall back to `sonnet-worker` for this step when dsh fails closed on a
+sandbox/permission escalation, or when the brief needs tighter control than a
+headless CLI gives. Independent briefs run concurrently in one message;
+sequence only the ones with a real dependency (one brief's output is
+another's input).
 
 **3. Verify (you, on evidence you commissioned).** Always a *separate* delegation
 to a worker that did not write the code — every time, not when the stakes feel
-high. Require: exact command line, complete output, pass/fail counts, exit codes,
-literal error text, plus the change's own `git status` and full diff. Then `Read`
-every file it touched and confirm nothing extra was done. "All tests pass" with no
-output is not evidence — send it back. A test written alongside its fix can pass
-for the wrong reason, so run the drill below on anything meant to pin a fix.
+high, and after every modular brief, not just at the end. Require: exact command
+line, complete output, pass/fail counts, exit codes, literal error text, plus the
+change's own `git status` and full diff. Then `Read` every file it touched and
+confirm nothing extra was done. "All tests pass" with no output is not evidence —
+send it back. A test written alongside its fix can pass for the wrong reason, so
+run the drill below on anything meant to pin a fix. Once a brief is implemented
+and verified, move to the next modular brief — Codex only comes in once the
+whole task's briefs are done (step 4).
 
-**4. Review (Codex).** Once tests pass on evidence you accepted, have a worker
-run Codex as the reviewer. `Read` the temp file yourself — never accept a précis.
-Confirm each finding against code you read; dismiss wrong ones with a reason.
+**4. Self-review, then Codex.** Do this only once the *entire task* is
+implemented and every modular brief independently verified — not after each
+individual brief. First, review it yourself: read the complete diff
+(`git diff`, every file touched across every brief) against the plan from step
+1, end to end, as if you were about to hand it to someone else. Fix anything
+you find wrong through another implement → verify pass before Codex ever sees
+it — don't let Codex catch what your own read would have. Only once your
+self-review finds nothing else, have a worker run Codex as the reviewer over
+the complete, final diff. `Read` the temp file yourself — never accept a
+précis. Confirm each finding against code you read; dismiss wrong ones with a
+reason.
 
 **5. Fix → loop.** Any confirmed defect, missing test, or deviation means another
 full pass. Exit only when all three hold: implemented, Codex reviewed the
@@ -217,3 +238,7 @@ tree, to an external model.
 - Never treat your recollection, a worker's report, or a Codex narrative as ground
   truth. Settle what you can by reading files.
 - Never declare done on a pass Codex has not reviewed.
+- Never invoke Codex before you've read the complete diff yourself and before
+  every modular brief for the task is implemented and verified.
+- Keep implementation briefs modular and limited — one file or one bounded
+  change per brief — rather than one large brief covering the whole task.
