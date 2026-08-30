@@ -9,6 +9,7 @@ import {
   EpfContributionResultSchema,
   ListTransactionsQuerySchema,
   SetSplitsSchema,
+  SmartFillResponseSchema,
   TransactionPageSchema,
   TransactionSchema,
   UpdateTransactionSchema,
@@ -23,6 +24,7 @@ import {
   updateTransaction,
 } from "../services/transactions.ts";
 import { recordEpfContribution } from "../services/epf-contributions.ts";
+import { suggestByMerchant } from "../../automation/services/categorize.ts";
 
 const IdParams = z.object({ id: z.uuid() });
 
@@ -103,5 +105,11 @@ export async function transactionRoutes(app: FastifyInstance) {
       app.eventBus.emit("ledger.mutated", { userId: req.session!.userId });
       return result;
     },
+  );
+
+  r.post(
+    "/api/transactions/smart-fill",
+    { schema: { response: { 200: SmartFillResponseSchema } } },
+    async (req) => suggestByMerchant(app.db, req.session!.userId),
   );
 }

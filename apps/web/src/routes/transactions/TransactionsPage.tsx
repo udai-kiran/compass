@@ -23,6 +23,7 @@ import { CategoryPicker } from "../../components/CategoryPicker.tsx";
 import { DateField } from "../../components/DateField.tsx";
 import { TransactionDrawer } from "./TransactionDrawer.tsx";
 import { AiCategorizePanel } from "./AiCategorizePanel.tsx";
+import { SmartFillPanel } from "./SmartFillPanel.tsx";
 import { RecordEpfModal } from "./RecordEpfModal.tsx";
 import { useCapabilities } from "../../lib/settings-queries.ts";
 
@@ -57,6 +58,7 @@ export function TransactionsPage() {
   const [allMatching, setAllMatching] = useState(false);
   const [drawerTx, setDrawerTx] = useState<string | null>(null);
   const [aiCategorize, setAiCategorize] = useState(false);
+  const [smartFill, setSmartFill] = useState(false);
   const [showRecordEpf, setShowRecordEpf] = useState(false);
   const { data: capabilities } = useCapabilities();
 
@@ -140,6 +142,12 @@ export function TransactionsPage() {
             className="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
           >
             + Record EPF
+          </button>
+          <button
+            onClick={() => setSmartFill(true)}
+            className="rounded-md border border-amber-300 bg-amber-50 px-3 py-1.5 text-sm font-medium text-amber-700 hover:bg-amber-100"
+          >
+            ⚡ Smart Fill
           </button>
           {capabilities?.features.categorization && (
             <button
@@ -325,6 +333,14 @@ export function TransactionsPage() {
         <AiCategorizePanel
           onClose={() => setAiCategorize(false)}
           onApply={(id, categoryId) => mutations.update.mutate({ id, categoryId })}
+        />
+      )}
+      {smartFill && (
+        <SmartFillPanel
+          onClose={() => setSmartFill(false)}
+          onApplyMerchant={(txnIds, categoryId) =>
+            mutations.bulk.mutate({ action: "setCategory", ids: txnIds, categoryId })
+          }
         />
       )}
       {showRecordEpf && <RecordEpfModal onClose={() => setShowRecordEpf(false)} />}
