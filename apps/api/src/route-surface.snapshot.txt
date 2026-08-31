@@ -186,6 +186,7 @@ GET /api/transactions
 GET /api/transactions/:id
 GET /api/transactions/:id/attachments
 GET /api/transactions/:id/links
+GET /api/transactions/smart-fill
 GET /api/transfers/suggestions
 GET /api/trends
 GET /api/user-tasks
@@ -339,6 +340,7 @@ HEAD /api/transactions
 HEAD /api/transactions/:id
 HEAD /api/transactions/:id/attachments
 HEAD /api/transactions/:id/links
+HEAD /api/transactions/smart-fill
 HEAD /api/transfers/suggestions
 HEAD /api/trends
 HEAD /api/user-tasks
@@ -353,6 +355,7 @@ PATCH /api/auth/profile
 PATCH /api/categories/:id
 PATCH /api/credit/card-offers/:id/review
 PATCH /api/credit/reward-lots/:id/redeem
+PATCH /api/emis/:templateId/loan-account
 PATCH /api/family/:id
 PATCH /api/goals/:id
 PATCH /api/holdings/:id

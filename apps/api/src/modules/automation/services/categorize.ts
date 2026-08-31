@@ -115,91 +115,129 @@ export async function suggestCategoriesFor(
 
 /**
  * History-based Smart Fill (no AI). Groups uncategorized transactions by
- * merchant and returns one suggestion per merchant derived from the user's own
- * past categorization choices. M merchant rows replaces N transaction rows,
- * so the review panel scales to any transaction volume.
+ * merchant × direction and returns one suggestion per pair derived from the
+ * user's own past categorization choices. M merchant-direction pairs replaces
+ * N transaction rows, so the review panel scales to any transaction volume.
  *
  * Only transactions that have a category dimension (ordinary or split) are
  * considered — transfers and opening entries are excluded.
+ *
+ * Fixes:
+ * - History CTE joins categories to exclude archived ones before ranking, so
+ *   the top-ranked result is always an active category and uncoveredCount is
+ *   never over-counted by merchants whose only history is archived categories.
+ * - Direction (sign of posting amount on the system account) is included in
+ *   the grouping key to prevent blending expense and income history for the
+ *   same merchant.
+ * - Ranked CTE has a deterministic tie-breaker (category_id) so equal-frequency
+ *   candidates always resolve to the same winner.
+ * - Response is capped at 200 merchant-direction pairs (ordered by txn_count
+ *   desc) to bound response size and subsequent bulk-write bursts.
  */
 export async function suggestByMerchant(db: Db, userId: string): Promise<SmartFillResponse> {
-  // Step 1: best historical category per merchant (frequency-ranked)
+  // Step 1: best historical category per merchant × direction (frequency-ranked).
+  // The join on categories excludes archived categories before ranking, so the
+  // winning category is always active and uncoveredCount is not artificially
+  // inflated by merchants whose top category is archived.
   const histRows = (
     await db.execute(sql`
       with history as (
-        select t.merchant, p.category_id, count(*) as freq
+        select t.merchant,
+               sign(p.amount_paise)::int as direction,
+               p.category_id,
+               count(*)                 as freq
         from transactions t
-        join postings p  on p.transaction_id = t.id
-        join accounts  a on a.id = p.account_id and a.system_kind is not null
+        join postings    p on p.transaction_id = t.id
+        join accounts    a on a.id = p.account_id and a.system_kind is not null
+        join categories  c on c.id = p.category_id
+                           and c.user_id = ${userId}
+                           and c.archived_at is null
         where t.user_id = ${userId} and t.deleted_at is null and p.category_id is not null
-        group by t.merchant, p.category_id
+        group by t.merchant, direction, p.category_id
       ),
       ranked as (
-        select merchant, category_id, freq,
-          sum(freq) over (partition by merchant) as total,
-          row_number() over (partition by merchant order by freq desc) as rnk
+        select merchant, direction, category_id, freq,
+          sum(freq) over (partition by merchant, direction) as total,
+          row_number() over (
+            partition by merchant, direction
+            order by freq desc, category_id   -- deterministic tie-break
+          ) as rnk
         from history
       )
-      select merchant, category_id,
+      select merchant, direction, category_id,
         freq::float / total as confidence,
-        freq::int          as history_count
+        freq::int           as history_count
       from ranked
       where rnk = 1
     `)
   ).rows as Array<{
     merchant: string;
+    direction: number;
     category_id: string;
     confidence: number;
     history_count: number;
   }>;
 
   if (histRows.length === 0) {
-    // No history at all — count uncovered merchants and return early.
+    // No categorized history at all — count uncovered merchant×direction pairs and return early.
     const uncovRow = (
       await db.execute(sql`
-        select count(distinct t.merchant)::int as cnt
-        from transactions t
-        join postings p on p.transaction_id = t.id
-        join accounts a on a.id = p.account_id and a.system_kind is not null
-        where t.user_id = ${userId} and t.deleted_at is null and p.category_id is null
-          and ${hasCategoryDimension()}
+        select count(*) as cnt
+        from (
+          select distinct t.merchant, sign(p.amount_paise)::int
+          from transactions t
+          join postings p on p.transaction_id = t.id
+          join accounts a on a.id = p.account_id and a.system_kind is not null
+          where t.user_id = ${userId} and t.deleted_at is null and p.category_id is null
+            and ${hasCategoryDimension()}
+        ) sub
       `)
-    ).rows[0] as { cnt: number } | undefined;
-    return { suggestions: [], uncoveredCount: uncovRow?.cnt ?? 0 };
+    ).rows[0] as { cnt: string | number } | undefined;
+    return { suggestions: [], uncoveredCount: Number(uncovRow?.cnt ?? 0) };
   }
 
-  // Build an in-memory lookup: merchant → best category info
+  // Build lookup: "${merchant}:${direction}" → best active category info
   const best = new Map(
     histRows.map((r) => [
-      r.merchant,
+      `${r.merchant}:${r.direction}`,
       { categoryId: r.category_id, confidence: r.confidence, historyCount: r.history_count },
     ]),
   );
 
-  // Step 2: all uncategorized transactions that have a category dimension, grouped by merchant
+  // Step 2: uncategorized transactions grouped by merchant × direction.
+  // Fetch 201 rows ordered by txn_count desc; if we get 201 the result is capped.
   const pendingRows = (
     await db.execute(sql`
       select t.merchant,
-        array_agg(distinct t.id::text) as txn_ids,
-        count(distinct t.id)::int      as txn_count
+        sign(p.amount_paise)::int          as direction,
+        array_agg(distinct t.id::text)     as txn_ids,
+        count(distinct t.id)::int          as txn_count
       from transactions t
       join postings p on p.transaction_id = t.id
       join accounts a on a.id = p.account_id and a.system_kind is not null
       where t.user_id = ${userId} and t.deleted_at is null and p.category_id is null
         and ${hasCategoryDimension()}
-      group by t.merchant
+      group by t.merchant, direction
+      order by txn_count desc
+      limit 201
     `)
-  ).rows as Array<{ merchant: string; txn_ids: string[]; txn_count: number }>;
+  ).rows as Array<{ merchant: string; direction: number; txn_ids: string[]; txn_count: number }>;
 
   if (pendingRows.length === 0) return { suggestions: [], uncoveredCount: 0 };
 
-  // Step 3: fetch category names for matched suggestions
-  const matchedMerchants = pendingRows.filter((r) => best.has(r.merchant));
-  const uncoveredCount = pendingRows.length - matchedMerchants.length;
+  const capped = pendingRows.length > 200;
+  if (capped) pendingRows.splice(200);
 
-  if (matchedMerchants.length === 0) return { suggestions: [], uncoveredCount };
+  // Step 3: split pending rows into those with history and those without
+  const matchedRows = pendingRows.filter((r) => best.has(`${r.merchant}:${r.direction}`));
+  const uncoveredCount = pendingRows.length - matchedRows.length;
 
-  const categoryIds = [...new Set(matchedMerchants.map((r) => best.get(r.merchant)!.categoryId))];
+  if (matchedRows.length === 0) return { suggestions: [], uncoveredCount, ...(capped ? { capped } : {}) };
+
+  // Step 4: fetch category names for all matched suggestions in one query
+  const categoryIds = [
+    ...new Set(matchedRows.map((r) => best.get(`${r.merchant}:${r.direction}`)!.categoryId)),
+  ];
   const catRows = (
     await db.execute(sql`
       select id, name from categories
@@ -208,13 +246,14 @@ export async function suggestByMerchant(db: Db, userId: string): Promise<SmartFi
   ).rows as Array<{ id: string; name: string }>;
   const catName = new Map(catRows.map((c) => [c.id, c.name]));
 
-  const suggestions: MerchantSuggestion[] = matchedMerchants
+  const suggestions: MerchantSuggestion[] = matchedRows
     .map((r) => {
-      const b = best.get(r.merchant)!;
+      const b = best.get(`${r.merchant}:${r.direction}`)!;
       const name = catName.get(b.categoryId);
-      if (!name) return null; // archived category — skip
+      if (!name) return null; // safety net: archived_at filter in history CTE should prevent this
       return {
         merchant: r.merchant,
+        direction: r.direction,
         txnIds: r.txn_ids,
         txnCount: r.txn_count,
         categoryId: b.categoryId,
@@ -226,5 +265,5 @@ export async function suggestByMerchant(db: Db, userId: string): Promise<SmartFi
     .filter((s): s is MerchantSuggestion => s !== null)
     .sort((a, b) => b.confidence - a.confidence || b.txnCount - a.txnCount);
 
-  return { suggestions, uncoveredCount };
+  return { suggestions, uncoveredCount, ...(capped ? { capped } : {}) };
 }

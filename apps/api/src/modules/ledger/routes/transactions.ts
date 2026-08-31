@@ -107,7 +107,7 @@ export async function transactionRoutes(app: FastifyInstance) {
     },
   );
 
-  r.post(
+  r.get(
     "/api/transactions/smart-fill",
     { schema: { response: { 200: SmartFillResponseSchema } } },
     async (req) => suggestByMerchant(app.db, req.session!.userId),
