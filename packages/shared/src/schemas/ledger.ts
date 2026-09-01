@@ -700,3 +700,42 @@ export const CreateTransactionLinkSchema = z.object({
   title: z.string().max(200).default(""),
 });
 export type CreateTransactionLinkInput = z.input<typeof CreateTransactionLinkSchema>;
+
+// ---------- Smart Fill (history-based, no AI) ----------
+
+/**
+ * One merchant-level suggestion produced by the history-based Smart Fill.
+ * Groups all uncategorized transactions for a merchant under one suggestion so
+ * the review panel scales to M unique merchants, not N individual transactions.
+ */
+export const MerchantSuggestionSchema = z.object({
+  merchant: z.string(),
+  /**
+   * Sign of the posting amount on the category/system account (result of Postgres
+   * `sign(amount_paise)::int`). In this ledger's double-entry convention the category
+   * posting is positive (1) for expenses and negative (-1) for income/refunds, because
+   * expenses debit the expense account. Used as an opaque discriminator so the same
+   * merchant can carry separate suggestions for its expense and income history, preventing
+   * category blending across transaction directions.
+   */
+  direction: z.number().int(),
+  /** All uncategorized transaction IDs for this merchant × direction — apply as a bulk set. */
+  txnIds: z.array(z.uuid()),
+  txnCount: z.number().int().positive(),
+  categoryId: z.uuid(),
+  categoryName: z.string(),
+  /** Fraction of past categorized transactions for this merchant × direction with this category. */
+  confidence: z.number().min(0).max(1),
+  /** How many past categorized transactions informed this suggestion. */
+  historyCount: z.number().int().nonnegative(),
+});
+export type MerchantSuggestion = z.infer<typeof MerchantSuggestionSchema>;
+
+export const SmartFillResponseSchema = z.object({
+  suggestions: z.array(MerchantSuggestionSchema),
+  /** Merchant × direction pairs with uncategorized transactions but no history to draw from. */
+  uncoveredCount: z.number().int().nonnegative(),
+  /** True when there were more than 200 pending merchant×direction pairs; only the top 200 by txn count are shown. */
+  capped: z.boolean().optional(),
+});
+export type SmartFillResponse = z.infer<typeof SmartFillResponseSchema>;

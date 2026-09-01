@@ -47,9 +47,10 @@ export function useAiCategorize() {
 }
 
 export function useSmartFill() {
-  return useMutation({
-    mutationFn: (): Promise<SmartFillResponse> =>
-      apiPost("/api/transactions/smart-fill", SmartFillResponseSchema, {}),
+  return useQuery({
+    queryKey: ["smart-fill"],
+    queryFn: (): Promise<SmartFillResponse> =>
+      apiGet("/api/transactions/smart-fill", SmartFillResponseSchema),
   });
 }
 

@@ -20,34 +20,6 @@ export const AiCategorizeResponseSchema = z.object({
 });
 export type AiCategorizeResponse = z.infer<typeof AiCategorizeResponseSchema>;
 
-// ---------- Smart Fill (history-based, no AI) ----------
-
-/**
- * One merchant-level suggestion produced by the history-based Smart Fill.
- * Groups all uncategorized transactions for a merchant under one suggestion so
- * the review panel scales to M unique merchants, not N individual transactions.
- */
-export const MerchantSuggestionSchema = z.object({
-  merchant: z.string(),
-  /** All uncategorized transaction IDs for this merchant — apply as a bulk set. */
-  txnIds: z.array(z.uuid()),
-  txnCount: z.number().int().positive(),
-  categoryId: z.uuid(),
-  categoryName: z.string(),
-  /** Fraction of past categorized transactions for this merchant with this category. */
-  confidence: z.number().min(0).max(1),
-  /** How many past categorized transactions informed this suggestion. */
-  historyCount: z.number().int().nonnegative(),
-});
-export type MerchantSuggestion = z.infer<typeof MerchantSuggestionSchema>;
-
-export const SmartFillResponseSchema = z.object({
-  suggestions: z.array(MerchantSuggestionSchema),
-  /** Merchants with uncategorized transactions but no history to draw from. */
-  uncoveredCount: z.number().int().nonnegative(),
-});
-export type SmartFillResponse = z.infer<typeof SmartFillResponseSchema>;
-
 /** AI-narrated month-in-review. Numbers live in `facts` (computed, not model). */
 export const AiSummarySchema = z.object({
   period: z.string(),

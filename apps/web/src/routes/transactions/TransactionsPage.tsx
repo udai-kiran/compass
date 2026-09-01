@@ -338,9 +338,9 @@ export function TransactionsPage() {
       {smartFill && (
         <SmartFillPanel
           onClose={() => setSmartFill(false)}
-          onApplyMerchant={(txnIds, categoryId) =>
-            mutations.bulk.mutate({ action: "setCategory", ids: txnIds, categoryId })
-          }
+          onApplyMerchant={async (txnIds, categoryId) => {
+            await mutations.bulk.mutateAsync({ action: "setCategory", ids: txnIds, categoryId });
+          }}
         />
       )}
       {showRecordEpf && <RecordEpfModal onClose={() => setShowRecordEpf(false)} />}
