@@ -168,7 +168,7 @@ Do not truncate the report, do not summarise it, and do not say it has been
 saved anywhere. The full report must appear as your final message.'
 
 dsh_status=0
-(cd "$repo_root" && npx --yes @deepseek-ai/dsh --profile "$profile" "${persona_text}${prompt}${prompt_guard}") \
+(cd "$repo_root" && npx --yes @deepseek-ai/dsh --profile "$profile" -- "${persona_text}${prompt}${prompt_guard}") \
     > "$report_file" || dsh_status=$?
 
 if [[ ! -s "$report_file" ]]; then

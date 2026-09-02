@@ -13,10 +13,9 @@ fi
 
 repo_root="$(git rev-parse --show-toplevel)"
 
-# Write review output into the project's own working tree (not /tmp) so it
-# survives past this session and is easy to find. .claude/tasks/ is
-# git-ignored, so review artifacts never end up in a commit.
-task_dir="$repo_root/.claude/tasks"
+# Write review output into tasks/ at the repo root — the same directory
+# dsh-worker and codex-worker use for their reports.
+task_dir="$repo_root/tasks"
 mkdir -p "$task_dir"
 report_file="$(mktemp "$task_dir/codex-review.XXXXXX.md")"
 
